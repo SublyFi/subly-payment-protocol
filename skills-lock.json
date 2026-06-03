@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "skills": {
+    "arcium": {
+      "source": "sendaifun/skills",
+      "sourceType": "github",
+      "skillPath": "skills/arcium/SKILL.md",
+      "computedHash": "00ec9ffb7506f864b51a848247820784b7ef4310bc4b15a80267d5e5c9512211"
+    },
+    "birdeye": {
+      "source": "sendaifun/skills",
+      "sourceType": "github",
+      "skillPath": "skills/birdeye/SKILL.md",
+      "computedHash": "42297ba3b42a1fb943f4869ee7ef3905b5ae679e5927932e2304fb62cc354e98"
+    },
+    "coingecko": {
+      "source": "sendaifun/skills",
+      "sourceType": "github",
+      "skillPath": "skills/coingecko/SKILL.md",
+      "computedHash": "d826f1ce5fb5d63cb3c149f6db49d9f73b6b301b80046ad9829c8d1a7d5bf3a7"
+    },
+    "dflow": {
+      "source": "sendaifun/skills",
+      "sourceType": "github",
+      "skillPath": "skills/dflow/SKILL.md",
+      "computedHash": "3c063f4aee3b67fc545c8265ec3209874dc53545db4dca3a986f057c1873018e"
+    },
+    "example-skill": {
+      "source": "sendaifun/skills",
+      "sourceType": "github",
+      "skillPath": "skills/example-skill/SKILL.md",
+      "computedHash": "9d0302dee17c2645b0118993507e67f5cfa72da799ca39d550c82ff3efe7879e"
+    },
+    "helius": {
+      "source": "sendaifun/skills",
+      "sourceType": "github",
+      "skillPath": "skills/helius/SKILL.md",
+      "computedHash": "434d7cc2307933a733fa52305cf4fe51ac4fe9f025c7099759d340567d77f811"
+    },
+    "integrating-jupiter": {
+      "source": "sendaifun/skills",
+      "sourceType": "github",
+      "skillPath": "skills/jupiter/SKILL.md",
+      "computedHash": "e0f0f568129475808c73289fecc61a192e78aa5e1a1d9e27f3f71970284ba76f"
+    },
+    "kamino": {
+      "source": "sendaifun/skills",
+      "sourceType": "github",
+      "skillPath": "skills/kamino/SKILL.md",
+      "computedHash": "9ac38c24f04caddd5d03b36c744eaff20af77739183e4d54a70fd16500db9590"
+    },
+    "lulo": {
+      "source": "sendaifun/skills",
+      "sourceType": "github",
+      "skillPath": "skills/lulo/SKILL.md",
+      "computedHash": "67c8e63ecef573317868abe51c58b9a19b998b70aa93fd511777e3fe2943fa29"
+    },
+    "magicblock": {
+      "source": "sendaifun/skills",
+      "sourceType": "github",
+      "skillPath": "skills/magicblock/SKILL.md",
+      "computedHash": "fb486d56f1495831d26f91bdb27cd5c2800534374fbb8310ba3e894a44d30743"
+    },
+    "metaplex": {
+      "source": "sendaifun/skills",
+      "sourceType": "github",
+      "skillPath": "skills/metaplex/SKILL.md",
+      "computedHash": "289a315ff8789fbf46d6f89349771c85ba8238bfedb3a1599798947992662c65"
+    },
+    "meteora": {
+      "source": "sendaifun/skills",
+      "sourceType": "github",
+      "skillPath": "skills/meteora/SKILL.md",
+      "computedHash": "9605cf73fdd73bf9bff411d67068d5915acff64f6b2e3f3fa1e961e6c70e9b4a"
+    },
+    "orca": {
+      "source": "sendaifun/skills",
+      "sourceType": "github",
+      "skillPath": "skills/orca/SKILL.md",
+      "computedHash": "94c27694e9204ef46bab79b83764a501b24f84305dd6f0bf6ea7e85b60f1e5e8"
+    },
+    "pyth": {
+      "source": "sendaifun/skills",
+      "sourceType": "github",
+      "skillPath": "skills/pyth/SKILL.md",
+      "computedHash": "d65469f7d0ece9cdbac3841e48c6a27ab59a571212240d5deaa157bef330ea12"
+    },
+    "raydium": {
+      "source": "sendaifun/skills",
+      "sourceType": "github",
+      "skillPath": "skills/raydium/SKILL.md",
+      "computedHash": "672909357ac6765f78e1c391c9949db541263f5cadd14fca4a835336bd404264"
+    },
+    "sanctum": {
+      "source": "sendaifun/skills",
+      "sourceType": "github",
+      "skillPath": "skills/sanctum/SKILL.md",
+      "computedHash": "2dbc8e07ca30ed4b0e1dfc26261645f4c4efaa42a34ba5cade9e5a6dc566ab8c"
+    },
+    "solana-dev": {
+      "source": "solana-foundation/solana-dev-skill",
+      "sourceType": "github",
+      "skillPath": "skill/SKILL.md",
+      "computedHash": "27419a2b51070cdd9c3653c8ba3789ab12cdc09cce1383c4fdedc979cf7d15b6"
+    },
+    "surfpool": {
+      "source": "sendaifun/skills",
+      "sourceType": "github",
+      "skillPath": "skills/surfpool/SKILL.md",
+      "computedHash": "8f916d8d46f64380ba016685bd9286824e6c2f067ae5deb54b362820f30b2b55"
+    },
+    "svm": {
+      "source": "sendaifun/skills",
+      "sourceType": "github",
+      "skillPath": "skills/svm/SKILL.md",
+      "computedHash": "200f04f335cbfd80524e0f2fb12e8c13b0b6bfa9f70b943256d0a52e16731338"
+    },
+    "switchboard": {
+      "source": "sendaifun/skills",
+      "sourceType": "github",
+      "skillPath": "skills/switchboard/SKILL.md",
+      "computedHash": "11c369d22137a6542e7116a698c53cbbc5e2a3f459e87ebf1531d148951f0d75"
+    }
+  }
+}

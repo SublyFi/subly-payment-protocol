@@ -26,6 +26,7 @@ DATABASE_URL・fee oracle・structured signer・liquidity policy等のガード�
 ### 任意
 
 ```text
+PORT / HOST                        listenポート/アドレス (default 3000 / 0.0.0.0)
 SUBLY_EXTRA_LOOKUP_TABLES          Subly管理のsettlement LUTアドレス (カンマ区切り)
 SUBLY_CU_LIMIT                     Compute unit limit (default 1000000)
 SUBLY_CU_PRICE_MICROLAMPORTS       Priority fee (default 1)
@@ -42,6 +43,86 @@ SUBLY_SOL_USDC_PRICE_SCALED 等     旧static fee oracle設定 (設定時はPyth
 Fee oracleはデフォルトでPyth Hermes SOL/USDフィード
 (`ef0d8b6f...c280b56d`) を使用し、鮮度・キャップ違反時は `stale_oracle` /
 `fee_cap_exceeded` で決済準備を拒否する。
+
+## インフラ構成
+
+必要なものは以下の4つ。AWSである必要はなく、アルファ段階は
+Railway / Fly.io / Render + マネージドPostgres (Neon等) で十分。
+
+| 構成要素 | 要件 |
+|---|---|
+| アプリサーバー | Node >= 20 の単一プロセス (Fastify)。`npm run build` → `npm start`。`GET /healthz` をヘルスチェックに使用 |
+| PostgreSQL | `DATABASE_URL` で接続。スキーマは起動時に `create table if not exists` で自動作成 (マイグレーション不要)。TLS接続 (`?sslmode=require`) を推奨 |
+| RPC | 有料/専用エンドポイント (Helius / Triton / QuickNode等)。公開RPCは `getTokenLargestAccounts` 等がレート制限される |
+| シークレットストア | sponsor秘密鍵 + APIトークン3種。ホスティングのsecret機能 or Secrets Manager。平文の環境変数ファイルをリポジトリ/イメージに含めない |
+
+注意:
+
+- **インスタンスは1台のみ**で運用する。settlementの二重送信はDBの
+  partial unique index (`sellerRequestId`) で防御されるが、水平スケールを
+  前提とした検証はしていない。オートスケール/複数レプリカを無効にすること。
+- **sponsorはホットウォレット**。サーバーから署名に使うため、残高は運転資金
+  (rent立替え ~0.00204 SOL/決済 + tx fee) のみに抑え、大きな資金を置かない。
+- グレースフルシャットダウン前提のローリング再起動でよい。`submitted` のまま
+  プロセスが落ちても `POST /v1/admin/settlements/recover` で照合復旧できる
+  (「失敗時の挙動」参照)。
+
+## ゼロからの構築手順
+
+1. **PostgreSQL作成**: マネージドDBを作成し `DATABASE_URL` を控える。
+2. **RPC契約**: mainnetエンドポイントを取得し `SOLANA_RPC_URL` を控える。
+3. **Sponsorキーペア生成・入金**:
+   ```bash
+   solana-keygen new --no-bip39-passphrase -o sponsor.json
+   solana address -k sponsor.json   # ここへSOLを入金 (目安 0.5 SOL〜)
+   ```
+   鍵はシークレットストアへ登録し、ローカルの `sponsor.json` は削除する。
+4. **APIトークン生成** (3つとも別値):
+   ```bash
+   openssl rand -hex 32   # SUBLY_SELLER_API_TOKEN
+   openssl rand -hex 32   # SUBLY_CLIENT_API_TOKEN
+   openssl rand -hex 32   # SUBLY_ADMIN_API_TOKEN
+   ```
+5. **Settlement LUT作成** (ローカルから実行可。sponsor入金後):
+   ```bash
+   SOLANA_RPC_URL=... SUBLY_SPONSOR_KEYPAIR=... \
+     npx tsx scripts/create-settlement-lut.ts <agentWallet...>
+   ```
+   出力されたLUTアドレスを `SUBLY_EXTRA_LOOKUP_TABLES` に控える。
+6. **読み取り専用mainnet検証** (任意だが推奨): `npm run validate:mainnet`
+   (後述) でsettlementパスのシミュレーションが通ることを確認する。
+7. **デプロイ**: 「環境変数 > 必須」+ `SUBLY_EXTRA_LOOKUP_TABLES` を設定し、
+   build command `npm ci && npm run build`、start command `npm start`、
+   ヘルスチェック `GET /healthz` でデプロイする。
+8. **起動後の初期化** (adminトークンで本番URLに対して実行):
+   ```bash
+   # 流動性ポリシー (未登録だと全決済が liquidity_policy_missing で拒否)
+   curl -X POST $BASE/v1/admin/liquidity-policies \
+     -H "Authorization: Bearer $ADMIN" -H "Content-Type: application/json" \
+     -d '{"sellerClass":"default",
+          "expectedPaymentSizeRawUsdc":"<raw USDC>",
+          "minInstantLiquidityRawUsdc":"<raw USDC>",
+          "targetBudgetIlliquidRate":0.05}'
+
+   # Agentウォレット登録
+   curl -X POST $BASE/v1/wallets/agent \
+     -H "Authorization: Bearer $ADMIN" -H "Content-Type: application/json" \
+     -d '{"wallet":"<agentWallet>",
+          "signingPolicyId":"<policyId>",
+          "signerValidationMode":"structured_intent_transaction",
+          "activateForPayments":true}'
+
+   # 初回チェーン同期
+   curl -X POST $BASE/v1/wallets/<agentWallet>/sync \
+     -H "Authorization: Bearer $ADMIN" -H "Content-Type: application/json" \
+     -d '{"source":"chain"}'
+   ```
+   各エンドポイントのbodyスキーマは `src/api/schemas.ts` を正とする。
+9. **監視接続**: 外形監視から `GET /healthz` (死活) と
+   `GET /v1/admin/monitoring` (sponsor残高・エラーカウンタ) をポーリングし
+   アラートに接続する (「監視」参照)。
+
+要件の詳細・背景は次節「起動前チェックリスト」を参照。
 
 ## 起動前チェックリスト
 

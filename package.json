@@ -1,0 +1,41 @@
+{
+  "name": "subly-agent-payments",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "NODE_ENV=development tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "validate:mainnet": "tsx scripts/mainnet-validate.ts"
+  },
+  "dependencies": {
+    "@kamino-finance/farms-sdk": "3.2.24",
+    "@kamino-finance/klend-sdk": "^8.0.2",
+    "@solana-program/address-lookup-table": "^0.7.0",
+    "@solana-program/compute-budget": "^0.8.0",
+    "@solana-program/memo": "^0.7.0",
+    "@solana-program/system": "^0.7.0",
+    "@solana-program/token": "^0.5.1",
+    "@solana/kit": "^2.3.0",
+    "bs58": "^6.0.0",
+    "decimal.js": "^10.6.0",
+    "fastify": "^5.6.2",
+    "pg": "^8.16.3",
+    "tweetnacl": "^1.0.3",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@types/bn.js": "^5.2.0",
+    "@types/node": "^24.10.1",
+    "@types/pg": "^8.15.6",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.14"
+  }
+}

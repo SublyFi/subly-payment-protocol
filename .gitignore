@@ -1,2 +1,7 @@
 .env
+node_modules/
+dist/
+coverage/
 .agents
+.claude/
+.superstack/

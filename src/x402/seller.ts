@@ -100,6 +100,7 @@ export class SublySellerGate {
     headers: Record<string, string>;
     body: PaymentRequired;
   } {
+    assertCanonicalRawAmount(request.amountRawUsdc);
     const requirement: SublyPaymentRequirements = {
       scheme: PAYMENT_SCHEME,
       network: this.config.network,
@@ -132,6 +133,27 @@ export class SublySellerGate {
   }
 
   /**
+   * Computes the request binding hash for a priced request from the seller's
+   * own configuration — the same value the facilitator binds the payment to
+   * and that the retry's PAYMENT-SIGNATURE payload carries. Sellers can use
+   * it to correlate an issued challenge with the retried request.
+   */
+  bindingHashFor(request: PricedRequest): string {
+    assertCanonicalRawAmount(request.amountRawUsdc);
+    return computeRequestBindingHash({
+      sellerRequestId: request.sellerRequestId,
+      httpMethod: request.httpMethod,
+      canonicalResourceUrl: request.resource,
+      requestBodyHash: requestBodyHashFor(request.body),
+      seller: this.config.payTo,
+      asset: SUBLY_VAULT.usdcMint,
+      amountRawUsdc: request.amountRawUsdc,
+      payTo: this.config.payTo,
+      sellerUsdcAta: this.sellerUsdcAta
+    });
+  }
+
+  /**
    * Verifies and settles a retried request carrying PAYMENT-SIGNATURE. The
    * binding hash is recomputed from the seller's own request facts, so a
    * payload prepared for a different request, amount, or payee never settles.
@@ -157,17 +179,15 @@ export class SublySellerGate {
       return { granted: false, reason: "network_mismatch" };
     }
 
-    const expectedBindingHash = computeRequestBindingHash({
-      sellerRequestId: params.request.sellerRequestId,
-      httpMethod: params.request.httpMethod,
-      canonicalResourceUrl: params.request.resource,
-      requestBodyHash: requestBodyHashFor(params.request.body),
-      seller: this.config.payTo,
-      asset: SUBLY_VAULT.usdcMint,
-      amountRawUsdc: params.request.amountRawUsdc,
-      payTo: this.config.payTo,
-      sellerUsdcAta: this.sellerUsdcAta
-    });
+    // bindingHashFor throws on a non-canonical amount; at settle time a bad
+    // priced request is the seller's own data, so deny instead of throwing
+    // into the seller's request handler.
+    let expectedBindingHash: string;
+    try {
+      expectedBindingHash = this.bindingHashFor(params.request);
+    } catch {
+      return { granted: false, reason: "invalid_priced_request" };
+    }
     if (payload.payload.requestBindingHash !== expectedBindingHash) {
       return { granted: false, reason: "request_binding_mismatch" };
     }
@@ -233,6 +253,20 @@ export class SublySellerGate {
     );
 
     return response.json();
+  }
+}
+
+/**
+ * Non-canonical amounts ("0", leading zeros, decimals) would produce a 402
+ * that every client rejects and a binding hash the facilitator can never
+ * match, so they fail loudly at issuance instead.
+ */
+function assertCanonicalRawAmount(amountRawUsdc: string): void {
+  if (!/^[1-9]\d*$/.test(amountRawUsdc)) {
+    throw new Error(
+      "amountRawUsdc must be a positive integer string in raw USDC units " +
+        `without leading zeros, got: ${amountRawUsdc}`
+    );
   }
 }
 

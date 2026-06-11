@@ -2215,7 +2215,13 @@ function assertExpectedPaymentRequirement(input: {
   }
   try {
     const url = new URL(input.canonicalResourceUrl);
-    if (url.protocol !== "https:") {
+    const isLoopbackHttp =
+      url.protocol === "http:" &&
+      !isProductionEnv() &&
+      (url.hostname === "localhost" ||
+        url.hostname === "127.0.0.1" ||
+        url.hostname === "[::1]");
+    if (url.protocol !== "https:" && !isLoopbackHttp) {
       throw new Error("canonicalResourceUrl must use https");
     }
   } catch (error) {

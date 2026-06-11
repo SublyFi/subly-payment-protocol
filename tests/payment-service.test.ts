@@ -1850,6 +1850,91 @@ describe("SublyService", () => {
     );
   });
 
+  it("rejects http canonicalResourceUrl in production even for loopback hosts", async () => {
+    await withTemporaryEnvAsync(
+      {
+        NODE_ENV: "production"
+      },
+      async () => {
+        const service = new SublyService({
+          ledger: new InMemoryLedger(),
+          transactionBuilder: new FakeTransactionBuilder(),
+          feeEstimator: new OneShotFeeEstimator(100_000n),
+          settlementSubmitter: new FakeSettlementSubmitter(),
+          config: {
+            sponsorFeePayer: ADDRESSES.wallet
+          }
+        });
+
+        await expect(
+          service.preparePayment({
+            wallet: ADDRESSES.wallet,
+            asset: SUBLY_VAULT.usdcMint,
+            seller: ADDRESSES.seller,
+            sellerRequestId: "seller_req_http_in_production",
+            httpMethod: "GET",
+            canonicalResourceUrl: "http://localhost:4021/api/premium/alpha",
+            amountRawUsdc: "500000",
+            payTo: ADDRESSES.seller,
+            sellerUsdcAta: ADDRESSES.sellerUsdcAta,
+            dustRecipientUsdcAta: ADDRESSES.agentUsdcAta
+          })
+        ).rejects.toMatchObject({
+          code: "invalid_canonical_resource_url"
+        });
+      }
+    );
+  });
+
+  it("allows http canonicalResourceUrl outside production only for loopback hosts", async () => {
+    const service = await serviceWithSpendableYield();
+
+    const loopback = await service.preparePayment({
+      wallet: ADDRESSES.wallet,
+      asset: SUBLY_VAULT.usdcMint,
+      seller: ADDRESSES.seller,
+      sellerRequestId: "seller_req_http_loopback",
+      httpMethod: "GET",
+      canonicalResourceUrl: "http://localhost:4021/api/premium/alpha",
+      amountRawUsdc: "100000",
+      payTo: ADDRESSES.seller,
+      sellerUsdcAta: ADDRESSES.sellerUsdcAta,
+      dustRecipientUsdcAta: ADDRESSES.agentUsdcAta
+    });
+    expect(loopback.status).toBe("prepared");
+
+    const ipv6Loopback = await service.preparePayment({
+      wallet: ADDRESSES.wallet,
+      asset: SUBLY_VAULT.usdcMint,
+      seller: ADDRESSES.seller,
+      sellerRequestId: "seller_req_http_ipv6_loopback",
+      httpMethod: "GET",
+      canonicalResourceUrl: "http://[::1]:4021/api/premium/alpha",
+      amountRawUsdc: "100000",
+      payTo: ADDRESSES.seller,
+      sellerUsdcAta: ADDRESSES.sellerUsdcAta,
+      dustRecipientUsdcAta: ADDRESSES.agentUsdcAta
+    });
+    expect(ipv6Loopback.status).toBe("prepared");
+
+    await expect(
+      service.preparePayment({
+        wallet: ADDRESSES.wallet,
+        asset: SUBLY_VAULT.usdcMint,
+        seller: ADDRESSES.seller,
+        sellerRequestId: "seller_req_http_non_loopback",
+        httpMethod: "GET",
+        canonicalResourceUrl: "http://api.example.com/v1/data",
+        amountRawUsdc: "100000",
+        payTo: ADDRESSES.seller,
+        sellerUsdcAta: ADDRESSES.sellerUsdcAta,
+        dustRecipientUsdcAta: ADDRESSES.agentUsdcAta
+      })
+    ).rejects.toMatchObject({
+      code: "invalid_canonical_resource_url"
+    });
+  });
+
   it("keeps unconfigured signer wallets observed-only and blocks payment preparation", async () => {
     const wallet = ADDRESSES.wallet;
     const seller = ADDRESSES.seller;

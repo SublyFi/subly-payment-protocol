@@ -27,7 +27,8 @@ import {
 import {
   address,
   appendTransactionMessageInstructions,
-  assertIsSendableTransaction,
+  assertIsFullySignedTransaction,
+  assertIsTransactionWithinSizeLimit,
   createTransactionMessage,
   getBase64EncodedWireTransaction,
   getSignatureFromTransaction,
@@ -119,7 +120,6 @@ async function main() {
   const allEntries = [...entries];
   console.log(`Creating LUT ${lutAddress} with ${allEntries.length} entries`);
 
-  const latest = await rpc.getLatestBlockhash({ commitment: "finalized" }).send();
   const instructions = [
     createInstruction,
     // Max ~25 addresses per extend instruction to stay within tx size.
@@ -140,6 +140,12 @@ async function main() {
   const first = instructions.slice(0, 2);
   const rest = instructions.slice(2);
   for (const batch of [first, ...rest.map((ix) => [ix])]) {
+    // A fresh blockhash per transaction: each send waits for the previous
+    // confirmation, so a single upfront blockhash could expire mid-sequence
+    // and leave the LUT partially populated.
+    const latest = await rpc
+      .getLatestBlockhash({ commitment: "finalized" })
+      .send();
     const message = pipe(
       createTransactionMessage({ version: 0 }),
       (m) => setTransactionMessageFeePayerSigner(sponsor, m),
@@ -147,7 +153,8 @@ async function main() {
       (m) => appendTransactionMessageInstructions(batch, m)
     );
     const signed = await signTransactionMessageWithSigners(message);
-    assertIsSendableTransaction(signed);
+    assertIsFullySignedTransaction(signed);
+    assertIsTransactionWithinSizeLimit(signed);
     const signature = getSignatureFromTransaction(signed);
     await rpc
       .sendTransaction(getBase64EncodedWireTransaction(signed), {

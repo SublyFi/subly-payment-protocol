@@ -112,6 +112,22 @@ describe("x402 headers", () => {
     expect(requirement.extra.vault).toBe(SUBLY_VAULT.address);
   });
 
+  it("rejects non-canonical amounts at challenge issuance", () => {
+    const gate = new SublySellerGate({
+      facilitatorBaseUrl: "https://facilitator.test",
+      sellerApiToken: "seller-token",
+      payTo: SELLER
+    });
+    for (const amountRawUsdc of ["0", "0100", "0.01", "-5", ""]) {
+      expect(() =>
+        gate.paymentRequiredResponse({ ...pricedRequest(), amountRawUsdc })
+      ).toThrowError(/amountRawUsdc/);
+      expect(() =>
+        gate.bindingHashFor({ ...pricedRequest(), amountRawUsdc })
+      ).toThrowError(/amountRawUsdc/);
+    }
+  });
+
   it("rejects oversized and malformed headers", () => {
     expect(() => encodeX402Header({ big: "x".repeat(20_000) })).toThrowError(
       /exceeds/
@@ -168,6 +184,27 @@ describe("SublySellerGate.settle", () => {
         encodeX402Header(settlement)
       );
     }
+  });
+
+  it("denies instead of throwing when the settle-time priced request is non-canonical", async () => {
+    const gate = new SublySellerGate({
+      facilitatorBaseUrl: "https://facilitator.test",
+      sellerApiToken: "seller-token",
+      payTo: SELLER,
+      fetchImpl: async () => {
+        throw new Error("facilitator must not be called");
+      }
+    });
+
+    await expect(
+      gate.settle({
+        paymentSignatureHeader: encodeX402Header(signaturePayload()),
+        request: { ...pricedRequest(), amountRawUsdc: "0100" }
+      })
+    ).resolves.toEqual({
+      granted: false,
+      reason: "invalid_priced_request"
+    });
   });
 
   it("rejects a payload bound to different request facts before calling the facilitator", async () => {

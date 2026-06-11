@@ -148,6 +148,52 @@ Railway / Fly.io / Render + マネージドPostgres (Neon等) で十分。
    信頼できるcost basisが取れない場合はconservative reset
    (basis = 現在価値、以後の新規yieldのみ決済可能) となる。
 
+## ローカル動作確認
+
+用途別に3段階。いずれも `NODE_ENV=development` が前提
+(未設定だとproduction扱いになり起動しない)。APIトークン3つは
+ローカルでも必須かつ別値 (ダミー値でよい)。
+
+### 1. 完全オフライン起動 (detachedモード)
+
+DB・RPC・sponsor鍵すべて不要。
+
+```bash
+NODE_ENV=development \
+SUBLY_SELLER_API_TOKEN=dev-seller \
+SUBLY_CLIENT_API_TOKEN=dev-client \
+SUBLY_ADMIN_API_TOKEN=dev-admin \
+npm run dev
+```
+
+- `DATABASE_URL` 未設定 → インメモリ台帳 (再起動で消える)。
+- RPC/sponsor未設定 → detachedモード (`mode: "detached"` がログに出る)。
+  settlement / deposit / withdraw は不可。
+- 確認できるもの: `/healthz`、`/v1/admin/monitoring`、ポリシー登録、
+  ウォレット登録、スキーマバリデーション、認証 (401/403)。
+
+### 2. 読み取り専用mainnet検証 (資金移動なし)
+
+チェーン連携部分の確認はこれが本命。次節「読み取り専用mainnet検証」参照。
+
+### 3. ローカルでフル起動 (mainnetモード)
+
+```bash
+NODE_ENV=development SOLANA_RPC_URL=... SUBLY_SPONSOR_KEYPAIR=... \
+SUBLY_SELLER_API_TOKEN=dev-seller \
+SUBLY_CLIENT_API_TOKEN=dev-client \
+SUBLY_ADMIN_API_TOKEN=dev-admin \
+npm run dev
+```
+
+台帳はインメモリのまま、チェーンアクセスは実mainnet。
+prepare / verify までは資金移動なしで通せるが、**`/settle` ・
+deposit/withdrawのsubmitは実資金が動く**。devnetは使えない
+(Kamino vaultがmainnetにしかない)。一時的な検証にはdust額 +
+使い捨てsponsor鍵を使うこと。
+
+ユニット/結合テストは `npm test` (vitest、ネットワーク不要)。
+
 ## 読み取り専用mainnet検証
 
 ```bash

@@ -3,19 +3,9 @@
  * harnesses (Claude Code, OpenClaw, Cursor, ...) can pay for Subly-gated APIs
  * from Kamino vault yield in a single tool call.
  *
- * Tool: fetch_with_subly_payment(url, maxAmountRawUsdc?, forceNewPayment?)
- *   GET the URL. On a 402 challenge: prepare at the facilitator, validate the
- *   structured signing intent, sign locally, retry with PAYMENT-SIGNATURE,
- *   and return the delivered body plus the settlement receipt. Non-402
- *   responses are returned as-is (nothing is paid).
- *
- * Double-payment protection: once a payment is signed, the signed header is
- * remembered per URL for the seller challenge TTL. If delivery fails after
- * signing, calling the tool again with the same URL retries delivery with the
- * SAME signature (the seller's /settle is idempotent and re-delivers the same
- * receipt) instead of preparing a second payment. If the outcome is still
- * unknown when the challenge TTL has passed, the tool refuses to pay again
- * for that URL until forceNewPayment is set.
+ * This file is only env wiring and MCP transport; the payment flow itself
+ * (including double-payment protection and the client-side amount cap) lives
+ * in src/client/paid-fetch.ts and is unit-tested there.
  *
  * Env (same as demo/buyer.ts):
  *   SUBLY_CLIENT_API_TOKEN      facilitator client token
@@ -39,22 +29,18 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { LocalKeypairAgentWalletSigner } from "../src/client/agent-wallet-signer.js";
 import { fetchLookupTablesForTransaction } from "../src/client/lookup-tables.js";
+import {
+  PaidFetchError,
+  PaidFetchService,
+  formatRawUsdcAmount,
+  type BudgetSnapshot
+} from "../src/client/paid-fetch.js";
 import { loadKeyPairSigner } from "../src/solana/keys.js";
 import { createRpcFromEnv } from "../src/solana/rpc.js";
 import { SublyX402Client, X402ClientError } from "../src/x402/client.js";
-import {
-  decodePaymentRequiredHeader,
-  decodeX402Header,
-  PAYMENT_REQUIRED_HEADER,
-  PAYMENT_RESPONSE_HEADER,
-  PAYMENT_SIGNATURE_HEADER
-} from "../src/x402/headers.js";
-import { formatRawUsdc, requireEnv } from "./shared.js";
+import { requireEnv } from "./shared.js";
 
 const TOOL_NAME = "fetch_with_subly_payment";
-const MAX_BODY_CHARS = 20_000;
-/** Slightly under the seller's 120s challenge TTL (demo/README.md). */
-const PENDING_PAYMENT_TTL_MS = 110_000;
 const DEFAULT_MAX_AMOUNT_RAW_USDC = 10_000n; // 0.01 USDC
 
 const clientApiToken = requireEnv("SUBLY_CLIENT_API_TOKEN");
@@ -74,40 +60,6 @@ const keyPairSigner = await loadKeyPairSigner({
 });
 const signer = new LocalKeypairAgentWalletSigner(keyPairSigner);
 const rpc = createRpcFromEnv();
-const client = new SublyX402Client({
-  facilitatorBaseUrl,
-  clientApiToken,
-  signer,
-  lookupTablesFor: (serializedTransaction) =>
-    fetchLookupTablesForTransaction(rpc, serializedTransaction)
-});
-
-/** A signed payment whose delivery has not been confirmed yet. */
-interface PendingPayment {
-  headerValue: string;
-  paymentId: string;
-  amountUsdc: string;
-  payTo: string;
-  signedAtMs: number;
-}
-
-const pendingPayments = new Map<string, PendingPayment>();
-
-/** Tool failure with a machine-readable reason for the calling agent. */
-class PaidFetchError extends Error {
-  constructor(
-    readonly reason: string,
-    message: string,
-    readonly detail: unknown = null
-  ) {
-    super(message);
-  }
-}
-
-interface BudgetSnapshot {
-  positionValueUsdc: string;
-  spendableYieldUsdc: string;
-}
 
 async function fetchBudget(): Promise<BudgetSnapshot | null> {
   if (adminApiToken === null) {
@@ -128,213 +80,27 @@ async function fetchBudget(): Promise<BudgetSnapshot | null> {
       return null;
     }
     return {
-      positionValueUsdc: formatRawUsdc(body.budget.positionValueRawUsdc),
-      spendableYieldUsdc: formatRawUsdc(body.budget.spendableYieldRawUsdc)
+      positionValueUsdc: formatRawUsdcAmount(body.budget.positionValueRawUsdc),
+      spendableYieldUsdc: formatRawUsdcAmount(
+        body.budget.spendableYieldRawUsdc
+      )
     };
   } catch {
     return null;
   }
 }
 
-function truncatedBody(text: string): string {
-  return text.length > MAX_BODY_CHARS
-    ? `${text.slice(0, MAX_BODY_CHARS)}\n... (truncated)`
-    : text;
-}
-
-interface PaidFetchResult {
-  paid: boolean;
-  status: number;
-  body: string;
-  retriedPendingPayment?: boolean;
-  payment?: {
-    amountUsdc: string;
-    payTo: string;
-    paymentId: string;
-    transaction: string | null;
-    solscanUrl: string | null;
-    budgetBefore: BudgetSnapshot | null;
-    budgetAfter: BudgetSnapshot | null;
-  };
-}
-
-function receiptTransaction(response: Response): string | null {
-  // The receipt header is informational; a malformed header must not fail a
-  // payment that already settled.
-  try {
-    const receiptHeader = response.headers.get(PAYMENT_RESPONSE_HEADER);
-    if (receiptHeader === null) {
-      return null;
-    }
-    const receipt = decodeX402Header(receiptHeader) as {
-      transaction?: unknown;
-    };
-    return typeof receipt.transaction === "string" &&
-      receipt.transaction.length > 0
-      ? receipt.transaction
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Sends the signed PAYMENT-SIGNATURE retry. The pending entry is removed only
- * on confirmed delivery (200) or when the seller proves the signature can no
- * longer settle (a fresh 402); every other failure keeps it so the next call
- * for the same URL retries the SAME signature instead of paying again.
- */
-async function deliverPendingPayment(
-  url: string,
-  pending: PendingPayment,
-  params: { retried: boolean; budgetBefore: BudgetSnapshot | null }
-): Promise<PaidFetchResult> {
-  let second: Response;
-  let secondText: string;
-  try {
-    second = await fetch(url, {
-      headers: { [PAYMENT_SIGNATURE_HEADER]: pending.headerValue }
-    });
-    secondText = await second.text();
-  } catch (error) {
-    throw new PaidFetchError(
-      "delivery_failed_payment_pending",
-      `delivery request failed in flight (${
-        error instanceof Error ? error.message : String(error)
-      }); the payment (paymentId=${pending.paymentId}) is already signed and ` +
-        "may settle. Call this tool again with the same URL to retry delivery " +
-        "with the same payment signature — do NOT treat this as unpaid.",
-      { paymentId: pending.paymentId }
-    );
-  }
-
-  if (second.status === 200) {
-    pendingPayments.delete(url);
-    const transaction = receiptTransaction(second);
-    return {
-      paid: true,
-      status: second.status,
-      body: truncatedBody(secondText),
-      ...(params.retried ? { retriedPendingPayment: true } : {}),
-      payment: {
-        amountUsdc: pending.amountUsdc,
-        payTo: pending.payTo,
-        paymentId: pending.paymentId,
-        transaction,
-        solscanUrl:
-          transaction === null ? null : `https://solscan.io/tx/${transaction}`,
-        budgetBefore: params.budgetBefore,
-        budgetAfter: await fetchBudget()
-      }
-    };
-  }
-
-  if (second.status === 402) {
-    // The seller no longer accepts this signature (challenge expired or the
-    // seller restarted). Whether the payment settled is unknown.
-    pendingPayments.delete(url);
-    throw new PaidFetchError(
-      "payment_outcome_unknown",
-      `the seller no longer accepts the signed payment (paymentId=${pending.paymentId}); ` +
-        "it may or may not have settled. Verify the payment before purchasing " +
-        "again; to pay again anyway, call this tool with forceNewPayment=true.",
-      { paymentId: pending.paymentId }
-    );
-  }
-
-  throw new PaidFetchError(
-    "delivery_failed_payment_pending",
-    `paid delivery failed with ${second.status} (paymentId=${pending.paymentId}); ` +
-      "the payment may already have settled. Call this tool again with the " +
-      "same URL to retry delivery with the same payment signature — do NOT " +
-      "treat this as unpaid.",
-    { paymentId: pending.paymentId, status: second.status, body: truncatedBody(secondText) }
-  );
-}
-
-async function paidFetch(params: {
-  url: string;
-  maxAmountRawUsdc: bigint;
-  forceNewPayment: boolean;
-}): Promise<PaidFetchResult> {
-  const { url } = params;
-  const pending = pendingPayments.get(url);
-  if (pending !== undefined) {
-    if (params.forceNewPayment) {
-      pendingPayments.delete(url);
-    } else if (Date.now() - pending.signedAtMs > PENDING_PAYMENT_TTL_MS) {
-      throw new PaidFetchError(
-        "payment_outcome_unknown",
-        `a previously signed payment for this URL (paymentId=${pending.paymentId}) ` +
-          "expired with an unknown outcome. Verify the payment before " +
-          "purchasing again; to pay again anyway, call this tool with " +
-          "forceNewPayment=true.",
-        { paymentId: pending.paymentId }
-      );
-    } else {
-      return deliverPendingPayment(url, pending, {
-        retried: true,
-        budgetBefore: null
-      });
-    }
-  }
-
-  const first = await fetch(url);
-  const firstText = await first.text();
-  if (first.status !== 402) {
-    return { paid: false, status: first.status, body: truncatedBody(firstText) };
-  }
-
-  const challengeHeader = first.headers.get(PAYMENT_REQUIRED_HEADER);
-  if (challengeHeader === null) {
-    throw new PaidFetchError(
-      "invalid_challenge",
-      "402 response is missing the PAYMENT-REQUIRED header"
-    );
-  }
-  const requirement =
-    decodePaymentRequiredHeader(challengeHeader).sublyRequirements[0];
-  if (requirement === undefined) {
-    throw new PaidFetchError(
-      "invalid_challenge",
-      "402 challenge contains no subly-yield-exact requirement"
-    );
-  }
-
-  const amountRawUsdc = BigInt(requirement.amountRawUsdc);
-  if (amountRawUsdc > params.maxAmountRawUsdc) {
-    throw new PaidFetchError(
-      "amount_exceeds_client_cap",
-      `the challenge demands ${formatRawUsdc(requirement.amountRawUsdc)} USDC, ` +
-        `above this tool call's cap of ${formatRawUsdc(
-          params.maxAmountRawUsdc.toString()
-        )} USDC; nothing was paid. Raise maxAmountRawUsdc only if this price ` +
-        "is expected.",
-      {
-        amountRawUsdc: requirement.amountRawUsdc,
-        maxAmountRawUsdc: params.maxAmountRawUsdc.toString(),
-        payTo: requirement.payTo
-      }
-    );
-  }
-
-  const budgetBefore = await fetchBudget();
-  const { headerValue, paymentId } = await client.buildPaymentSignatureHeader({
-    paymentRequiredHeader: challengeHeader,
-    httpMethod: "GET",
-    url
-  });
-  const entry: PendingPayment = {
-    headerValue,
-    paymentId,
-    amountUsdc: formatRawUsdc(requirement.amountRawUsdc),
-    payTo: requirement.payTo,
-    signedAtMs: Date.now()
-  };
-  pendingPayments.set(url, entry);
-
-  return deliverPendingPayment(url, entry, { retried: false, budgetBefore });
-}
+const paidFetchService = new PaidFetchService({
+  signatureBuilder: new SublyX402Client({
+    facilitatorBaseUrl,
+    clientApiToken,
+    signer,
+    lookupTablesFor: (serializedTransaction) =>
+      fetchLookupTablesForTransaction(rpc, serializedTransaction)
+  }),
+  defaultMaxAmountRawUsdc,
+  fetchBudget
+});
 
 const server = new Server(
   { name: "subly-payments", version: "0.1.0" },
@@ -351,8 +117,8 @@ server.setRequestHandler(ListToolsRequestSchema, () => ({
         "the response body; when a payment was made, also returns the " +
         "settlement receipt (amount, payee, paymentId, Solscan link). " +
         "Challenges above maxAmountRawUsdc (default " +
-        `${defaultMaxAmountRawUsdc} raw = ${formatRawUsdc(
-          defaultMaxAmountRawUsdc.toString()
+        `${defaultMaxAmountRawUsdc} raw = ${formatRawUsdcAmount(
+          defaultMaxAmountRawUsdc
         )} USDC) are refused without paying. ` +
         "If delivery fails after the payment was signed, the signature is " +
         "kept and calling again with the same URL retries the same payment " +
@@ -379,7 +145,8 @@ server.setRequestHandler(ListToolsRequestSchema, () => ({
             description:
               "Pay again even though a previous payment for this URL has an " +
               "unknown outcome. Only set after verifying the previous payment " +
-              "did not settle."
+              "did not settle. Ignored while the previous payment is still " +
+              "retryable (the same signature is retried instead)."
           }
         },
         required: ["url"]
@@ -412,7 +179,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       isError: true
     };
   }
-  let maxAmountRawUsdc = defaultMaxAmountRawUsdc;
+  let maxAmountRawUsdc: bigint | undefined;
   if (args.maxAmountRawUsdc !== undefined) {
     try {
       maxAmountRawUsdc = BigInt(args.maxAmountRawUsdc as string | number);
@@ -430,12 +197,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   try {
-    const result = await paidFetch({
+    const result = await paidFetchService.paidFetch({
       url,
-      maxAmountRawUsdc,
+      ...(maxAmountRawUsdc === undefined ? {} : { maxAmountRawUsdc }),
       forceNewPayment: args.forceNewPayment === true
     });
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    return {
+      content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
+    };
   } catch (error) {
     if (error instanceof PaidFetchError) {
       return {
@@ -494,5 +263,5 @@ const transport = new StdioServerTransport();
 await server.connect(transport);
 console.error(
   `[subly-mcp] ready: agent wallet ${signer.walletAddress}, facilitator ${facilitatorBaseUrl}, ` +
-    `default cap ${formatRawUsdc(defaultMaxAmountRawUsdc.toString())} USDC`
+    `default cap ${formatRawUsdcAmount(defaultMaxAmountRawUsdc)} USDC`
 );

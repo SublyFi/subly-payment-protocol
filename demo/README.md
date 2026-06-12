@@ -75,9 +75,19 @@ yield不足などでfacilitatorが拒否した場合は理由コード付きの�
 - **二重払い防止**: 署名後に配信が失敗した場合、署名済みヘッダーを
   チャレンジTTL内 (約110秒) 保持し、同じURLへの再呼び出しでは新しい
   決済を作らず**同じ署名でretry**する (sellerの冪等な/settleが同じ
-  レシートを返す)。結果不明のままTTLが切れた場合は
-  `payment_outcome_unknown` を返し、`forceNewPayment=true` を明示
-  しない限りそのURLへは再支払いしない。
+  レシートを返す)。署名が生きている間は `forceNewPayment` も無視して
+  retryを優先する。結果不明になった場合 (TTL切れ、またはsellerが署名を
+  受け付けなくなった) は `payment_outcome_unknown` を返し、
+  `forceNewPayment=true` を明示しない限りそのURLへは再支払いしない。
+  同一URLへの並行呼び出しは1つのフローに合流し、二重決済しない。
+  ロジック本体は `src/client/paid-fetch.ts` (ユニットテスト
+  `tests/paid-fetch.test.ts` で全分岐を検証)。
+
+**運用上の注意**: これは決済ツールなので、エージェントハーネス側で
+ブランケット許可 (Claude Codeの `--allowedTools` や常時許可設定) を
+しないこと。対話セッションではツール呼び出しごとの許可プロンプトを
+人間の決済承認として使うのが想定。ヘッドレス実行での自動許可は、
+信頼できるsellerと上限額を理解した上でのデモ・CI用途に限る。
 
 環境変数はbuyerと同じ。`demo/run-mcp.sh` が `buyer.mainnet.env`
 (なければ `buyer.detached.env`) をsourceして起動する。

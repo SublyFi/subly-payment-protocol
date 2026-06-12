@@ -5,6 +5,7 @@ node_modules/
 dist/
 coverage/
 .agents
-.claude/
+.claude/*
+!.claude/skills
 .superstack
 demo/env/mcp-pending-payments.json

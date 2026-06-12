@@ -28,30 +28,37 @@
 - USDC (Solana mainnet、推奨 50〜500 USDC) を入れた既存ウォレット
 - 運営から受け取る: facilitator URL、client トークン、有料デモ API の URL
 
-## セットアップ
+## セットアップ (最短: コマンド 2 つ)
 
 ```bash
 git clone <このリポジトリ> && cd subly-agent-payments
-npm ci
-
-# 1. agent 鍵を生成 (このファイルは絶対に共有しない)
-solana-keygen new --no-bip39-passphrase -s -o demo/env/keys/agent-beta.json
-
-# 2. 公開鍵を運営に伝える (運営側でウォレット登録される)
-solana-keygen pubkey demo/env/keys/agent-beta.json
-
-# 3. env を作る
-cp demo/env/buyer.beta.env.example demo/env/buyer.mainnet.env
-#    <...> を埋める (facilitator URL / client トークン / RPC URL)
-
-# 4. agent ウォレットに USDC を送る (Phantom 等から公開鍵宛て。SOL は不要 —
-#    手数料は運営の sponsor が立て替える)
-
-# 5. vault に deposit (例: 100 USDC = 100000000 raw)
-source demo/env/buyer.mainnet.env && npm run demo:deposit -- 100000000
-
-# 6. 運営に「deposit した」と伝える → 運営が sync + activate して完了
+bash demo/setup-beta.sh   # 鍵生成 + env 作成 + Claude Code への MCP 登録まで一括
 ```
+
+ウィザードが client トークン (招待に記載) とあなたの RPC URL を聞き、
+最後に**運営に送る公開鍵**と残りの手順を表示します。あとは:
+
+1. 表示された公開鍵を運営に送る (運営がウォレット登録)
+2. その公開鍵宛てに USDC を送金 (Phantom 等から。SOL 不要 — 手数料は
+   運営の sponsor が立て替える)
+3. vault に deposit: `source demo/env/buyer.mainnet.env && npm run demo:deposit -- 100000000` (= 100 USDC)
+4. 運営に「deposit した」と伝える → 運営が activate して完了
+
+**Claude Code を使っている場合はさらに簡単**: このリポジトリで Claude Code を
+開いて「**Subly βのセットアップをして**」と言うだけで、同梱の
+`subly-beta-setup` スキルが上記を対話的に進めます。
+
+<details>
+<summary>手動セットアップ (ウィザードを使わない場合)</summary>
+
+```bash
+npm ci
+npx tsx demo/generate-agent-key.ts demo/env/keys/agent-beta.json  # 公開鍵が出力される
+cp demo/env/buyer.beta.env.example demo/env/buyer.mainnet.env      # <...> を埋める
+claude mcp add subly -- bash "$(pwd)/demo/run-mcp.sh"              # MCP 登録
+```
+
+</details>
 
 ## エージェントから支払う (MCP)
 

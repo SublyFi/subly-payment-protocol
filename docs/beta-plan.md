@@ -148,6 +148,9 @@ Claude Code / OpenClaw / Cursor 等の MCP クライアントから
 - チャレンジ flooding の本対策 (発行レート制限の組み込み、または
   チャレンジ状態の外部化)。
 - テナント別 API キーの発行・失効 (固定 3 トークンからの脱却)。
+- 決済状態照会の client スコープ開放 (`GET /v1/payments/:paymentId` は
+  現在 admin 専用)。MCP ツールの「配信ロスト後の自動解決」が admin
+  トークンなしでも効くようになり、β参加者の二重払い防御が完全になる。
 - seller 向けドキュメント: 価格設定、payTo ATA の事前作成、
   同一 `PAYMENT-SIGNATURE` での冪等 retry ルール
   (`demo/README.md` の注意節が下敷き)。

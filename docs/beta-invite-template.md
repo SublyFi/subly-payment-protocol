@@ -35,7 +35,7 @@ USDC の送金 → deposit に進めます (手順はウィザードが表示し
 
 > https://seller.demo.sublyfi.com/api/premium/alpha のデータを取ってきて
 
-と頼むと、エージェントが 402 を受けて yield から 0.01 USDC を支払い、
+と頼むと、エージェントが 402 を受けて yield から 0.0001 USDC を支払い、
 コンテンツとオンチェーンレシートを返します。支払いは Claude のツール
 許可プロンプトであなたが都度承認します。
 

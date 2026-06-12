@@ -161,6 +161,13 @@ Claude Code / OpenClaw / Cursor 等の MCP クライアントから
 - 決済状態照会の client スコープ開放 (`GET /v1/payments/:paymentId` は
   現在 admin 専用)。MCP ツールの「配信ロスト後の自動解決」が admin
   トークンなしでも効くようになり、β参加者の二重払い防御が完全になる。
+- **buyer セットアップの標準 x402 パリティ** (2026-06-13 調査済み:
+  標準 x402 でも buyer は鍵 + 資金 + ライブラリの設定が必要で、Subly 固有の
+  超過分は deposit を除き過渡的): (a) npm publish で clone 不要の
+  `claude mcp add subly -- npx @subly/mcp` に、(b) 共有 client トークンを
+  ウォレット署名ベース認証に置き換えて撤廃、(c) ウォレット登録の
+  セルフサーブ化。deposit と /prepare 呼び出しは yield-funded 設計の
+  本質なので残る。
 - seller 向けドキュメント: 価格設定、payTo ATA の事前作成、
   同一 `PAYMENT-SIGNATURE` での冪等 retry ルール
   (`demo/README.md` の注意節が下敷き)。

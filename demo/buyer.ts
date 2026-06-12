@@ -7,16 +7,18 @@
  * premium response + settlement receipt.
  *
  * Required env:
- *   SUBLY_CLIENT_API_TOKEN      facilitator client token
  *   SOLANA_RPC_URL              RPC for the agent's own lookup-table view
  *   SUBLY_DEMO_AGENT_KEYPAIR or SUBLY_DEMO_AGENT_KEYPAIR_PATH
  *                               agent wallet key (base58 secret or JSON file)
  * Optional env:
  *   SUBLY_FACILITATOR_URL       default http://localhost:3000
  *   SUBLY_DEMO_RESOURCE_URL     default http://localhost:4021/api/premium/alpha
- *   SUBLY_ADMIN_API_TOKEN       if set, shows the yield budget before/after
+ *
+ * Auth is the wallet signature itself (no API token); the budget display
+ * reads the wallet's own budget the same way.
  */
 import { LocalKeypairAgentWalletSigner } from "../src/client/agent-wallet-signer.js";
+import { walletAuthHeaders } from "../src/client/wallet-auth-headers.js";
 import { fetchLookupTablesForTransaction } from "../src/client/lookup-tables.js";
 import { loadKeyPairSigner } from "../src/solana/keys.js";
 import { createRpcFromEnv } from "../src/solana/rpc.js";
@@ -30,15 +32,12 @@ import {
 } from "../src/x402/headers.js";
 import { fail, formatRawUsdc, requireEnv } from "./shared.js";
 
-const clientApiToken = requireEnv("SUBLY_CLIENT_API_TOKEN");
 requireEnv("SOLANA_RPC_URL");
 const facilitatorBaseUrl =
   process.env.SUBLY_FACILITATOR_URL ?? "http://localhost:3000";
 const resourceUrl =
   process.env.SUBLY_DEMO_RESOURCE_URL ??
   "http://localhost:4021/api/premium/alpha";
-const adminApiToken = process.env.SUBLY_ADMIN_API_TOKEN ?? null;
-
 const keyPairSigner = await loadKeyPairSigner({
   base58Secret: process.env.SUBLY_DEMO_AGENT_KEYPAIR,
   jsonFilePath: process.env.SUBLY_DEMO_AGENT_KEYPAIR_PATH,
@@ -48,7 +47,6 @@ const signer = new LocalKeypairAgentWalletSigner(keyPairSigner);
 const rpc = createRpcFromEnv();
 const client = new SublyX402Client({
   facilitatorBaseUrl,
-  clientApiToken,
   signer,
   lookupTablesFor: (serializedTransaction) =>
     fetchLookupTablesForTransaction(rpc, serializedTransaction)
@@ -59,14 +57,11 @@ console.log(`[buyer] facilitator:  ${facilitatorBaseUrl}`);
 
 /** Budget display is informational; it must never fail the demo itself. */
 async function showBudget(label: string): Promise<void> {
-  if (adminApiToken === null) {
-    return;
-  }
   try {
-    const response = await fetch(
-      `${facilitatorBaseUrl}/v1/wallets/${signer.walletAddress}/budget`,
-      { headers: { authorization: `Bearer ${adminApiToken}` } }
-    );
+    const url = `${facilitatorBaseUrl}/v1/wallets/${signer.walletAddress}/budget`;
+    const response = await fetch(url, {
+      headers: await walletAuthHeaders({ signer, method: "GET", url })
+    });
     if (response.status !== 200) {
       console.log(`[buyer] budget ${label}: unavailable (${response.status})`);
       return;

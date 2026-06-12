@@ -16,7 +16,6 @@ SUBLY_SPONSOR_KEYPAIR          sponsor秘密鍵 (base58 64byte) または
 SUBLY_SPONSOR_KEYPAIR_PATH     solana-keygen形式JSONファイルパス
 DATABASE_URL                   PostgreSQL接続文字列
 SUBLY_SELLER_API_TOKEN         seller向け /v1/x402/verify, /v1/x402/settle
-SUBLY_CLIENT_API_TOKEN         client向け prepare/submit系 + deposit/withdrawal状態取得
 SUBLY_ADMIN_API_TOKEN          admin向け wallet/policy/sync/recover/monitoring系
 ```
 
@@ -81,7 +80,6 @@ Railway / Fly.io / Render + マネージドPostgres (Neon等) で十分。
 4. **APIトークン生成** (3つとも別値):
    ```bash
    openssl rand -hex 32   # SUBLY_SELLER_API_TOKEN
-   openssl rand -hex 32   # SUBLY_CLIENT_API_TOKEN
    openssl rand -hex 32   # SUBLY_ADMIN_API_TOKEN
    ```
 5. **Settlement LUT作成** (ローカルから実行可。sponsor入金後):
@@ -162,7 +160,6 @@ DB・RPC・sponsor鍵すべて不要。
 ```bash
 NODE_ENV=development \
 SUBLY_SELLER_API_TOKEN=dev-seller \
-SUBLY_CLIENT_API_TOKEN=dev-client \
 SUBLY_ADMIN_API_TOKEN=dev-admin \
 npm run dev
 ```
@@ -182,7 +179,6 @@ npm run dev
 ```bash
 NODE_ENV=development SOLANA_RPC_URL=... SUBLY_SPONSOR_KEYPAIR=... \
 SUBLY_SELLER_API_TOKEN=dev-seller \
-SUBLY_CLIENT_API_TOKEN=dev-client \
 SUBLY_ADMIN_API_TOKEN=dev-admin \
 npm run dev
 ```

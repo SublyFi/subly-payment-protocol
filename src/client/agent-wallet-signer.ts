@@ -1,4 +1,5 @@
-import type { KeyPairSigner } from "@solana/kit";
+import { signBytes, type KeyPairSigner } from "@solana/kit";
+import bs58 from "bs58";
 import {
   addSignaturesToSerializedTransaction,
   signatureBase58ForSigner
@@ -42,6 +43,13 @@ export interface AgentWalletSigner {
     serializedTransaction: string;
     lookupTables?: Record<string, readonly string[]> | undefined;
   }): Promise<SignedAgentTransaction>;
+  /**
+   * Signs a facilitator API auth message (wallet-signature request auth).
+   * Unlike the transaction signers above this signs arbitrary bytes, so the
+   * message MUST be the canonical wallet-auth string, never transaction
+   * bytes (see src/api/wallet-auth.ts).
+   */
+  signApiMessage(message: Uint8Array): Promise<string>;
 }
 
 /**
@@ -118,6 +126,14 @@ export class LocalKeypairAgentWalletSigner implements AgentWalletSigner {
         "Intent wallet does not match this signer's wallet"
       );
     }
+  }
+
+  async signApiMessage(message: Uint8Array): Promise<string> {
+    const signature = await signBytes(
+      this.keyPairSigner.keyPair.privateKey,
+      message
+    );
+    return bs58.encode(signature);
   }
 
   private async sign(

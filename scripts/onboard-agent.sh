@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
-# Onboards one beta participant's agent wallet (operator-run, admin token).
-# The participant only shares their PUBLIC key; private keys never move.
-#
-# Run twice per participant (idempotent):
-#   1. when their pubkey arrives — registration unlocks deposits
-#      (vault flows require a registered non-interactive wallet)
-#   2. after their deposit — the chain sync picks up the real position
+# Operator tool: registers/re-syncs/re-activates an agent wallet via the
+# admin token. Participants do NOT need this — their clients self-register
+# with wallet-signature auth on first use. Keep it for manual recovery
+# (e.g. forcing a chain re-sync) and for first-time policy setup.
 #
 #   SUBLY_FACILITATOR_URL=https://facilitator.example.com \
 #   SUBLY_ADMIN_API_TOKEN=... \

@@ -8,16 +8,16 @@
  * in src/client/paid-fetch.ts and is unit-tested there.
  *
  * Env (same as demo/buyer.ts):
- *   SUBLY_CLIENT_API_TOKEN      facilitator client token
  *   SOLANA_RPC_URL              RPC for the agent's own lookup-table view
  *   SUBLY_DEMO_AGENT_KEYPAIR or SUBLY_DEMO_AGENT_KEYPAIR_PATH
  * Optional env:
  *   SUBLY_FACILITATOR_URL       default http://localhost:3000
- *   SUBLY_ADMIN_API_TOKEN       if set, the result includes the yield budget
- *                               before/after the payment
  *   SUBLY_MCP_MAX_AMOUNT_RAW_USDC  default client-side payment cap when the
  *                               tool call has no maxAmountRawUsdc (default
  *                               10000 = 0.01 USDC)
+ *
+ * No API token: requests authenticate with the wallet's own signature, and
+ * the wallet self-registers at the facilitator on boot.
  *
  * stdout is the MCP transport; all diagnostics must go to stderr.
  */
@@ -39,6 +39,8 @@ import {
   type PendingPaymentRecord,
   type PendingStateStore
 } from "../src/client/paid-fetch.js";
+import { ensureWalletOnboarded } from "../src/client/onboarding.js";
+import { walletAuthHeaders } from "../src/client/wallet-auth-headers.js";
 import { loadKeyPairSigner } from "../src/solana/keys.js";
 import { createRpcFromEnv } from "../src/solana/rpc.js";
 import { SublyX402Client, X402ClientError } from "../src/x402/client.js";
@@ -47,11 +49,9 @@ import { requireEnv } from "./shared.js";
 const TOOL_NAME = "fetch_with_subly_payment";
 const DEFAULT_MAX_AMOUNT_RAW_USDC = 10_000n; // 0.01 USDC
 
-const clientApiToken = requireEnv("SUBLY_CLIENT_API_TOKEN");
 requireEnv("SOLANA_RPC_URL");
 const facilitatorBaseUrl =
   process.env.SUBLY_FACILITATOR_URL ?? "http://localhost:3000";
-const adminApiToken = process.env.SUBLY_ADMIN_API_TOKEN ?? null;
 const defaultMaxAmountRawUsdc =
   process.env.SUBLY_MCP_MAX_AMOUNT_RAW_USDC === undefined
     ? DEFAULT_MAX_AMOUNT_RAW_USDC
@@ -66,14 +66,11 @@ const signer = new LocalKeypairAgentWalletSigner(keyPairSigner);
 const rpc = createRpcFromEnv();
 
 async function fetchBudget(): Promise<BudgetSnapshot | null> {
-  if (adminApiToken === null) {
-    return null;
-  }
   try {
-    const response = await fetch(
-      `${facilitatorBaseUrl}/v1/wallets/${signer.walletAddress}/budget`,
-      { headers: { authorization: `Bearer ${adminApiToken}` } }
-    );
+    const url = `${facilitatorBaseUrl}/v1/wallets/${signer.walletAddress}/budget`;
+    const response = await fetch(url, {
+      headers: await walletAuthHeaders({ signer, method: "GET", url })
+    });
     if (response.status !== 200) {
       return null;
     }
@@ -95,21 +92,19 @@ async function fetchBudget(): Promise<BudgetSnapshot | null> {
 }
 
 /**
- * Resolves lost deliveries via GET /v1/payments/:paymentId (admin auth).
- * "not_settled" only for terminal pre-submission states; a payment that is
- * prepared/submitted may still land and stays indeterminate.
+ * Resolves lost deliveries via GET /v1/payments/:paymentId (the wallet may
+ * read its own payments). "not_settled" only for terminal pre-submission
+ * states; a payment that is prepared/submitted may still land and stays
+ * indeterminate.
  */
 async function paymentStatusFor(
   paymentId: string
 ): Promise<PaymentOutcomeProbe> {
-  if (adminApiToken === null) {
-    return "indeterminate";
-  }
   try {
-    const response = await fetch(
-      `${facilitatorBaseUrl}/v1/payments/${paymentId}`,
-      { headers: { authorization: `Bearer ${adminApiToken}` } }
-    );
+    const url = `${facilitatorBaseUrl}/v1/payments/${paymentId}`;
+    const response = await fetch(url, {
+      headers: await walletAuthHeaders({ signer, method: "GET", url })
+    });
     if (response.status !== 200) {
       return "indeterminate";
     }
@@ -167,7 +162,6 @@ const pendingStatePath =
 const paidFetchService = new PaidFetchService({
   signatureBuilder: new SublyX402Client({
     facilitatorBaseUrl,
-    clientApiToken,
     signer,
     lookupTablesFor: (serializedTransaction) =>
       fetchLookupTablesForTransaction(rpc, serializedTransaction)
@@ -339,6 +333,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     };
   }
 });
+
+// Self-serve onboarding: register + activate + chain-sync this wallet so
+// no operator step is needed before the first deposit or payment.
+try {
+  await ensureWalletOnboarded({ facilitatorBaseUrl, signer });
+  console.error("[subly-mcp] wallet registered and synced at the facilitator");
+} catch (error) {
+  console.error(
+    `[subly-mcp] wallet onboarding failed (will still serve tools): ${
+      error instanceof Error ? error.message : String(error)
+    }`
+  );
+}
 
 const transport = new StdioServerTransport();
 await server.connect(transport);

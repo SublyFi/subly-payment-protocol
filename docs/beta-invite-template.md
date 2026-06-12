@@ -1,7 +1,7 @@
 # β招待メッセージ テンプレート (運営用)
 
-参加者に送る案内。`<client トークン>` は `demo/env/beta-credentials.mainnet.env`
-の `SUBLY_CLIENT_API_TOKEN`。リポジトリへの GitHub アクセス権の付与を忘れずに。
+参加者に送る案内。リポジトリへの GitHub アクセス権の付与だけ忘れずに。
+API トークンや参加者ごとの登録作業はない (ウォレット署名認証 + 初回自動登録)。
 
 ---
 
@@ -10,8 +10,7 @@ Subly クローズドβへようこそ!
 あなたの AI エージェント (Claude Code 等) が、預けた USDC の**元本に
 手を付けずに運用利回りだけで**有料 API に支払う、を体験できます。
 
-**必要なもの**: Node.js 20+ / USDC (Solana, 50〜500 USDC 推奨) /
-無料の Solana RPC (Alchemy か Helius で発行)
+**必要なもの**: Node.js 20+ / USDC (Solana, 50〜500 USDC 推奨)
 
 **セットアップ (5 分)**:
 
@@ -24,12 +23,9 @@ bash demo/setup-beta.sh
 Claude Code を使っているなら、clone した後にリポジトリで Claude Code を
 開いて「Subly βのセットアップをして」と言うだけでも OK です。
 
-ウィザードに入力する値:
-- client トークン: `<client トークン>`
-- facilitator URL: `https://api.demo.sublyfi.com` (デフォルトのまま)
-
-セットアップ後、表示された公開鍵を私に送ってください。登録したら
-USDC の送金 → deposit に進めます (手順はウィザードが表示します)。
+トークンや事前登録はありません。ウィザードが表示するあなたの agent
+ウォレット宛てに USDC を送って deposit すれば、登録も自動で済みます
+(手順はウィザードが表示します)。
 
 **試す**: 新しい Claude Code セッションで `subly` サーバーを承認して、
 

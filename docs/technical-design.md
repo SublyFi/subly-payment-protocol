@@ -255,10 +255,9 @@ One `(seller, sellerRequestId)` has at most one live-or-settled payment at a tim
 Protected API endpoints use role-specific bearer tokens, not one shared internal token:
 
 - `SUBLY_SELLER_API_TOKEN` for seller-facing `/v1/x402/verify` and `/v1/x402/settle`.
-- `SUBLY_CLIENT_API_TOKEN` for client/agent preparation and submission endpoints.
 - `SUBLY_ADMIN_API_TOKEN` for wallet policy, wallet sync, payment lookup, and settlement recovery.
 
-Tokens are not interchangeable across roles, must not share the same value (enforced at startup), and deposit/withdrawal status lookup additionally accepts the client token because polling is part of the agent's own flow.
+Buyer-facing endpoints (payment prepare, vault flows, self-serve wallet registration, chain sync, budget and flow-status reads) carry no shared token: each request is wallet-signature authenticated (`x-subly-wallet` / `x-subly-signed-at` / `x-subly-signature` over method, path, exact body bytes, and a freshness timestamp — see `src/api/wallet-auth.ts`). A wallet can only act on itself; manual position sync stays admin-only because a wallet must not attest its own share count or exchange rate. Operator tokens are not interchangeable across roles and must not share the same value (enforced at startup).
 
 ## Settlement Transaction
 

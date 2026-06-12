@@ -7,5 +7,7 @@ coverage/
 .agents
 .claude/*
 !.claude/skills
+.claude/skills/*
+!.claude/skills/subly-beta-setup
 .superstack
 demo/env/mcp-pending-payments.json

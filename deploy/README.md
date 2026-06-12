@@ -17,8 +17,8 @@ cp seller.production.env.example seller.production.env
 cp Caddyfile.example Caddyfile        # ドメインを実値に
 echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" > .env
 
-# API トークン 3 種を生成して facilitator.production.env に記入
-openssl rand -hex 24   # seller / client / admin それぞれ
+# API トークン 2 種を生成して facilitator.production.env に記入
+openssl rand -hex 24   # seller / admin それぞれ (buyer はトークン不要)
 ```
 
 - **sponsor 鍵**: 本番用に新規生成を推奨 (`solana-keygen new -s -o secrets/sponsor.json`
@@ -74,14 +74,11 @@ lamports の立替なので、0.5 SOL で数万決済分)。
 
 ## 5. 参加者オンボーディング (1 人あたり)
 
-1. 参加者に `docs/beta-guide.md` と client トークン・facilitator URL・
-   seller URL を渡す
-2. 参加者から agent 公開鍵を受け取ったら 1 回目:
-   `bash scripts/onboard-agent.sh <pubkey>` (policy フラグなし)。
-   **deposit はウォレット登録済みが前提なので、この登録が先**
-3. 参加者の deposit 完了連絡後に 2 回目 (同じコマンド):
-   chain sync が実残高を取り込み、実 position で activate される
-4. budget API で position 価値が見えることを確認して完了連絡
+参加者ごとの運営作業は**ありません**。招待 (`docs/beta-invite-template.md`)
+を送るだけで、ウォレット登録・activate・sync はすべて参加者側の
+クライアントがウォレット署名認証で自動実行する (deposit 時および MCP
+サーバー起動時)。`scripts/onboard-agent.sh` は手動での再 sync 等の
+運用ツールとして残っている (admin トークンで任意のウォレットに実行可)。
 
 ## 障害対応
 

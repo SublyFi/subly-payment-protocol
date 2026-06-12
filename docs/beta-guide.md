@@ -23,10 +23,13 @@
 
 ## 必要なもの
 
-- Node.js 20+ / git / (鍵生成に) solana-keygen
-- Solana RPC URL (Alchemy / Helius などの無料枠で十分)
+- Node.js 20+ / git
 - USDC (Solana mainnet、推奨 50〜500 USDC) を入れた既存ウォレット
-- 運営から受け取る: facilitator URL、client トークン、有料デモ API の URL
+- 運営から受け取る: facilitator URL と有料デモ API の URL (招待に記載)
+
+API トークンや事前登録は**ありません**。あなたのリクエストはウォレットの
+署名そのもので認証され (標準 x402 と同じ考え方)、ウォレットは初回利用時に
+自動で facilitator に登録されます。
 
 ## セットアップ (最短: コマンド 2 つ)
 
@@ -35,14 +38,12 @@ git clone <このリポジトリ> && cd subly-agent-payments
 bash demo/setup-beta.sh   # 鍵生成 + env 作成 + Claude Code への MCP 登録まで一括
 ```
 
-ウィザードが client トークン (招待に記載) とあなたの RPC URL を聞き、
-最後に**運営に送る公開鍵**と残りの手順を表示します。あとは:
+ウィザードは RPC URL を聞くだけです (空 Enter で公開 RPC を使用)。あとは:
 
-1. 表示された公開鍵を運営に送る (運営がウォレット登録)
-2. その公開鍵宛てに USDC を送金 (Phantom 等から。SOL 不要 — 手数料は
-   運営の sponsor が立て替える)
-3. vault に deposit: `source demo/env/buyer.mainnet.env && npm run demo:deposit -- 100000000` (= 100 USDC)
-4. 運営に「deposit した」と伝える → 運営が activate して完了
+1. 表示されたあなたの agent ウォレットアドレス宛てに USDC を送金
+   (Phantom 等から。SOL 不要 — 手数料は運営の sponsor が立て替える)
+2. vault に deposit: `source demo/env/buyer.mainnet.env && npm run demo:deposit -- 100000000` (= 100 USDC)。
+   **ウォレット登録もこのとき自動で行われる** — 運営への連絡は不要
 
 **Claude Code を使っている場合はさらに簡単**: このリポジトリで Claude Code を
 開いて「**Subly βのセットアップをして**」と言うだけで、同梱の
@@ -53,7 +54,7 @@ bash demo/setup-beta.sh   # 鍵生成 + env 作成 + Claude Code への MCP 登�
 
 ```bash
 npm ci
-npx tsx demo/generate-agent-key.ts demo/env/keys/agent-beta.json  # 公開鍵が出力される
+npx tsx demo/generate-agent-key.ts demo/env/keys/agent-beta.json  # 鍵生成
 cp demo/env/buyer.beta.env.example demo/env/buyer.mainnet.env      # <...> を埋める
 claude mcp add subly -- bash "$(pwd)/demo/run-mcp.sh"              # MCP 登録
 ```
@@ -101,13 +102,13 @@ OpenClaw 等の他の MCP クライアントには、コマンド
 | `insufficient_yield` | spendable yield が必要額未満。details に内訳 (価格 / gross / fee) が出る。**仕様通りの動作** — yield が貯まるまで待つ |
 | `amount_exceeds_client_cap` | challenge の価格があなたの上限 (`SUBLY_MCP_MAX_AMOUNT_RAW_USDC`) 超え。意図した価格なら上限を上げる |
 | `delivery_failed_payment_pending` | 支払い署名済みで配信だけ失敗。**同じ URL でもう一度呼ぶだけ** (同じ署名で再試行され、二重払いしない) |
-| `payment_outcome_unknown` / `payment_already_settled` | 前回の支払いの結果が不明 / 既に決済済み。運営に paymentId を伝えて確認。`forceNewPayment=true` は「二重に払ってよい」という明示なので安易に使わない |
+| `payment_outcome_unknown` / `payment_already_settled` | 前回の支払いの結果が不明 / 既に決済済み。ツールが自動で facilitator に照会し、未 settle 確定なら次の呼び出しで安全に再購入される。`payment_already_settled` が出た場合の `forceNewPayment=true` は「同じものに二重に払う」という明示なので安易に使わない |
 | 429 (rate limited) | チャレンジ発行のレート制限。少し待つ |
 | resource mismatch | URL は 402 を返した URL と完全一致が必要 (末尾スラッシュ等に注意) |
 
 ## 引き出し
 
-預けた USDC はいつでも引き出せます (instant withdraw、mainnet 検証済み):
+預けた USDC はいつでも自分で引き出せます (instant withdraw、mainnet 検証済み。運営への依頼は不要):
 
 ```bash
 source demo/env/buyer.mainnet.env && npm run demo:withdraw -- 1000000  # 1 USDC

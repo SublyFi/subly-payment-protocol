@@ -1,6 +1,13 @@
 import { timingSafeEqual } from "node:crypto";
 import Fastify from "fastify";
 import type { FastifyReply, FastifyRequest } from "fastify";
+import {
+  verifyWalletAuth,
+  WALLET_AUTH_SIGNED_AT_HEADER,
+  WALLET_AUTH_SIGNATURE_HEADER,
+  WALLET_AUTH_WALLET_HEADER
+} from "./wallet-auth.js";
+import { TokenBucketRateLimiter } from "../x402/rate-limit.js";
 import { ZodError } from "zod";
 import {
   PAYMENT_SCHEME,
@@ -12,7 +19,7 @@ import {
   isSublyError,
   type SublyService
 } from "../domain/payment-service.js";
-import { unavailable } from "../domain/errors.js";
+import { forbidden, notFound, unavailable } from "../domain/errors.js";
 import type { ChainWalletSyncService } from "../domain/chain-wallet-sync.js";
 import { OperationalMetrics, TRACKED_ERROR_CODES } from "../domain/metrics.js";
 import type { VaultFlowService } from "../domain/vault-flow-service.js";
@@ -38,12 +45,25 @@ export interface SponsorMonitoring {
 
 export interface ServerOptions {
   sellerApiToken?: string | null;
-  clientApiToken?: string | null;
   adminApiToken?: string | null;
   vaultFlowService?: VaultFlowService | null;
   chainWalletSync?: ChainWalletSyncService | null;
   sponsorMonitoring?: SponsorMonitoring | null;
   metrics?: OperationalMetrics | undefined;
+  /** Per-IP request rate (per minute) for non-health endpoints; 0 disables. */
+  apiRatePerMinute?: number | undefined;
+  trustProxy?: boolean | undefined;
+}
+
+declare module "fastify" {
+  interface FastifyRequest {
+    /** Raw request body bytes as received; basis for wallet-auth signatures. */
+    rawBodyString?: string;
+    /** Wallet authenticated via x-subly-* signature headers, when present. */
+    authedWallet?: string;
+    /** True when the request authenticated with the admin bearer token. */
+    authedAsAdmin?: boolean;
+  }
 }
 
 export function buildServer(
@@ -55,17 +75,36 @@ export function buildServer(
   const sponsorMonitoring = options.sponsorMonitoring ?? null;
   const metrics = options.metrics ?? new OperationalMetrics();
   const server = Fastify({
-    logger: true
+    logger: true,
+    trustProxy:
+      options.trustProxy ?? process.env.SUBLY_TRUST_PROXY === "1"
   });
+
+  // Keep the raw body bytes: wallet-auth signatures cover the exact bytes
+  // sent, so re-serializing the parsed body would not be sound.
+  server.addContentTypeParser(
+    "application/json",
+    { parseAs: "string" },
+    (request, body, done) => {
+      request.rawBodyString = typeof body === "string" ? body : "";
+      if (request.rawBodyString.length === 0) {
+        done(null, null);
+        return;
+      }
+      try {
+        done(null, JSON.parse(request.rawBodyString));
+      } catch {
+        done(new Error("invalid JSON body"), undefined);
+      }
+    }
+  );
+
   const sellerToken =
     options.sellerApiToken ?? process.env.SUBLY_SELLER_API_TOKEN ?? null;
-  const clientToken =
-    options.clientApiToken ?? process.env.SUBLY_CLIENT_API_TOKEN ?? null;
   const adminToken =
     options.adminApiToken ?? process.env.SUBLY_ADMIN_API_TOKEN ?? null;
   assertDistinctRoleTokens({
     seller: sellerToken,
-    client: clientToken,
     admin: adminToken
   });
   const requireSellerAuth = bearerAuthPreHandler(
@@ -73,22 +112,93 @@ export function buildServer(
     "seller",
     "SUBLY_SELLER_API_TOKEN"
   );
-  const requireClientAuth = bearerAuthPreHandler(
-    [clientToken],
-    "client",
-    "SUBLY_CLIENT_API_TOKEN"
-  );
   const requireAdminAuth = bearerAuthPreHandler(
     [adminToken],
     "admin",
     "SUBLY_ADMIN_API_TOKEN"
   );
-  // Flow status polling is part of the agent's own deposit/withdraw flow.
-  const requireClientOrAdminAuth = bearerAuthPreHandler(
-    [clientToken, adminToken],
-    "client",
-    "SUBLY_CLIENT_API_TOKEN"
-  );
+
+  const isAdminRequest = (request: FastifyRequest): boolean => {
+    const authorization = request.headers.authorization;
+    if (adminToken === null || adminToken.length === 0) {
+      return false;
+    }
+    const provided = authorization?.startsWith("Bearer ")
+      ? authorization.slice("Bearer ".length)
+      : "";
+    return constantTimeTokenEqual(provided, adminToken);
+  };
+
+  /**
+   * Buyer-facing auth: a wallet-signature over (method, path, body, time),
+   * or the admin bearer token for operator tooling. Sets request.authedWallet
+   * / request.authedAsAdmin for ownership checks in handlers.
+   */
+  const requireWalletOrAdminAuth = async (
+    request: FastifyRequest,
+    reply: FastifyReply
+  ) => {
+    if (isAdminRequest(request)) {
+      request.authedAsAdmin = true;
+      return;
+    }
+    const result = verifyWalletAuth({
+      wallet: headerValue(request, WALLET_AUTH_WALLET_HEADER),
+      signedAt: headerValue(request, WALLET_AUTH_SIGNED_AT_HEADER),
+      signature: headerValue(request, WALLET_AUTH_SIGNATURE_HEADER),
+      method: request.method,
+      path: new URL(request.url, "http://localhost").pathname,
+      rawBody: request.rawBodyString ?? ""
+    });
+    if (!result.ok) {
+      reply.status(401).send({
+        success: false,
+        error: { code: "unauthorized", message: result.reason }
+      });
+      return;
+    }
+    request.authedWallet = result.wallet;
+  };
+
+  /** Wallet-authed requests may only act on their own wallet. */
+  const assertOwnWallet = (request: FastifyRequest, wallet: string): void => {
+    if (request.authedAsAdmin === true) {
+      return;
+    }
+    if (request.authedWallet !== wallet) {
+      throw forbiddenWalletMismatch();
+    }
+  };
+
+  const apiRatePerMinute =
+    options.apiRatePerMinute ??
+    Number(process.env.SUBLY_API_RATE_PER_MIN ?? "240");
+  if (apiRatePerMinute > 0) {
+    const apiLimiter = new TokenBucketRateLimiter({
+      capacity: apiRatePerMinute,
+      refillPerSecond: apiRatePerMinute / 60
+    });
+    server.addHook("onRequest", async (request, reply) => {
+      if (request.url === "/healthz") {
+        return;
+      }
+      if (!apiLimiter.tryTake(request.ip)) {
+        reply
+          .status(429)
+          .header(
+            "retry-after",
+            String(Math.max(1, apiLimiter.retryAfterSeconds(request.ip)))
+          )
+          .send({
+            success: false,
+            error: {
+              code: "rate_limited",
+              message: "Too many requests; retry shortly"
+            }
+          });
+      }
+    });
+  }
 
   server.setErrorHandler((error, _request, reply) => {
     if (isSublyError(error)) {
@@ -177,11 +287,14 @@ export function buildServer(
     }
   );
 
+  // Self-serve: a wallet registers (and activates) itself by signing the
+  // request with its own key — no operator allowlisting.
   server.post(
     "/v1/wallets/agent",
-    { preHandler: requireAdminAuth },
+    { preHandler: requireWalletOrAdminAuth },
     async (request) => {
       const body = registerAgentWalletSchema.parse(request.body);
+      assertOwnWallet(request, body.wallet);
       return service.registerAgentWallet(body);
     }
   );
@@ -206,8 +319,9 @@ export function buildServer(
     Params: { wallet: string };
   }>(
     "/v1/wallets/:wallet/sync",
-    { preHandler: requireAdminAuth },
+    { preHandler: requireWalletOrAdminAuth },
     async (request) => {
+      assertOwnWallet(request, request.params.wallet);
       const chainSyncRequest = chainSyncWalletPositionSchema.safeParse(
         request.body
       );
@@ -224,6 +338,15 @@ export function buildServer(
         });
       }
 
+      // Manual syncs assert arbitrary position numbers (shares, exchange
+      // rate, basis); a wallet attesting its own yield is exactly what the
+      // budget model must prevent, so only the operator may do this.
+      if (request.authedAsAdmin !== true) {
+        throw forbidden(
+          "admin_required",
+          "Manual position sync is operator-only; use {\"source\":\"chain\"}"
+        );
+      }
       const body = syncWalletPositionSchema.parse(request.body);
       return service.syncWalletPosition({
         wallet: request.params.wallet,
@@ -252,16 +375,19 @@ export function buildServer(
     Querystring: { vault?: string };
   }>(
     "/v1/wallets/:wallet/budget",
-    { preHandler: requireAdminAuth },
-    async (request) =>
-      service.getBudget(request.params.wallet, request.query.vault)
+    { preHandler: requireWalletOrAdminAuth },
+    async (request) => {
+      assertOwnWallet(request, request.params.wallet);
+      return service.getBudget(request.params.wallet, request.query.vault);
+    }
   );
 
   server.post(
     "/v1/payments/prepare",
-    { preHandler: requireClientAuth },
+    { preHandler: requireWalletOrAdminAuth },
     async (request) => {
       const body = preparePaymentSchema.parse(request.body);
+      assertOwnWallet(request, body.wallet);
       return service.preparePayment(body);
     }
   );
@@ -270,8 +396,21 @@ export function buildServer(
     Params: { paymentId: string };
   }>(
     "/v1/payments/:paymentId",
-    { preHandler: requireAdminAuth },
-    async (request) => service.getPayment(request.params.paymentId)
+    { preHandler: requireWalletOrAdminAuth },
+    async (request) => {
+      const payment = (await service.getPayment(
+        request.params.paymentId
+      )) as { wallet?: string };
+      // Wallet-authed callers may only see their own payments; report
+      // not-found rather than confirming foreign payment ids exist.
+      if (
+        request.authedAsAdmin !== true &&
+        payment.wallet !== request.authedWallet
+      ) {
+        throw notFound("payment_not_found", "Payment intent does not exist");
+      }
+      return payment;
+    }
   );
 
   server.post(
@@ -357,16 +496,20 @@ export function buildServer(
 
   server.post(
     "/v1/deposits/prepare",
-    { preHandler: requireClientAuth },
+    { preHandler: requireWalletOrAdminAuth },
     async (request) => {
       const body = prepareDepositSchema.parse(request.body);
+      assertOwnWallet(request, body.wallet);
       return requireVaultFlows().prepareDeposit(body);
     }
   );
 
+  // Submit ownership is enforced by the flow itself: the transaction must
+  // carry a valid signature from the intent's wallet, so the wallet-auth
+  // here only gates abuse, not ownership.
   server.post(
     "/v1/deposits/submit",
-    { preHandler: requireClientAuth },
+    { preHandler: requireWalletOrAdminAuth },
     async (request) => {
       const body = submitDepositSchema.parse(request.body);
       return requireVaultFlows().submitDeposit(body);
@@ -377,22 +520,34 @@ export function buildServer(
     Params: { depositId: string };
   }>(
     "/v1/deposits/:depositId",
-    { preHandler: requireClientOrAdminAuth },
-    async (request) => requireVaultFlows().getDeposit(request.params.depositId)
+    { preHandler: requireWalletOrAdminAuth },
+    async (request) => {
+      const deposit = (await requireVaultFlows().getDeposit(
+        request.params.depositId
+      )) as { wallet?: string };
+      if (
+        request.authedAsAdmin !== true &&
+        deposit.wallet !== request.authedWallet
+      ) {
+        throw notFound("deposit_not_found", "Deposit intent does not exist");
+      }
+      return deposit;
+    }
   );
 
   server.post(
     "/v1/withdrawals/prepare",
-    { preHandler: requireClientAuth },
+    { preHandler: requireWalletOrAdminAuth },
     async (request) => {
       const body = prepareWithdrawalSchema.parse(request.body);
+      assertOwnWallet(request, body.wallet);
       return requireVaultFlows().prepareWithdrawal(body);
     }
   );
 
   server.post(
     "/v1/withdrawals/submit",
-    { preHandler: requireClientAuth },
+    { preHandler: requireWalletOrAdminAuth },
     async (request) => {
       const body = submitWithdrawalSchema.parse(request.body);
       return requireVaultFlows().submitWithdrawal(body);
@@ -403,17 +558,45 @@ export function buildServer(
     Params: { withdrawalId: string };
   }>(
     "/v1/withdrawals/:withdrawalId",
-    { preHandler: requireClientOrAdminAuth },
-    async (request) =>
-      requireVaultFlows().getWithdrawal(request.params.withdrawalId)
+    { preHandler: requireWalletOrAdminAuth },
+    async (request) => {
+      const withdrawal = (await requireVaultFlows().getWithdrawal(
+        request.params.withdrawalId
+      )) as { wallet?: string };
+      if (
+        request.authedAsAdmin !== true &&
+        withdrawal.wallet !== request.authedWallet
+      ) {
+        throw notFound(
+          "withdrawal_not_found",
+          "Withdrawal intent does not exist"
+        );
+      }
+      return withdrawal;
+    }
   );
 
   return server;
 }
 
+function headerValue(
+  request: FastifyRequest,
+  name: string
+): string | undefined {
+  const value = request.headers[name];
+  return typeof value === "string" ? value : undefined;
+}
+
+function forbiddenWalletMismatch() {
+  return forbidden(
+    "wallet_mismatch",
+    "The wallet-auth signature does not belong to the wallet this request acts on"
+  );
+}
+
 function bearerAuthPreHandler(
   acceptedTokens: Array<string | null>,
-  scope: "seller" | "client" | "admin",
+  scope: "seller" | "admin",
   envVarName: string
 ) {
   const configuredTokens = acceptedTokens.filter(
@@ -462,7 +645,6 @@ function bearerAuthPreHandler(
  */
 function assertDistinctRoleTokens(tokens: {
   seller: string | null;
-  client: string | null;
   admin: string | null;
 }): void {
   const configured = Object.entries(tokens).filter(

@@ -1,6 +1,7 @@
 import { SOLANA_MAINNET_NETWORK, SUBLY_VAULT } from "../config/constants.js";
 import { deriveAssociatedTokenAddress } from "../lib/associated-token-account.js";
 import type { AgentWalletSigner } from "../client/agent-wallet-signer.js";
+import { walletAuthHeaders } from "../client/wallet-auth-headers.js";
 import type { PaymentSigningIntent } from "../client/transaction-intent-validator.js";
 import {
   decodePaymentRequiredHeader,
@@ -29,7 +30,6 @@ export type ClientFetchLike = (
 
 export interface SublyX402ClientConfig {
   facilitatorBaseUrl: string;
-  clientApiToken: string;
   signer: AgentWalletSigner;
   network?: string;
   /**
@@ -75,7 +75,6 @@ interface PreparedPaymentResponse {
 export class SublyX402Client {
   private readonly config: {
     facilitatorBaseUrl: string;
-    clientApiToken: string;
     network: string;
   };
   private readonly signer: AgentWalletSigner;
@@ -87,7 +86,6 @@ export class SublyX402Client {
   constructor(config: SublyX402ClientConfig) {
     this.config = {
       facilitatorBaseUrl: config.facilitatorBaseUrl.replace(/\/$/, ""),
-      clientApiToken: config.clientApiToken,
       network: config.network ?? SOLANA_MAINNET_NETWORK
     };
     this.signer = config.signer;
@@ -233,15 +231,8 @@ export class SublyX402Client {
   }): Promise<PreparedPaymentResponse> {
     const { requirement } = input;
     const wallet = this.signer.walletAddress;
-    const response = await this.fetchImpl(
-      `${this.config.facilitatorBaseUrl}/v1/payments/prepare`,
-      {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${this.config.clientApiToken}`,
-          "content-type": "application/json"
-        },
-        body: JSON.stringify({
+    const prepareUrl = `${this.config.facilitatorBaseUrl}/v1/payments/prepare`;
+    const prepareBody = JSON.stringify({
           wallet,
           scheme: requirement.scheme,
           network: requirement.network,
@@ -256,13 +247,24 @@ export class SublyX402Client {
           amountRawUsdc: requirement.amountRawUsdc,
           payTo: requirement.payTo,
           sellerUsdcAta: requirement.extra.sellerUsdcAta,
-          dustRecipientUsdcAta: deriveAssociatedTokenAddress({
-            owner: wallet,
-            mint: SUBLY_VAULT.usdcMint
-          })
-        })
-      }
-    );
+      dustRecipientUsdcAta: deriveAssociatedTokenAddress({
+        owner: wallet,
+        mint: SUBLY_VAULT.usdcMint
+      })
+    });
+    const response = await this.fetchImpl(prepareUrl, {
+      method: "POST",
+      headers: {
+        ...(await walletAuthHeaders({
+          signer: this.signer,
+          method: "POST",
+          url: prepareUrl,
+          body: prepareBody
+        })),
+        "content-type": "application/json"
+      },
+      body: prepareBody
+    });
 
     const body = (await response.json()) as Record<string, unknown>;
     if (response.status !== 200) {

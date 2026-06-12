@@ -9,19 +9,19 @@
  *   npm run demo:deposit -- <amountRawUsdc>   (e.g. 60000000 = 60 USDC)
  *
  * Required env:
- *   SUBLY_CLIENT_API_TOKEN      facilitator client token
  *   SOLANA_RPC_URL              RPC for the agent's own lookup-table view
  *   SUBLY_DEMO_AGENT_KEYPAIR or SUBLY_DEMO_AGENT_KEYPAIR_PATH
  * Optional env:
  *   SUBLY_FACILITATOR_URL       default http://localhost:3000
  */
 import { LocalKeypairAgentWalletSigner } from "../src/client/agent-wallet-signer.js";
+import { ensureWalletOnboarded } from "../src/client/onboarding.js";
+import { walletAuthHeaders } from "../src/client/wallet-auth-headers.js";
 import { fetchLookupTablesForTransaction } from "../src/client/lookup-tables.js";
 import { loadKeyPairSigner } from "../src/solana/keys.js";
 import { createRpcFromEnv } from "../src/solana/rpc.js";
 import { fail, formatRawUsdc, requireEnv } from "./shared.js";
 
-const clientApiToken = requireEnv("SUBLY_CLIENT_API_TOKEN");
 requireEnv("SOLANA_RPC_URL");
 const facilitatorBaseUrl =
   process.env.SUBLY_FACILITATOR_URL ?? "http://localhost:3000";
@@ -43,13 +43,20 @@ const signer = new LocalKeypairAgentWalletSigner(keyPairSigner);
 const rpc = createRpcFromEnv();
 
 async function postJson(path: string, body: unknown): Promise<unknown> {
-  const response = await fetch(`${facilitatorBaseUrl}${path}`, {
+  const url = `${facilitatorBaseUrl}${path}`;
+  const serialized = JSON.stringify(body);
+  const response = await fetch(url, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${clientApiToken}`,
+      ...(await walletAuthHeaders({
+        signer,
+        method: "POST",
+        url,
+        body: serialized
+      })),
       "content-type": "application/json"
     },
-    body: JSON.stringify(body)
+    body: serialized
   });
   const text = await response.text();
   if (response.status !== 200) {
@@ -60,6 +67,10 @@ async function postJson(path: string, body: unknown): Promise<unknown> {
 
 console.log(`[deposit] agent wallet: ${signer.walletAddress}`);
 console.log(`[deposit] facilitator:  ${facilitatorBaseUrl}`);
+console.log("\n[deposit] step 0: ensure the wallet is registered (self-serve)");
+await ensureWalletOnboarded({ facilitatorBaseUrl, signer });
+console.log("[deposit] wallet registered and synced");
+
 console.log(
   `\n[deposit] step 1: prepare deposit of ${formatRawUsdc(amountRawUsdc)} USDC`
 );

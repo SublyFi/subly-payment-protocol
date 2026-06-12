@@ -24,6 +24,14 @@ export function conflict(code: string, message: string, details?: unknown): Subl
   return new SublyError(code, message, 409, details);
 }
 
+export function forbidden(
+  code: string,
+  message: string,
+  details?: unknown
+): SublyError {
+  return new SublyError(code, message, 403, details);
+}
+
 export function unavailable(
   code: string,
   message: string,

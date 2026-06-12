@@ -6,7 +6,6 @@ describe("API server auth", () => {
   it("keeps health and supported endpoints public", async () => {
     const server = buildServer(new SublyService(), {
       sellerApiToken: null,
-      clientApiToken: null,
       adminApiToken: null
     });
 
@@ -27,13 +26,12 @@ describe("API server auth", () => {
   it("rejects protected endpoints when auth is not configured", async () => {
     const server = buildServer(new SublyService(), {
       sellerApiToken: null,
-      clientApiToken: null,
       adminApiToken: null
     });
 
     const response = await server.inject({
       method: "POST",
-      url: "/v1/wallets/agent",
+      url: "/v1/admin/liquidity-policies",
       payload: {}
     });
 
@@ -64,7 +62,6 @@ describe("API server auth", () => {
   it("does not allow a seller token to call admin endpoints", async () => {
     const server = buildServer(new SublyService(), {
       sellerApiToken: "seller-secret",
-      clientApiToken: "client-secret",
       adminApiToken: "admin-secret"
     });
 
@@ -86,16 +83,14 @@ describe("API server auth", () => {
     expect(() =>
       buildServer(new SublyService(), {
         sellerApiToken: "shared-secret",
-        clientApiToken: "client-secret",
         adminApiToken: "shared-secret"
       })
     ).toThrowError(/must not share the same value/);
   });
 
-  it("allows the client token to poll deposit status", async () => {
+  it("allows the admin token to poll deposit status", async () => {
     const server = buildServer(new SublyService(), {
       sellerApiToken: "seller-secret",
-      clientApiToken: "client-secret",
       adminApiToken: "admin-secret"
     });
 
@@ -103,7 +98,7 @@ describe("API server auth", () => {
       method: "GET",
       url: "/v1/deposits/dep_test",
       headers: {
-        authorization: "Bearer client-secret"
+        authorization: "Bearer admin-secret"
       }
     });
 
@@ -117,7 +112,6 @@ describe("API server auth", () => {
   it("does not allow the seller token to poll deposit status", async () => {
     const server = buildServer(new SublyService(), {
       sellerApiToken: "seller-secret",
-      clientApiToken: "client-secret",
       adminApiToken: "admin-secret"
     });
 
@@ -136,7 +130,6 @@ describe("API server auth", () => {
   it("serves operational metrics to the admin token", async () => {
     const server = buildServer(new SublyService(), {
       sellerApiToken: "seller-secret",
-      clientApiToken: "client-secret",
       adminApiToken: "admin-secret",
       sponsorMonitoring: {
         sponsorAddress: "Sponsor111",
@@ -168,7 +161,6 @@ describe("API server auth", () => {
   it("does not allow an admin token to call seller settlement endpoints", async () => {
     const server = buildServer(new SublyService(), {
       sellerApiToken: "seller-secret",
-      clientApiToken: "client-secret",
       adminApiToken: "admin-secret"
     });
 

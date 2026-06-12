@@ -278,6 +278,9 @@ describe("SublyX402Client", () => {
       },
       async signWithdrawal() {
         throw new Error("not used");
+      },
+      async signApiMessage() {
+        return "fake-api-signature";
       }
     };
   }
@@ -311,7 +314,6 @@ describe("SublyX402Client", () => {
     const requests: Array<{ url: string; body: unknown }> = [];
     const client = new SublyX402Client({
       facilitatorBaseUrl: "https://facilitator.test",
-      clientApiToken: "client-token",
       signer,
       fetchImpl: async (url, init) => {
         requests.push({ url, body: JSON.parse(init?.body ?? "{}") });
@@ -351,7 +353,6 @@ describe("SublyX402Client", () => {
   it("rejects challenges whose resource does not match the request URL", async () => {
     const client = new SublyX402Client({
       facilitatorBaseUrl: "https://facilitator.test",
-      clientApiToken: "client-token",
       signer: fakeSigner(),
       fetchImpl: async () => {
         throw new Error("should not reach the facilitator");
@@ -372,7 +373,6 @@ describe("SublyX402Client", () => {
     const sellerCalls: Array<Record<string, string> | undefined> = [];
     const client = new SublyX402Client({
       facilitatorBaseUrl: "https://facilitator.test",
-      clientApiToken: "client-token",
       signer,
       fetchImpl: async (url, init) => {
         if (url === RESOURCE) {

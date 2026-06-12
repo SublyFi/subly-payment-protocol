@@ -65,7 +65,8 @@ source demo/env/buyer.detached.env && npm run demo:buyer         # ターミナ�
 として公開する。エージェントがこのツールでURLを叩くと、402以外は
 そのまま返し、402なら prepare → intent検証 → ローカル署名 → retry まで
 自動で行い、本文と決済レシート (金額 / payTo / paymentId / Solscanリンク、
-`SUBLY_ADMIN_API_TOKEN` 設定時は決済前後のbudget) をJSONで返す。
+決済前後のbudget) をJSONで返す。認証はwallet署名 (トークン不要) で、
+起動時にwalletを自動登録する。
 yield不足などでfacilitatorが拒否した場合は理由コード付きのエラーを返す
 (元本には手を付けない)。
 
@@ -80,9 +81,9 @@ yield不足などでfacilitatorが拒否した場合は理由コード付きの�
   決済を作らず**同じ署名でretry**する (sellerの冪等な/settleが同じ
   レシートを返す)。署名が生きている間は `forceNewPayment` も無視して
   retryを優先する。結果不明になった場合 (TTL切れ、またはsellerが署名を
-  受け付けなくなった) は、`SUBLY_ADMIN_API_TOKEN` があればfacilitatorに
-  決済状態を照会して自動解決する (未settle確定 → 安全に自動再購入、
-  settle済み → `payment_already_settled` で再購入ブロック)。照会できない
+  受け付けなくなった) は、facilitatorに自分の決済の状態を照会して
+  自動解決する (未settle確定 → 安全に自動再購入、settle済み →
+  `payment_already_settled` で再購入ブロック)。照会できない
   場合は `payment_outcome_unknown` を返し、いずれもブロック時は
   `forceNewPayment=true` を明示しない限りそのURLへは再支払いしない。
   同一URLへの並行呼び出しは1つのフローに合流し、二重決済しない
@@ -119,16 +120,14 @@ facilitatorとsellerが起動済みであること (本書の「起動」参照)
 facilitatorでしか完走しない** (`docs/operations.md` 参照)。事前に:
 
 1. Facilitatorをmainnetモードで起動 (`SOLANA_RPC_URL` + sponsor鍵 +
-   3種のAPIトークン)。settlement LUT (`SUBLY_EXTRA_LOOKUP_TABLES`) と
+   seller/adminトークン)。settlement LUT (`SUBLY_EXTRA_LOOKUP_TABLES`) と
    sponsor SOLが必要。
 2. Seller向けliquidity policyを登録 (`POST /v1/admin/liquidity-policies`)。
    `expectedPaymentSizeRawUsdc` はデモ価格以上にすること
    (下回ると `amount_exceeds_policy` で拒否)。
-3. Agentウォレットを登録 (`POST /v1/wallets/agent`) して
-   `POST /v1/wallets/{wallet}/sync` body `{"source":"chain"}` で同期。
-   Agent walletにvault shares (yield発生済み) が必要。
-   activeにするには `signerProvider` の指定が必須で、position sync後に
-   `activateForPayments: true` で再登録する (sync前はobserved_onlyのまま)。
+3. Agentウォレットの登録・activate・chain syncはbuyer側クライアントが
+   ウォレット署名認証で自動実行する (deposit時とMCPサーバー起動時)。
+   支払いにはvault shares (yield発生済み) が必要。
 4. 検証はdust額で。デフォルト価格は 0.01 USDC (`10000` raw units)。
 
 ## 起動
@@ -139,7 +138,6 @@ facilitatorでしか完走しない** (`docs/operations.md` 参照)。事前に:
 NODE_ENV=development SOLANA_RPC_URL=... SUBLY_SPONSOR_KEYPAIR_PATH=... \
 SUBLY_EXTRA_LOOKUP_TABLES=<settlement LUT> \
 SUBLY_SELLER_API_TOKEN=dev-seller \
-SUBLY_CLIENT_API_TOKEN=dev-client \
 SUBLY_ADMIN_API_TOKEN=dev-admin \
 npm run dev
 ```
@@ -159,16 +157,15 @@ npm run demo:seller
 ### 3. Buyer (別ターミナル)
 
 ```bash
-SUBLY_CLIENT_API_TOKEN=dev-client \
 SOLANA_RPC_URL=... \
 SUBLY_DEMO_AGENT_KEYPAIR_PATH=<agent walletのkeypair JSON> \
-SUBLY_ADMIN_API_TOKEN=dev-admin \
 npm run demo:buyer
 ```
 
-`SUBLY_ADMIN_API_TOKEN` は任意。設定すると決済前後のyield budget
-(position価値とspendable yield) を表示し、決済でbudgetが減るのを確認できる。
-`SUBLY_DEMO_AGENT_KEYPAIR` (base58) でも鍵を渡せる。
+BuyerにAPIトークンは不要 — リクエストはagent walletの署名で認証される
+(標準x402と同じく、鍵が唯一のbuyer credential)。決済前後のyield budget
+表示も自分のwalletの署名で取得する。`SUBLY_DEMO_AGENT_KEYPAIR` (base58)
+でも鍵を渡せる。
 
 成功すると、Buyer側に402受信 → 署名 → retry → premiumレスポンス →
 settlementレシート (Solscanリンク) が、Seller側にチャレンジ発行 →

@@ -1,6 +1,6 @@
 # Subly クローズドβ計画
 
-最終更新: 2026-06-12
+最終更新: 2026-06-13
 
 限定した第三者に Subly (yield-funded x402 決済) を使ってもらうための計画。
 一般公開はしない。設計の正は `technical-design.md`、運用手順は
@@ -24,7 +24,7 @@
 | Phase | 内容 | 第三者に渡すもの |
 |---|---|---|
 | A | Facilitator + ホスト版 Seller を https で公開 | なし (基盤構築) |
-| B | Buyer オンボーディングキット (MCP ラッパーが目玉) | MCP サーバー / CLI / client トークン |
+| B | Buyer オンボーディングキット (MCP ラッパーが目玉) | MCP サーバー / CLI (トークン不要・ウォレット署名認証) |
 | C | Seller 向け一式 | seller gate npm パッケージ |
 
 ---
@@ -102,26 +102,22 @@ Claude Code / OpenClaw / Cursor 等の MCP クライアントから
   402 でなければそのまま返し、402 なら prepare → structured-intent
   検証 → ローカル署名 → retry し、本文と `PAYMENT-RESPONSE` レシート
   (Solscan リンク) を返す。
-- 鍵・トークンは MCP サーバーの env で渡す (agent keypair / client token /
-  RPC URL / facilitator URL)。**鍵はエージェントのコンテキストに出さない**。
+- 鍵は MCP サーバーの env で渡す (agent keypair / RPC URL /
+  facilitator URL)。**鍵はエージェントのコンテキストに出さない**。
+  API トークンは存在しない (ウォレット署名認証)。
 - 配布は npm 公開前は GitHub 参照で十分 (`npx` 起動)。
 - OpenClaw 向けには同じ CLI を `SKILL.md` 付きスキルとしても用意する
   (OpenClaw は MCP も使えるが、スキル形式の方がネイティブ)。
 
-### オンボーディング手順 (admin 手動・セルフサーブ化しない)
+### オンボーディング (セルフサーブ — 2026-06-13 改修)
 
-**参加者向けガイドは `docs/beta-guide.md`、env テンプレは
-`demo/env/buyer.beta.env.example`、運用側の登録は
-`scripts/onboard-agent.sh` (動作検証済み) に用意済み (2026-06-12)。**
+**参加者向けガイドは `docs/beta-guide.md`、招待文は
+`docs/beta-invite-template.md`、ウィザードは `demo/setup-beta.sh`。**
 
-参加者 1 名あたり、運用側が実施:
-
-1. agent ウォレット登録 (`POST /v1/wallets/agent`) と liquidity policy 確認
-2. 参加者が deposit (SDK の deposit コマンド。fee/rent は sponsor 立替え)
-3. chain sync (`POST /v1/wallets/{wallet}/sync`, `{"source":"chain"}`)
-4. `signerProvider` 付きで `activateForPayments: true` 再登録
-5. client トークンを共有 (βは参加者間で共有トークン可。署名は各自の
-   手元の鍵で行われ、トークンは API アクセスのゲートでしかない)
+参加者ごとの運営作業はなし。登録・activate・chain sync は参加者側
+クライアントがウォレット署名認証で自動実行する (deposit 時と MCP 起動時)。
+運営の事前作業は liquidity policy の初期登録 1 回のみ
+(`scripts/onboard-agent.sh --with-policy`)。
 
 ### 参加者向けガイダンス (キットの README に明記)
 
@@ -157,17 +153,16 @@ Claude Code / OpenClaw / Cursor 等の MCP クライアントから
   (Fastify / Express ミドルウェア)。
 - チャレンジ状態の外部化 (発行レート制限は組み込み済み。in-memory の
   チャレンジ保持が seller 多重化・再起動に耐えるようにする)。
-- テナント別 API キーの発行・失効 (固定 3 トークンからの脱却)。
-- 決済状態照会の client スコープ開放 (`GET /v1/payments/:paymentId` は
-  現在 admin 専用)。MCP ツールの「配信ロスト後の自動解決」が admin
-  トークンなしでも効くようになり、β参加者の二重払い防御が完全になる。
-- **buyer セットアップの標準 x402 パリティ** (2026-06-13 調査済み:
-  標準 x402 でも buyer は鍵 + 資金 + ライブラリの設定が必要で、Subly 固有の
-  超過分は deposit を除き過渡的): (a) npm publish で clone 不要の
-  `claude mcp add subly -- npx @subly/mcp` に、(b) 共有 client トークンを
-  ウォレット署名ベース認証に置き換えて撤廃、(c) ウォレット登録の
-  セルフサーブ化。deposit と /prepare 呼び出しは yield-funded 設計の
-  本質なので残る。
+- ~~共有 client トークンの撤廃~~ → **実装済み (2026-06-13)**: buyer 向け
+  エンドポイントは全てウォレット署名認証 (`src/api/wallet-auth.ts`)。
+  決済状態照会も自分の決済なら wallet 署名で読めるため、MCP の
+  「配信ロスト後の自動解決」が全参加者で有効。
+- ~~ウォレット登録のセルフサーブ化~~ → **実装済み (2026-06-13)**:
+  deposit / MCP 起動時に自動登録 (`src/client/onboarding.ts`)。
+  参加者ごとの運営作業はゼロ。manual position sync のみ admin 専用のまま
+  (ウォレットが自分の残高を自己申告できてはならないため)。
+- buyer セットアップの残パリティ項目: npm publish で clone 不要の
+  `claude mcp add subly -- npx @subly/mcp`。
 - seller 向けドキュメント: 価格設定、payTo ATA の事前作成、
   同一 `PAYMENT-SIGNATURE` での冪等 retry ルール
   (`demo/README.md` の注意節が下敷き)。
@@ -176,14 +171,16 @@ Claude Code / OpenClaw / Cursor 等の MCP クライアントから
 
 ## β期間中の運用ルールと既知の制約
 
-- 参加者は手動招待のみ。client トークン共有は β 限定の割り切り。
+- 参加者は手動招待のみ (GitHub リポジトリへのアクセス権がゲート)。
+  API トークンは buyer に存在しない (ウォレット署名認証)。
 - 預かり規模の上限を決めておく (例: 参加者あたり deposit 上限、全体 AUM
   上限)。hot wallet 運用 (sponsor / seller 受取) は小額維持。
 - 既知の制約:
   - seller チャレンジ in-memory 問題 (Phase C で本対策)
   - 単一 vault ハードコード (`src/config/constants.ts`)。マルチ vault は
     βスコープ外
-  - admin 操作 (登録 / sync / activate) はセルフサーブ化しない
+  - manual position sync のみ admin 専用 (自己申告防止)。他の buyer 操作は
+    セルフサーブ
   - kVault の固定引き出しペナルティ 1000 raw は protocol floor で回避不能。
     βでは推奨最低価格で吸収する。少額決済を本気でやる場合の将来課題:
     (a) 複数決済を 1 redeem に償却する設計 (yield を agent ATA にまとめて

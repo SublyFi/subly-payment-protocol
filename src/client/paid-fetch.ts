@@ -23,7 +23,9 @@
  *   weakens the refusal gate for that URL, so the cap is generous).
  *
  * Concurrent calls for the same URL are coalesced into one flow; both callers
- * receive the same result, so parallel tool calls cannot double-pay.
+ * receive the same result, so parallel tool calls cannot double-pay. Note the
+ * coalesced caller's own per-call options (cap, forceNewPayment) are not
+ * applied — the first caller's flow wins.
  */
 import {
   decodePaymentRequiredHeader,
@@ -84,6 +86,11 @@ export interface PaidFetchServiceConfig {
   maxTrackedUrls?: number;
   maxBodyChars?: number;
   nowMs?: () => number;
+  /**
+   * Optional persistence for pending-payment markers, so a process restart
+   * cannot forget a signed payment with an unconfirmed delivery.
+   */
+  stateStore?: PendingStateStore;
 }
 
 export interface PaidFetchResult {
@@ -120,7 +127,7 @@ export class PaidFetchError extends Error {
 }
 
 /** A signed payment whose delivery has not been confirmed yet. */
-interface PendingPayment {
+export interface PendingPayment {
   headerValue: string;
   paymentId: string;
   amountUsdc: string;
@@ -129,6 +136,20 @@ interface PendingPayment {
   challengeAtMs: number;
   /** Set when the signature can no longer settle; gates re-purchase. */
   unresolved: boolean;
+}
+
+export interface PendingPaymentRecord extends PendingPayment {
+  url: string;
+}
+
+/**
+ * Persists pending-payment markers across process restarts so a restarted
+ * server still refuses to blindly re-pay a lost delivery. Implementations
+ * must never throw from save(); load() may return [] when no state exists.
+ */
+export interface PendingStateStore {
+  load(): PendingPaymentRecord[];
+  save(records: PendingPaymentRecord[]): void;
 }
 
 const DEFAULT_PENDING_TTL_MS = 110_000;
@@ -156,6 +177,7 @@ export class PaidFetchService {
   private readonly maxTrackedUrls: number;
   private readonly maxBodyChars: number;
   private readonly nowMs: () => number;
+  private readonly stateStore: PendingStateStore | null;
   private readonly pending = new Map<string, PendingPayment>();
   private readonly inFlight = new Map<string, Promise<PaidFetchResult>>();
 
@@ -171,6 +193,13 @@ export class PaidFetchService {
     this.maxTrackedUrls = config.maxTrackedUrls ?? DEFAULT_MAX_TRACKED_URLS;
     this.maxBodyChars = config.maxBodyChars ?? DEFAULT_MAX_BODY_CHARS;
     this.nowMs = config.nowMs ?? (() => Date.now());
+    this.stateStore = config.stateStore ?? null;
+    if (this.stateStore !== null) {
+      for (const record of this.stateStore.load()) {
+        const { url, ...entry } = record;
+        this.pending.set(url, entry);
+      }
+    }
   }
 
   /**
@@ -205,13 +234,13 @@ export class PaidFetchService {
         this.nowMs() - pending.challengeAtMs > this.pendingTtlMs;
       if (pending.unresolved || expired) {
         if (params.forceNewPayment === true) {
-          this.pending.delete(url);
+          this.untrack(url);
         } else {
           const outcome = await this.paymentStatusFor(pending.paymentId);
           if (outcome === "not_settled") {
             // The facilitator confirmed the payment never settled; it is
             // safe to purchase fresh.
-            this.pending.delete(url);
+            this.untrack(url);
           } else if (outcome === "settled") {
             throw new PaidFetchError(
               "payment_already_settled",
@@ -338,7 +367,7 @@ export class PaidFetchService {
     }
 
     if (second.status === 200) {
-      this.pending.delete(url);
+      this.untrack(url);
       const transaction = receiptTransaction(second.headers);
       return {
         paid: true,
@@ -365,6 +394,7 @@ export class PaidFetchService {
       // seller restarted). Whether the payment settled is unknown; keep the
       // entry so plain re-calls are refused until forceNewPayment.
       entry.unresolved = true;
+      this.persist();
       throw new PaidFetchError(
         "payment_outcome_unknown",
         `the seller no longer accepts the signed payment (paymentId=${entry.paymentId}); ` +
@@ -397,6 +427,21 @@ export class PaidFetchService {
       }
     }
     this.pending.set(url, entry);
+    this.persist();
+  }
+
+  private untrack(url: string): void {
+    this.pending.delete(url);
+    this.persist();
+  }
+
+  private persist(): void {
+    if (this.stateStore === null) {
+      return;
+    }
+    this.stateStore.save(
+      [...this.pending.entries()].map(([url, entry]) => ({ url, ...entry }))
+    );
   }
 
   private truncated(text: string): string {

@@ -21,6 +21,7 @@
  *
  * stdout is the MCP transport; all diagnostics must go to stderr.
  */
+import { readFileSync, writeFileSync } from "node:fs";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -34,7 +35,9 @@ import {
   PaidFetchService,
   formatRawUsdcAmount,
   type BudgetSnapshot,
-  type PaymentOutcomeProbe
+  type PaymentOutcomeProbe,
+  type PendingPaymentRecord,
+  type PendingStateStore
 } from "../src/client/paid-fetch.js";
 import { loadKeyPairSigner } from "../src/solana/keys.js";
 import { createRpcFromEnv } from "../src/solana/rpc.js";
@@ -114,7 +117,13 @@ async function paymentStatusFor(
     if (body.status === "settled") {
       return "settled";
     }
-    if (body.status === "expired" || body.status === "failed_not_submitted") {
+    // Terminal failures (payment-service isTerminalFailedPaymentStatus):
+    // "failed" landed on-chain but did not pay the seller.
+    if (
+      body.status === "expired" ||
+      body.status === "failed" ||
+      body.status === "failed_not_submitted"
+    ) {
       return "not_settled";
     }
     return "indeterminate";
@@ -122,6 +131,38 @@ async function paymentStatusFor(
     return "indeterminate";
   }
 }
+
+/**
+ * Persists pending-payment markers so a server restart cannot forget a signed
+ * payment with an unconfirmed delivery (the file holds signed payment headers
+ * for this agent; keep it next to the gitignored env files).
+ */
+function fileStateStore(path: string): PendingStateStore {
+  return {
+    load(): PendingPaymentRecord[] {
+      try {
+        const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+        return Array.isArray(parsed) ? (parsed as PendingPaymentRecord[]) : [];
+      } catch {
+        return [];
+      }
+    },
+    save(records: PendingPaymentRecord[]): void {
+      try {
+        writeFileSync(path, JSON.stringify(records));
+      } catch (error) {
+        console.error(
+          `[subly-mcp] failed to persist pending payments: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+    }
+  };
+}
+
+const pendingStatePath =
+  process.env.SUBLY_MCP_STATE_PATH ?? "demo/env/mcp-pending-payments.json";
 
 const paidFetchService = new PaidFetchService({
   signatureBuilder: new SublyX402Client({
@@ -133,7 +174,8 @@ const paidFetchService = new PaidFetchService({
   }),
   defaultMaxAmountRawUsdc,
   fetchBudget,
-  paymentStatusFor
+  paymentStatusFor,
+  stateStore: fileStateStore(pendingStatePath)
 });
 
 const server = new Server(
@@ -216,8 +258,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
   let maxAmountRawUsdc: bigint | undefined;
   if (args.maxAmountRawUsdc !== undefined) {
+    const raw = args.maxAmountRawUsdc;
     try {
-      maxAmountRawUsdc = BigInt(args.maxAmountRawUsdc as string | number);
+      if (typeof raw !== "string" && typeof raw !== "number") {
+        throw new TypeError("not a string or number");
+      }
+      maxAmountRawUsdc = BigInt(raw);
     } catch {
       return {
         content: [

@@ -82,9 +82,12 @@ yield不足などでfacilitatorが拒否した場合は理由コード付きの�
   settle済み → `payment_already_settled` で再購入ブロック)。照会できない
   場合は `payment_outcome_unknown` を返し、いずれもブロック時は
   `forceNewPayment=true` を明示しない限りそのURLへは再支払いしない。
-  同一URLへの並行呼び出しは1つのフローに合流し、二重決済しない。
-  ロジック本体は `src/client/paid-fetch.ts` (ユニットテスト
-  `tests/paid-fetch.test.ts` で全分岐を検証)。
+  同一URLへの並行呼び出しは1つのフローに合流し、二重決済しない
+  (合流した側の引数は適用されない)。署名済み決済の追跡状態は
+  `SUBLY_MCP_STATE_PATH` (default `demo/env/mcp-pending-payments.json`、
+  gitignore済み) に永続化され、**サーバーを再起動しても配信未確認の
+  決済を忘れない**。ロジック本体は `src/client/paid-fetch.ts`
+  (ユニットテスト `tests/paid-fetch.test.ts` で全分岐を検証)。
 
 **運用上の注意**: これは決済ツールなので、エージェントハーネス側で
 ブランケット許可 (Claude Codeの `--allowedTools` や常時許可設定) を

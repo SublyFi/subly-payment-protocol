@@ -454,6 +454,82 @@ describe("PaidFetchService", () => {
   });
 });
 
+describe("PaidFetchService state persistence", () => {
+  function memoryStore() {
+    let records: import("../src/client/paid-fetch.js").PendingPaymentRecord[] =
+      [];
+    return {
+      load: () => records,
+      save: (next: typeof records) => {
+        records = next;
+      },
+      peek: () => records
+    };
+  }
+
+  it("retries the same signature after a restart", async () => {
+    const store = memoryStore();
+    const s = scriptedFetch();
+    const builder = builderStub();
+    // Sign a payment, then lose the delivery.
+    const serviceWithStore = new PaidFetchService({
+      signatureBuilder: builder,
+      defaultMaxAmountRawUsdc: 10_000n,
+      fetchImpl: s.fetchImpl,
+      stateStore: store
+    });
+    s.queue.push(async (url) => challengeResponse(url));
+    s.queue.push(async () => {
+      throw new Error("socket hang up");
+    });
+    await expect(
+      serviceWithStore.paidFetch({ url: URL_A })
+    ).rejects.toMatchObject({ reason: "delivery_failed_payment_pending" });
+    expect(store.peek()).toHaveLength(1);
+
+    // "Restart": a fresh service loads the marker and retries the SAME
+    // signature instead of paying again.
+    const restarted = new PaidFetchService({
+      signatureBuilder: builder,
+      defaultMaxAmountRawUsdc: 10_000n,
+      fetchImpl: s.fetchImpl,
+      stateStore: store
+    });
+    s.queue.push(async () => deliveredResponse());
+    const result = await restarted.paidFetch({ url: URL_A });
+    expect(result.retriedPendingPayment).toBe(true);
+    expect(result.payment?.paymentId).toBe("pay_1");
+    expect(builder.buildPaymentSignatureHeader).toHaveBeenCalledTimes(1);
+    // Confirmed delivery clears the persisted marker.
+    expect(store.peek()).toHaveLength(0);
+  });
+
+  it("keeps the unresolved gate across a restart", async () => {
+    const store = memoryStore();
+    const s = scriptedFetch();
+    const builder = builderStub();
+    const service = new PaidFetchService({
+      signatureBuilder: builder,
+      defaultMaxAmountRawUsdc: 10_000n,
+      fetchImpl: s.fetchImpl,
+      stateStore: store
+    });
+    await intoUnresolved(service, s);
+    expect(store.peek()[0]?.unresolved).toBe(true);
+
+    const restarted = new PaidFetchService({
+      signatureBuilder: builder,
+      defaultMaxAmountRawUsdc: 10_000n,
+      fetchImpl: s.fetchImpl,
+      stateStore: store
+    });
+    await expect(restarted.paidFetch({ url: URL_A })).rejects.toMatchObject({
+      reason: "payment_outcome_unknown"
+    });
+    expect(builder.buildPaymentSignatureHeader).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("formatRawUsdcAmount", () => {
   it("formats raw USDC with 6 decimals", () => {
     expect(formatRawUsdcAmount(100n)).toBe("0.000100");

@@ -66,6 +66,19 @@ source demo/env/buyer.detached.env && npm run demo:buyer         # ターミナ�
 yield不足などでfacilitatorが拒否した場合は理由コード付きのエラーを返す
 (元本には手を付けない)。
 
+エージェント向けの保護 (CLI buyerにはない、MCP固有の安全装置):
+
+- **支払い上限**: challengeの金額がcapを超えるとprepare前に
+  `amount_exceeds_client_cap` で拒否する。capはツール引数
+  `maxAmountRawUsdc`、なければ env `SUBLY_MCP_MAX_AMOUNT_RAW_USDC`、
+  どちらもなければ 10000 raw (0.01 USDC)。
+- **二重払い防止**: 署名後に配信が失敗した場合、署名済みヘッダーを
+  チャレンジTTL内 (約110秒) 保持し、同じURLへの再呼び出しでは新しい
+  決済を作らず**同じ署名でretry**する (sellerの冪等な/settleが同じ
+  レシートを返す)。結果不明のままTTLが切れた場合は
+  `payment_outcome_unknown` を返し、`forceNewPayment=true` を明示
+  しない限りそのURLへは再支払いしない。
+
 環境変数はbuyerと同じ。`demo/run-mcp.sh` が `buyer.mainnet.env`
 (なければ `buyer.detached.env`) をsourceして起動する。
 

@@ -3,6 +3,7 @@
 # (falls back to the detached env). stdout is the MCP transport.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+export NODE_ENV="${NODE_ENV:-development}"
 if [ -f demo/env/buyer.mainnet.env ]; then
   source demo/env/buyer.mainnet.env
 else

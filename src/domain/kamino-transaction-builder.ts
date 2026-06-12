@@ -438,7 +438,9 @@ export class KaminoCanonicalTransactionBuilder
     const accounts = result.value.accounts ?? [];
     watchedAccounts.forEach((watched, index) => {
       const account = accounts[index] ?? null;
-      accountsExisting.set(watched, account !== null);
+      // Live RPCs report accounts closed during simulation as a zero-lamport
+      // system-owned stub rather than null.
+      accountsExisting.set(watched, account !== null && account.lamports > 0n);
       if (account !== null && account.owner === TOKEN_PROGRAM_ADDRESS) {
         const data = Buffer.from(String(account.data[0]), "base64");
         if (data.length >= 72) {

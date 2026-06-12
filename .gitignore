@@ -1,4 +1,6 @@
 .env
+demo/env/keys/
+demo/env/*.mainnet.env
 node_modules/
 dist/
 coverage/

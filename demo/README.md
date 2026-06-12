@@ -10,6 +10,52 @@
   structured-intent検証 → ローカル署名 → `PAYMENT-SIGNATURE` 付きretry。
   支払い原資はagent walletのKamino vault yield。
 
+## ドキュメントの読み分け
+
+- **デモを動かす** → 本書だけでよい。
+- **facilitatorの環境変数の意味・本番デプロイ・障害対応** →
+  `docs/operations.md` (本書からは必要箇所のみ参照する)。
+- **設計の正** → `docs/technical-design.md`。
+
+## 環境変数の設定方法
+
+dotenvは使っていない (各プロセスが `process.env` を直接読む)。
+プロセスは facilitator / seller / buyer の3つで、**ターミナルを3つ開き、
+それぞれで対応するenvファイルを `source` してから起動する**。
+envファイルは `demo/env/` に用意済み:
+
+| ファイル | 用途 |
+|---|---|
+| `facilitator.detached.env` / `seller.detached.env` / `buyer.detached.env` | 予行演習用。そのまま使える (資金・RPC・実鍵不要) |
+| `*.mainnet.env.example` | フルフロー用テンプレ。`*.mainnet.env` にコピーして実値を埋める (gitignore済み) |
+
+使い方 (必ずリポジトリルートから):
+
+```bash
+source demo/env/facilitator.detached.env && npm run dev          # ターミナル1
+source demo/env/seller.detached.env && npm run demo:seller       # ターミナル2
+source demo/env/buyer.detached.env && npm run demo:buyer         # ターミナル3
+```
+
+`source` はそのターミナル(シェル)内だけで有効。値を変えたら同じターミナルで
+`source` し直す。detached用の使い捨て鍵は `demo/env/keys/` に置く
+(`agent-detached.json` / `seller-detached.json`。なければ
+`solana-keygen new --no-bip39-passphrase -s -o demo/env/keys/agent-detached.json`
+で再生成。ディレクトリごとgitignore済み)。
+
+## 付属スクリプト (mainnet フルフロー用)
+
+- `npm run demo:deposit -- <amountRawUsdc>`: agent walletのUSDCをvaultへ
+  deposit (facilitator経由: prepare → intent検証 → ローカル署名 → submit。
+  手数料/rentはsponsor立替えなのでagentにSOLは不要)。
+- `npx tsx scripts/invest-vault.ts`: vaultのidle資金をreserveへ投資する
+  パーミッションレスクランク (sponsor鍵で実行)。**investしないとyieldは
+  発生しない**。reserveごとに1トランザクション送信する。
+- facilitatorを再起動しても台帳が消えないよう、フルフロー時は
+  `DATABASE_URL` (ローカルPostgresで可) を設定すること。未設定の
+  インメモリ台帳で再起動すると、chain syncのconservative resetで
+  蓄積済みyieldが原本に繰り入れられて消える。
+
 ## 前提
 
 `/settle` は実際のKamino redeemを伴うため、**フルフローはmainnetモードの
@@ -78,26 +124,21 @@ prepare認証 → budget検証までの全トランスポートを予行でき�
 (Kamino transaction builder直前の `transaction_builder_unavailable` で停止する)。
 
 ```bash
-# 1. facilitator (detached) + seller + buyer を上記と同様に起動
-#    (SOLANA_RPC_URL / sponsor鍵は不要。buyerのSOLANA_RPC_URLはダミー可)
+# ターミナル1: facilitator (detached)
+source demo/env/facilitator.detached.env && npm run dev
 
-# 2. agentウォレット登録 → policy登録 → 手動syncでpositionをseed
-WALLET=<buyerが表示するagent wallet>
-curl -X POST localhost:3000/v1/wallets/agent -H "authorization: Bearer dev-admin" \
-  -H "content-type: application/json" \
-  -d "{\"wallet\":\"$WALLET\",\"signingPolicyId\":\"demo\",\"signingMode\":\"non_interactive\",\"signerValidationMode\":\"structured_intent_transaction\"}"
-curl -X POST localhost:3000/v1/admin/liquidity-policies -H "authorization: Bearer dev-admin" \
-  -H "content-type: application/json" \
-  -d '{"sellerClass":"default","expectedPaymentSizeRawUsdc":"10000","minInstantLiquidityRawUsdc":"0","targetBudgetIlliquidRate":1}'
-curl -X POST localhost:3000/v1/wallets/$WALLET/sync -H "authorization: Bearer dev-admin" \
-  -H "content-type: application/json" \
-  -d '{"totalSharesRaw":"100000000","exchangeRateScaled":"1100000000000","instantRedeemCapacityRawUsdc":"1000000000","principalBasisRawUsdc":"100000000","principalBasisSource":"manual_trusted_seed"}'
+# ターミナル2: seller
+source demo/env/seller.detached.env && npm run demo:seller
 
-# 3. sync後にsignerProvider付きでactivate
-curl -X POST localhost:3000/v1/wallets/agent -H "authorization: Bearer dev-admin" \
-  -H "content-type: application/json" \
-  -d "{\"wallet\":\"$WALLET\",\"signingPolicyId\":\"demo\",\"signingMode\":\"non_interactive\",\"signerValidationMode\":\"structured_intent_transaction\",\"signerProvider\":\"local-keypair\",\"activateForPayments\":true}"
+# ターミナル3: セットアップ (wallet登録 → policy登録 → 手動sync → activate) → buyer
+bash demo/setup-detached.sh
+source demo/env/buyer.detached.env && npm run demo:buyer
 ```
+
+セットアップの中身 (個別に叩きたい場合は `demo/setup-detached.sh` を参照):
+agentウォレット登録 → liquidity policy登録 → 手動syncでposition seed
+(100 USDC相当 + exchange rate 1.1 = spendable yield 10 USDC) →
+sync後に `signerProvider` 付きで `activateForPayments: true` 再登録。
 
 この状態でbuyerを実行すると、budget表示 → 402 → prepare →
 `transaction_builder_unavailable` まで進む。

@@ -2,8 +2,10 @@
 # Onboards one beta participant's agent wallet (operator-run, admin token).
 # The participant only shares their PUBLIC key; private keys never move.
 #
-# Run AFTER the participant has deposited (the chain sync then finds their
-# vault shares and activation starts from the real position):
+# Run twice per participant (idempotent):
+#   1. when their pubkey arrives — registration unlocks deposits
+#      (vault flows require a registered non-interactive wallet)
+#   2. after their deposit — the chain sync picks up the real position
 #
 #   SUBLY_FACILITATOR_URL=https://facilitator.example.com \
 #   SUBLY_ADMIN_API_TOKEN=... \

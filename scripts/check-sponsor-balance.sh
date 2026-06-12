@@ -40,8 +40,9 @@ sponsor = json.load(sys.stdin).get("sponsor")
 if sponsor is None:
     print("none")
 elif sponsor["belowMinimum"]:
+    address = sponsor["address"]
     sol = int(sponsor["balanceLamports"]) / 1e9
-    print(f"low {sponsor[\"address\"]} {sol:.4f}")
+    print(f"low {address} {sol:.4f}")
 else:
     print("ok")
 ' 2>/dev/null)

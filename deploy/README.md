@@ -66,14 +66,22 @@ cron で 10 分おきに sponsor 残高と死活を確認、しきい値割れ�
 アラートが来たら sponsor アドレスに SOL を補充する (決済 1 回 ~15000
 lamports の立替なので、0.5 SOL で数万決済分)。
 
+台帳のバックアップ (毎日 / 7 世代):
+
+```cron
+0 4 * * * cd /opt/subly/deploy && docker compose exec -T postgres pg_dump -U postgres subly | gzip > /var/backups/subly-$(date +\%u).sql.gz
+```
+
 ## 5. 参加者オンボーディング (1 人あたり)
 
 1. 参加者に `docs/beta-guide.md` と client トークン・facilitator URL・
    seller URL を渡す
-2. 参加者から agent 公開鍵を受け取る
-3. 参加者の deposit 完了連絡後:
-   `bash scripts/onboard-agent.sh <pubkey>` (policy フラグなし)
-4. budget API で spendable が見えることを確認して完了連絡
+2. 参加者から agent 公開鍵を受け取ったら 1 回目:
+   `bash scripts/onboard-agent.sh <pubkey>` (policy フラグなし)。
+   **deposit はウォレット登録済みが前提なので、この登録が先**
+3. 参加者の deposit 完了連絡後に 2 回目 (同じコマンド):
+   chain sync が実残高を取り込み、実 position で activate される
+4. budget API で position 価値が見えることを確認して完了連絡
 
 ## 障害対応
 

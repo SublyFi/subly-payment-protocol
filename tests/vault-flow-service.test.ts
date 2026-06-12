@@ -33,7 +33,8 @@ class FakeAdapter {
       singleInstructionRedeemCapacityRawUsdc: 10_000_000n,
       withdrawalPenaltyBps: 0n,
       withdrawalPenaltyLamports: 0n,
-      minWithdrawAmountRaw: 10n
+      minWithdrawAmountRaw: 10n,
+      minDepositAmountRaw: 1_000_000n
     } as unknown as VaultContext;
   }
 
@@ -164,6 +165,18 @@ describe("VaultFlowService gates", () => {
     expect(prepared.signingIntent.feePayer).toBe(WALLET);
     expect(prepared.preparedMessageHash).toMatch(/^sha256-/);
     expect(prepared.serializedTransaction.length).toBeGreaterThan(0);
+  });
+
+  it("rejects deposits below the vault minimum before signing", async () => {
+    const { service, ledger } = buildService();
+    await registerPosition(ledger);
+
+    await expect(
+      service.prepareDeposit({ wallet: WALLET, amountRawUsdc: "999999" })
+    ).rejects.toMatchObject({
+      code: "deposit_below_minimum",
+      details: { minDepositAmountRaw: "1000000" }
+    });
   });
 
   it("rejects flows for wallets without a non-interactive signer", async () => {

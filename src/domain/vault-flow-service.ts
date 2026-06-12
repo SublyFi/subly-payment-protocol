@@ -111,6 +111,18 @@ export class VaultFlowService {
       await this.assertNoPendingFlow(wallet, vault);
 
       const context = await this.adapter.loadContext();
+      // The kvault program rejects DepositAmountBelowMinimum at execution;
+      // failing here turns an opaque simulation failure into a clear error.
+      if (amountRawUsdc < context.minDepositAmountRaw) {
+        throw badRequest(
+          "deposit_below_minimum",
+          `Deposit amount ${amountRawUsdc} is below the vault minimum ${context.minDepositAmountRaw}`,
+          {
+            amountRawUsdc: amountRawUsdc.toString(),
+            minDepositAmountRaw: context.minDepositAmountRaw.toString()
+          }
+        );
+      }
       // Confirmed deltas are attributed against the ledger baseline, so the
       // ledger must match the chain before a new deposit is prepared.
       const userShares = await this.adapter.getUserSharesRaw(wallet, context);

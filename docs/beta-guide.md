@@ -43,7 +43,8 @@ bash demo/setup-beta.sh   # 鍵生成 + env 作成 + Claude Code への MCP 登�
 1. 表示されたあなたの agent ウォレットアドレス宛てに USDC を送金
    (Phantom 等から。SOL 不要 — 手数料は運営の sponsor が立て替える)
 2. vault に deposit: `source demo/env/buyer.mainnet.env && npm run demo:deposit -- 100000000` (= 100 USDC)。
-   **ウォレット登録もこのとき自動で行われる** — 運営への連絡は不要
+   **ウォレット登録もこのとき自動で行われる** — 運営への連絡は不要。
+   vault の最小 deposit は 1 USDC (`1000000` raw)
 
 **Claude Code を使っている場合はさらに簡単**: このリポジトリで Claude Code を
 開いて「**Subly βのセットアップをして**」と言うだけで、同梱の

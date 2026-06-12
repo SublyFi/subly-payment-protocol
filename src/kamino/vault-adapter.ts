@@ -62,6 +62,7 @@ export interface VaultContext {
   withdrawalPenaltyBps: bigint;
   withdrawalPenaltyLamports: bigint;
   minWithdrawAmountRaw: bigint;
+  minDepositAmountRaw: bigint;
   blockhash: Blockhash;
   lastValidBlockHeight: bigint;
 }
@@ -198,6 +199,7 @@ export class KaminoVaultAdapter {
       withdrawalPenaltyBps: penalties.bps,
       withdrawalPenaltyLamports: penalties.lamports,
       minWithdrawAmountRaw: BigInt(vaultState.minWithdrawAmount.toString()),
+      minDepositAmountRaw: BigInt(vaultState.minDepositAmount.toString()),
       blockhash: latestBlockhash.value.blockhash,
       lastValidBlockHeight: latestBlockhash.value.lastValidBlockHeight
     };

@@ -360,9 +360,16 @@ target_budget_illiquid_rate
 `/v1/payments/prepare` checks both:
 
 ```text
-spendable_yield_raw_usdc >= seller_amount + estimated_fee_debt
+spendable_yield_raw_usdc >= required_withdraw_raw_usdc + estimated_fee_debt
 instant_redeem_capacity_raw_usdc >= required_withdraw_raw_usdc
 ```
+
+`required_withdraw_raw_usdc` is the gross vault withdraw for the seller
+amount, including the vault withdrawal penalty (the kvault global config
+imposes a flat minimum penalty per redeem). Budgeting against the gross —
+not the seller amount — keeps the spendable check aligned with the
+post-state principal invariant and makes the reservation cover the full
+value the settlement actually removes from the position.
 
 `spendable_yield_raw_usdc` already subtracts `safety_buffer_raw_usdc`; `/prepare` must not add the same buffer a second time.
 

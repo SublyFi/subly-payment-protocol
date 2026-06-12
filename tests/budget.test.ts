@@ -51,6 +51,46 @@ describe("budget accounting", () => {
     }
   });
 
+  it("budgets and reserves against the gross withdraw including the penalty", () => {
+    // Spendable yield 1_000_000 covers seller(500k) + fee(100k) but not the
+    // gross withdraw incl. penalty (950k) + fee(100k) = 1_050_000.
+    const insufficient = evaluatePaymentBudget({
+      position: position({
+        totalSharesRaw: 101_000_000n,
+        principalBasisRawUsdc: 100_000_000n,
+        instantRedeemCapacityRawUsdc: 2_000_000n
+      }),
+      sellerAmountRawUsdc: 500_000n,
+      estimatedFeeDebtRawUsdc: 100_000n,
+      requiredWithdrawRawUsdc: 950_000n
+    });
+    expect(insufficient.ok).toBe(false);
+    if (!insufficient.ok) {
+      expect(insufficient.code).toBe("insufficient_yield");
+      expect(insufficient.details.requiredBudgetRawUsdc).toBe("1050000");
+      expect(insufficient.details.requiredWithdrawRawUsdc).toBe("950000");
+      expect(insufficient.details.sellerAmountRawUsdc).toBe("500000");
+      expect(insufficient.details.estimatedFeeDebtRawUsdc).toBe("100000");
+    }
+
+    // With enough yield the reservation covers gross + fee, not seller + fee.
+    const accepted = evaluatePaymentBudget({
+      position: position({
+        totalSharesRaw: 102_000_000n,
+        principalBasisRawUsdc: 100_000_000n,
+        instantRedeemCapacityRawUsdc: 2_000_000n
+      }),
+      sellerAmountRawUsdc: 500_000n,
+      estimatedFeeDebtRawUsdc: 100_000n,
+      requiredWithdrawRawUsdc: 950_000n
+    });
+    expect(accepted.ok).toBe(true);
+    if (accepted.ok) {
+      expect(accepted.requiredBudgetRawUsdc).toBe(1_050_000n);
+      expect(accepted.reservationRawUsdc).toBe(1_050_000n);
+    }
+  });
+
   it("rejects insufficient spendable yield", () => {
     const result = evaluatePaymentBudget({
       position: position({

@@ -87,8 +87,12 @@ export function evaluatePaymentBudget(params: {
   const budget = computeBudgetSnapshot(params.position);
   const requiredWithdrawRawUsdc =
     params.requiredWithdrawRawUsdc ?? params.sellerAmountRawUsdc;
+  // Budget against the gross withdraw (seller amount + vault withdrawal
+  // penalty), not the seller amount: the settlement removes the gross from
+  // the position, so anything less under-reserves and lets the precheck
+  // pass payments the post-state principal invariant must then reject.
   const requiredBudgetRawUsdc =
-    params.sellerAmountRawUsdc + params.estimatedFeeDebtRawUsdc;
+    requiredWithdrawRawUsdc + params.estimatedFeeDebtRawUsdc;
   const activeWithdrawReservedRawUsdc =
     params.activeWithdrawReservedRawUsdc ?? 0n;
 
@@ -110,7 +114,11 @@ export function evaluatePaymentBudget(params: {
       budget,
       details: {
         spendableYieldRawUsdc: budget.spendableYieldRawUsdc.toString(),
-        requiredBudgetRawUsdc: requiredBudgetRawUsdc.toString()
+        requiredBudgetRawUsdc: requiredBudgetRawUsdc.toString(),
+        sellerAmountRawUsdc: params.sellerAmountRawUsdc.toString(),
+        // Gross withdraw including the vault withdrawal penalty.
+        requiredWithdrawRawUsdc: requiredWithdrawRawUsdc.toString(),
+        estimatedFeeDebtRawUsdc: params.estimatedFeeDebtRawUsdc.toString()
       }
     };
   }

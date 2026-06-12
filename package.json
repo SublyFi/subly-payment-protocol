@@ -16,6 +16,7 @@
     "demo:seller": "NODE_ENV=development tsx demo/seller.ts",
     "demo:buyer": "NODE_ENV=development tsx demo/buyer.ts",
     "demo:deposit": "NODE_ENV=development tsx demo/deposit.ts",
+    "demo:withdraw": "NODE_ENV=development tsx demo/withdraw.ts",
     "demo:mcp": "NODE_ENV=development tsx demo/mcp-server.ts"
   },
   "dependencies": {

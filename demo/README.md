@@ -48,6 +48,9 @@ source demo/env/buyer.detached.env && npm run demo:buyer         # ターミナ�
 - `npm run demo:deposit -- <amountRawUsdc>`: agent walletのUSDCをvaultへ
   deposit (facilitator経由: prepare → intent検証 → ローカル署名 → submit。
   手数料/rentはsponsor立替えなのでagentにSOLは不要)。
+- `npm run demo:withdraw -- <amountRawUsdc>`: vaultからagent walletの
+  USDC ATAへ引き出し (同じ prepare → 署名 → submit フロー)。**蓄積中の
+  spendable yieldはconservative resetで元本に繰り入れられゼロから再蓄積**。
 - `npx tsx scripts/invest-vault.ts`: vaultのidle資金をreserveへ投資する
   パーミッションレスクランク (sponsor鍵で実行)。**investしないとyieldは
   発生しない**。reserveごとに1トランザクション送信する。

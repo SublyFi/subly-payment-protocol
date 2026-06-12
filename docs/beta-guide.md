@@ -100,6 +100,18 @@ OpenClaw 等の他の MCP クライアントには、コマンド
 
 ## 引き出し
 
-預けた USDC はいつでも引き出せます (instant withdraw)。β中は運営に
-依頼してください。退出時は全額 + 未使用 yield が agent ウォレットの
-USDC ATA に戻ります。
+預けた USDC はいつでも引き出せます (instant withdraw、mainnet 検証済み):
+
+```bash
+source demo/env/buyer.mainnet.env && npm run demo:withdraw -- 1000000  # 1 USDC
+```
+
+注意点:
+
+- 引き出し額には vault の引き出しペナルティ (固定 0.001 USDC + 端数) が
+  かかる
+- **引き出すと、その時点で蓄積していた spendable yield は元本扱いに
+  繰り入れられ、支払い予算はゼロから再蓄積になる** (資金は失われないが、
+  次の支払いまでまた待つことになる)。退出時以外の引き出しは計画的に
+- 全額引き出し (退出) は deposit 額 + 蓄積 yield がまとめて agent
+  ウォレットの USDC ATA に戻る

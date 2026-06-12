@@ -128,8 +128,9 @@ Claude Code / OpenClaw / Cursor 等の MCP クライアントから
 - 必要なもの: agent keypair (自分で生成・自分で保管)、deposit 用 USDC、
   RPC URL、client トークン。
 - **deposit 額と初決済までの待ち時間の期待値**を最初に伝える。
-  2026-06-12 実測 (60 USDC・遊休過半の状態) で ~100 raw/時。curator
-  再配分後に再実測し「N USDC なら初決済まで約 M 時間」の表を載せる。
+  再配分後の実測 (2026-06-12、60 USDC) で ~3,100 raw/時 (不均一・
+  保守的には数百〜1000 raw/時/100USDC を想定)。期待値表は
+  `docs/beta-guide.md` に掲載済み。
 - **決済 1 回あたりの固定オーバーヘッド**: 必要 spendable は
   「価格 + vault 引き出しペナルティ + fee debt 見積」。現 vault の
   ペナルティは固定 1000 raw (0.001 USDC) + 1bps、fee debt は SOL 価格

@@ -13,14 +13,21 @@
  *   SUBLY_DEMO_SELLER_PORT      default 4021
  *   SUBLY_DEMO_SELLER_BASE_URL  default http://localhost:<port>
  *   SUBLY_DEMO_PRICE_RAW_USDC   default 10000 (= 0.01 USDC)
+ *   SUBLY_DEMO_CHALLENGE_RATE_PER_MIN         per-IP challenge issuance
+ *                               rate (default 10/min, burst 10)
+ *   SUBLY_DEMO_CHALLENGE_RATE_GLOBAL_PER_MIN  global challenge issuance
+ *                               rate (default 120/min, burst 120)
+ *   SUBLY_DEMO_TRUST_PROXY      set to 1 behind a reverse proxy so the
+ *                               per-IP limit keys on X-Forwarded-For
  */
 import { randomUUID } from "node:crypto";
 import Fastify from "fastify";
-import type { FastifyReply } from "fastify";
+import type { FastifyReply, FastifyRequest } from "fastify";
 import {
   decodePaymentSignatureHeader,
   PAYMENT_SIGNATURE_HEADER
 } from "../src/x402/headers.js";
+import { TokenBucketRateLimiter } from "../src/x402/rate-limit.js";
 import { SublySellerGate, type PricedRequest } from "../src/x402/seller.js";
 import { fail, formatRawUsdc, requireEnv } from "./shared.js";
 
@@ -57,6 +64,31 @@ const gate = new SublySellerGate({
     fetch(url, { ...init, signal: AbortSignal.timeout(facilitatorTimeoutMs) })
 });
 
+// Challenge issuance is unauthenticated, so it is rate limited per client IP
+// and globally; otherwise a cheap request flood pins the challenge store at
+// MAX_OPEN_CHALLENGES and starves legitimate buyers with 503s.
+const perIpRatePerMin = Number(
+  process.env.SUBLY_DEMO_CHALLENGE_RATE_PER_MIN ?? "10"
+);
+const globalRatePerMin = Number(
+  process.env.SUBLY_DEMO_CHALLENGE_RATE_GLOBAL_PER_MIN ?? "120"
+);
+if (!Number.isFinite(perIpRatePerMin) || perIpRatePerMin <= 0) {
+  fail("SUBLY_DEMO_CHALLENGE_RATE_PER_MIN must be a positive number");
+}
+if (!Number.isFinite(globalRatePerMin) || globalRatePerMin <= 0) {
+  fail("SUBLY_DEMO_CHALLENGE_RATE_GLOBAL_PER_MIN must be a positive number");
+}
+const perIpChallengeLimiter = new TokenBucketRateLimiter({
+  capacity: perIpRatePerMin,
+  refillPerSecond: perIpRatePerMin / 60
+});
+const globalChallengeLimiter = new TokenBucketRateLimiter({
+  capacity: globalRatePerMin,
+  refillPerSecond: globalRatePerMin / 60
+});
+const GLOBAL_LIMITER_KEY = "global";
+
 // Challenges are keyed by request binding hash: the retry's PAYMENT-SIGNATURE
 // carries the hash, which maps back to the exact priced request we quoted.
 // `settling` prevents concurrent retries with the same header from settling
@@ -75,7 +107,37 @@ function pruneExpiredChallenges(): void {
   }
 }
 
-function reissueChallenge(reply: FastifyReply): FastifyReply {
+function reissueChallenge(
+  request: FastifyRequest,
+  reply: FastifyReply
+): FastifyReply {
+  if (!perIpChallengeLimiter.tryTake(request.ip)) {
+    const retryAfter = perIpChallengeLimiter.retryAfterSeconds(request.ip);
+    console.log(`[seller] challenge issuance rate limited for ${request.ip}`);
+    return reply
+      .status(429)
+      .header("retry-after", String(Math.max(1, retryAfter)))
+      .send({
+        error: {
+          code: "challenge_rate_limited",
+          message: "Too many challenge requests; retry shortly"
+        }
+      });
+  }
+  if (!globalChallengeLimiter.tryTake(GLOBAL_LIMITER_KEY)) {
+    const retryAfter =
+      globalChallengeLimiter.retryAfterSeconds(GLOBAL_LIMITER_KEY);
+    console.log("[seller] challenge issuance rate limited globally");
+    return reply
+      .status(429)
+      .header("retry-after", String(Math.max(1, retryAfter)))
+      .send({
+        error: {
+          code: "challenge_rate_limited",
+          message: "Too many challenge requests; retry shortly"
+        }
+      });
+  }
   if (openChallenges.size >= MAX_OPEN_CHALLENGES) {
     console.log(
       `[seller] challenge issuance refused: ${openChallenges.size} challenges already open`
@@ -119,14 +181,17 @@ const PREMIUM_INSIGHTS = [
   "Yield spread between staked and unstaked shares narrowed to near zero."
 ];
 
-const server = Fastify({ logger: false });
+const server = Fastify({
+  logger: false,
+  trustProxy: process.env.SUBLY_DEMO_TRUST_PROXY === "1"
+});
 
 server.get(RESOURCE_PATH, async (request, reply) => {
   pruneExpiredChallenges();
 
   const paymentHeader = request.headers[PAYMENT_SIGNATURE_HEADER];
   if (typeof paymentHeader !== "string") {
-    return reissueChallenge(reply);
+    return reissueChallenge(request, reply);
   }
 
   let bindingHash: string;
@@ -135,7 +200,7 @@ server.get(RESOURCE_PATH, async (request, reply) => {
       .requestBindingHash;
   } catch {
     console.log("[seller] retry rejected: malformed PAYMENT-SIGNATURE header");
-    return reissueChallenge(reply);
+    return reissueChallenge(request, reply);
   }
 
   const entry = openChallenges.get(bindingHash);
@@ -158,7 +223,7 @@ server.get(RESOURCE_PATH, async (request, reply) => {
     console.log(
       "[seller] retry rejected: unknown or expired challenge, reissuing 402"
     );
-    return reissueChallenge(reply);
+    return reissueChallenge(request, reply);
   }
 
   console.log(

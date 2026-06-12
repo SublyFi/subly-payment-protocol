@@ -218,9 +218,13 @@ sync後に `signerProvider` 付きで `activateForPayments: true` 再登録。
   二重支払いになるため、必ず同じヘッダでretryすること)。Sellerがfacilitatorに
   到達できない場合は502 `facilitator_unreachable` (30秒タイムアウト)、同一
   チャレンジへの並行retryは409 `settlement_in_progress`。
-- このSellerはlocalhostデモ用で、公開インターネットに置く想定ではない。
-  チャレンジ発行は未認証GETごとに行われるため、公開すると安価なリクエストで
-  上限1000件を占有され続け、正規のbuyerが503になる (レート制限等は未実装)。
+- チャレンジ発行は未認証GETごとに行われるため、IP別 (default 10/分) +
+  全体 (default 120/分) のトークンバケットでレート制限される (超過は 429 +
+  `Retry-After`。env `SUBLY_DEMO_CHALLENGE_RATE_PER_MIN` /
+  `SUBLY_DEMO_CHALLENGE_RATE_GLOBAL_PER_MIN` で調整)。リバースプロキシの
+  背後では `SUBLY_DEMO_TRUST_PROXY=1` を設定しないと全クライアントが
+  プロキシのIPに合算される。開放中チャレンジ上限1000件 (503) は最終防壁
+  として残る。
 - Budget超過デモ: `SUBLY_DEMO_PRICE_RAW_USDC` をspendable yieldより大きくして
   Buyerを実行すると、facilitatorがprepareを拒否して支払いが行われないことを
   見せられる (元本に手を付けない、というプロダクトクレームの実演)。

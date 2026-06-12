@@ -66,10 +66,11 @@
 - 簡易 seller (`demo/seller.ts` ベース) を facilitator と同居デプロイ。
   受取先は Subly 運用ウォレットの USDC ATA (事前作成必須。settlement は
   ATA を作らない)。
-- **手前にリバースプロキシのレート制限を必ず入れる**。seller gate の
-  チャレンジは in-memory (TTL 120 秒 / 上限 1000 件) で未認証 GET ごとに
-  発行されるため、無制限公開だと安価なリクエストで枯渇して正規 buyer が
-  503 になる。βはレート制限 + 参加者限定で運用回避し、本対策は Phase C。
+- チャレンジ発行レート制限は組み込み済み (2026-06-12): IP 別 + 全体の
+  トークンバケットで 429 を返す (`SUBLY_DEMO_CHALLENGE_RATE_PER_MIN` 等)。
+  **リバースプロキシ配下では `SUBLY_DEMO_TRUST_PROXY=1` が必須** (でないと
+  全クライアントが 1 つの IP に合算される)。プロキシ側のレート制限は
+  多層防御として推奨。チャレンジ状態の外部化は Phase C。
 - 価格はデモ用の極小額 (~10–1000 raw) から開始。fee 見積
   (`SUBLY_ESTIMATED_FEE_LAMPORTS`) は実費に近づけすぎない
   (見積 < 実費になると sponsor が回収不足になる)。
@@ -145,8 +146,8 @@ Claude Code / OpenClaw / Cursor 等の MCP クライアントから
 
 - `SublySellerGate` (`src/x402/seller.ts`) の npm パッケージ化
   (Fastify / Express ミドルウェア)。
-- チャレンジ flooding の本対策 (発行レート制限の組み込み、または
-  チャレンジ状態の外部化)。
+- チャレンジ状態の外部化 (発行レート制限は組み込み済み。in-memory の
+  チャレンジ保持が seller 多重化・再起動に耐えるようにする)。
 - テナント別 API キーの発行・失効 (固定 3 トークンからの脱却)。
 - 決済状態照会の client スコープ開放 (`GET /v1/payments/:paymentId` は
   現在 admin 専用)。MCP ツールの「配信ロスト後の自動解決」が admin

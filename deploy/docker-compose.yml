@@ -1,0 +1,73 @@
+# Subly closed-beta deployment: facilitator + hosted seller + Postgres,
+# fronted by Caddy (automatic HTTPS). Run from the deploy/ directory:
+#
+#   1. cp facilitator.production.env.example facilitator.production.env  (fill in)
+#   2. cp seller.production.env.example seller.production.env            (fill in)
+#   3. cp Caddyfile.example Caddyfile                                    (set domains)
+#   4. mkdir -p secrets && put the sponsor keypair at secrets/sponsor.json
+#   5. echo "POSTGRES_PASSWORD=<strong-random>" > .env
+#   6. docker compose up -d --build
+#
+# Secrets (env files, secrets/, Caddyfile) stay on the host; nothing is baked
+# into the image. See deploy/README.md for the full runbook.
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in deploy/.env}
+      POSTGRES_DB: subly
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  facilitator:
+    build: ..
+    restart: unless-stopped
+    env_file: facilitator.production.env
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/subly
+      SUBLY_SPONSOR_KEYPAIR_PATH: /run/subly/sponsor.json
+    volumes:
+      - ./secrets/sponsor.json:/run/subly/sponsor.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose:
+      - "3000"
+
+  seller:
+    build: ..
+    restart: unless-stopped
+    command: ["npx", "tsx", "demo/seller.ts"]
+    env_file: seller.production.env
+    environment:
+      SUBLY_FACILITATOR_URL: http://facilitator:3000
+      SUBLY_DEMO_TRUST_PROXY: "1"
+    depends_on:
+      - facilitator
+    expose:
+      - "4021"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - facilitator
+      - seller
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

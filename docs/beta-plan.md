@@ -32,6 +32,10 @@
 ## Phase A: Facilitator + ホスト版 Seller の公開
 
 β開始の条件。A と B が揃った時点で最初の参加者を入れる。
+**デプロイ一式は `deploy/` に用意済み (2026-06-12)**: Dockerfile +
+docker-compose (Postgres/Caddy 込み) + production env テンプレ +
+手順書 (`deploy/README.md`)。監視は `scripts/check-sponsor-balance.sh`
+(cron + webhook)。残る作業はホスティング先の決定と実デプロイのみ。
 
 ### Facilitator デプロイ
 
@@ -105,6 +109,10 @@ Claude Code / OpenClaw / Cursor 等の MCP クライアントから
   (OpenClaw は MCP も使えるが、スキル形式の方がネイティブ)。
 
 ### オンボーディング手順 (admin 手動・セルフサーブ化しない)
+
+**参加者向けガイドは `docs/beta-guide.md`、env テンプレは
+`demo/env/buyer.beta.env.example`、運用側の登録は
+`scripts/onboard-agent.sh` (動作検証済み) に用意済み (2026-06-12)。**
 
 参加者 1 名あたり、運用側が実施:
 

@@ -1,0 +1,13 @@
+node_modules
+dist
+coverage
+.git
+.claude
+.superstack
+.agents
+tests
+docs
+*.md
+demo/env/keys
+demo/env/*.env
+demo/env/mcp-pending-payments.json

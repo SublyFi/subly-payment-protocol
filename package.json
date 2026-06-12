@@ -15,11 +15,13 @@
     "validate:mainnet": "tsx scripts/mainnet-validate.ts",
     "demo:seller": "NODE_ENV=development tsx demo/seller.ts",
     "demo:buyer": "NODE_ENV=development tsx demo/buyer.ts",
-    "demo:deposit": "NODE_ENV=development tsx demo/deposit.ts"
+    "demo:deposit": "NODE_ENV=development tsx demo/deposit.ts",
+    "demo:mcp": "NODE_ENV=development tsx demo/mcp-server.ts"
   },
   "dependencies": {
     "@kamino-finance/farms-sdk": "3.2.24",
     "@kamino-finance/klend-sdk": "^8.0.2",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@solana-program/address-lookup-table": "^0.7.0",
     "@solana-program/compute-budget": "^0.8.0",
     "@solana-program/memo": "^0.7.0",

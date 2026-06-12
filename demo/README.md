@@ -56,6 +56,31 @@ source demo/env/buyer.detached.env && npm run demo:buyer         # ターミナ�
   インメモリ台帳で再起動すると、chain syncのconservative resetで
   蓄積済みyieldが原本に繰り入れられて消える。
 
+## MCPサーバー (Claude Code / OpenClaw 等のエージェントから支払う)
+
+`demo/mcp-server.ts` はbuyerフローをMCPツール `fetch_with_subly_payment(url)`
+として公開する。エージェントがこのツールでURLを叩くと、402以外は
+そのまま返し、402なら prepare → intent検証 → ローカル署名 → retry まで
+自動で行い、本文と決済レシート (金額 / payTo / paymentId / Solscanリンク、
+`SUBLY_ADMIN_API_TOKEN` 設定時は決済前後のbudget) をJSONで返す。
+yield不足などでfacilitatorが拒否した場合は理由コード付きのエラーを返す
+(元本には手を付けない)。
+
+環境変数はbuyerと同じ。`demo/run-mcp.sh` が `buyer.mainnet.env`
+(なければ `buyer.detached.env`) をsourceして起動する。
+
+```bash
+# Claude Code に登録 (リポジトリルートで)
+claude mcp add subly -- bash "$(pwd)/demo/run-mcp.sh"
+
+# 手動起動 (デバッグ用。stdoutがMCPトランスポートなのでログはstderr)
+source demo/env/buyer.mainnet.env && npm run demo:mcp
+```
+
+OpenClawなどの他のMCPクライアントには、コマンド
+`bash <リポジトリ絶対パス>/demo/run-mcp.sh` のstdioサーバーとして登録する。
+facilitatorとsellerが起動済みであること (本書の「起動」参照)。
+
 ## 前提
 
 `/settle` は実際のKamino redeemを伴うため、**フルフローはmainnetモードの

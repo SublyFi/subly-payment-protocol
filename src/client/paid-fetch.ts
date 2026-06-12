@@ -13,8 +13,11 @@
  *   this state — retrying the existing signature is strictly safer.
  * - When the outcome becomes unknown (the seller stopped accepting the
  *   signature, or the challenge TTL passed without a confirmed delivery),
- *   the tracked entry is kept as a refusal marker: further calls fail with
- *   `payment_outcome_unknown` until forceNewPayment is set.
+ *   the tracked entry is kept as a refusal marker. When a paymentStatusFor
+ *   probe is configured it resolves the marker: a definitively unsettled
+ *   payment is discarded and the purchase proceeds; a settled one keeps
+ *   blocking with `payment_already_settled`. Otherwise further calls fail
+ *   with `payment_outcome_unknown` until forceNewPayment is set.
  * - Tracked entries are removed on confirmed delivery. The map is capped;
  *   when full, the oldest entry is evicted (a dropped unresolved marker
  *   weakens the refusal gate for that URL, so the cap is generous).
@@ -52,6 +55,13 @@ export interface BudgetSnapshot {
   spendableYieldUsdc: string;
 }
 
+/**
+ * Probe result for a payment whose delivery was lost. "not_settled" must be
+ * returned only for terminal states (expired / failed before submission);
+ * anything that may still settle must be "indeterminate".
+ */
+export type PaymentOutcomeProbe = "settled" | "not_settled" | "indeterminate";
+
 export interface PaidFetchServiceConfig {
   signatureBuilder: PaymentSignatureBuilder;
   /** Client-side cap applied when a call passes no maxAmountRawUsdc. */
@@ -59,6 +69,12 @@ export interface PaidFetchServiceConfig {
   fetchImpl?: PaidFetchLike;
   /** Informational; failures must be swallowed by the implementation. */
   fetchBudget?: () => Promise<BudgetSnapshot | null>;
+  /**
+   * Resolves lost-delivery payments by asking the facilitator for the
+   * payment status. Optional; without it unknown outcomes always require
+   * forceNewPayment. Must return "indeterminate" on any doubt or failure.
+   */
+  paymentStatusFor?: (paymentId: string) => Promise<PaymentOutcomeProbe>;
   /**
    * How long a signed payment is considered retryable, measured from the
    * challenge fetch. Defaults slightly under the demo seller's 120s
@@ -93,7 +109,8 @@ export class PaidFetchError extends Error {
       | "invalid_challenge"
       | "amount_exceeds_client_cap"
       | "delivery_failed_payment_pending"
-      | "payment_outcome_unknown",
+      | "payment_outcome_unknown"
+      | "payment_already_settled",
     message: string,
     readonly detail: unknown = null
   ) {
@@ -131,6 +148,9 @@ export class PaidFetchService {
   private readonly signatureBuilder: PaymentSignatureBuilder;
   private readonly fetchImpl: PaidFetchLike;
   private readonly fetchBudget: () => Promise<BudgetSnapshot | null>;
+  private readonly paymentStatusFor: (
+    paymentId: string
+  ) => Promise<PaymentOutcomeProbe>;
   private readonly defaultMaxAmountRawUsdc: bigint;
   private readonly pendingTtlMs: number;
   private readonly maxTrackedUrls: number;
@@ -144,6 +164,8 @@ export class PaidFetchService {
     this.fetchImpl =
       config.fetchImpl ?? (fetch as unknown as PaidFetchLike);
     this.fetchBudget = config.fetchBudget ?? (async () => null);
+    this.paymentStatusFor =
+      config.paymentStatusFor ?? (async () => "indeterminate");
     this.defaultMaxAmountRawUsdc = config.defaultMaxAmountRawUsdc;
     this.pendingTtlMs = config.pendingTtlMs ?? DEFAULT_PENDING_TTL_MS;
     this.maxTrackedUrls = config.maxTrackedUrls ?? DEFAULT_MAX_TRACKED_URLS;
@@ -185,14 +207,30 @@ export class PaidFetchService {
         if (params.forceNewPayment === true) {
           this.pending.delete(url);
         } else {
-          throw new PaidFetchError(
-            "payment_outcome_unknown",
-            `a previously signed payment for this URL (paymentId=${pending.paymentId}) ` +
-              "has an unknown outcome. Verify whether it settled before " +
-              "purchasing again; to pay again anyway, call this tool with " +
-              "forceNewPayment=true.",
-            { paymentId: pending.paymentId }
-          );
+          const outcome = await this.paymentStatusFor(pending.paymentId);
+          if (outcome === "not_settled") {
+            // The facilitator confirmed the payment never settled; it is
+            // safe to purchase fresh.
+            this.pending.delete(url);
+          } else if (outcome === "settled") {
+            throw new PaidFetchError(
+              "payment_already_settled",
+              `the previous payment for this URL settled (paymentId=${pending.paymentId}) ` +
+                "but the content delivery was lost, and the signature can no " +
+                "longer be retried. Calling again with forceNewPayment=true " +
+                "will PAY A SECOND TIME for the same resource.",
+              { paymentId: pending.paymentId }
+            );
+          } else {
+            throw new PaidFetchError(
+              "payment_outcome_unknown",
+              `a previously signed payment for this URL (paymentId=${pending.paymentId}) ` +
+                "has an unknown outcome. Verify whether it settled before " +
+                "purchasing again; to pay again anyway, call this tool with " +
+                "forceNewPayment=true.",
+              { paymentId: pending.paymentId }
+            );
+          }
         }
       } else {
         // Live and retryable: always retry the same signature. A new payment

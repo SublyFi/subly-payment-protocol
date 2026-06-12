@@ -5,6 +5,7 @@ import {
   PaidFetchService,
   formatRawUsdcAmount,
   type PaidFetchLike,
+  type PaymentOutcomeProbe,
   type PaymentSignatureBuilder
 } from "../src/client/paid-fetch.js";
 import {
@@ -105,6 +106,7 @@ function serviceWith(params: {
   builder?: PaymentSignatureBuilder;
   nowMs?: () => number;
   maxTrackedUrls?: number;
+  paymentStatusFor?: (paymentId: string) => Promise<PaymentOutcomeProbe>;
 }) {
   return new PaidFetchService({
     signatureBuilder: params.builder ?? builderStub(),
@@ -113,7 +115,26 @@ function serviceWith(params: {
     ...(params.nowMs === undefined ? {} : { nowMs: params.nowMs }),
     ...(params.maxTrackedUrls === undefined
       ? {}
-      : { maxTrackedUrls: params.maxTrackedUrls })
+      : { maxTrackedUrls: params.maxTrackedUrls }),
+    ...(params.paymentStatusFor === undefined
+      ? {}
+      : { paymentStatusFor: params.paymentStatusFor })
+  });
+}
+
+/** Drives a service into the unresolved state for URL_A (retry hit a 402). */
+async function intoUnresolved(
+  service: PaidFetchService,
+  s: ReturnType<typeof scriptedFetch>
+): Promise<void> {
+  s.queue.push(async (url) => challengeResponse(url));
+  s.queue.push(async () => response(502, "unreachable"));
+  await expect(service.paidFetch({ url: URL_A })).rejects.toMatchObject({
+    reason: "delivery_failed_payment_pending"
+  });
+  s.queue.push(async (url) => challengeResponse(url));
+  await expect(service.paidFetch({ url: URL_A })).rejects.toMatchObject({
+    reason: "payment_outcome_unknown"
   });
 }
 
@@ -313,6 +334,69 @@ describe("PaidFetchService", () => {
     });
     expect(result.retriedPendingPayment).toBe(true);
     expect(result.payment?.paymentId).toBe("pay_1");
+    expect(builder.buildPaymentSignatureHeader).toHaveBeenCalledTimes(1);
+  });
+
+  it("auto-resolves an unresolved payment the facilitator reports as not settled", async () => {
+    const s = scriptedFetch();
+    const builder = builderStub();
+    const probe = vi.fn(async () => "not_settled" as const);
+    const service = serviceWith({
+      fetchImpl: s.fetchImpl,
+      builder,
+      paymentStatusFor: probe
+    });
+    await intoUnresolved(service, s);
+
+    // The probe proves pay_1 never settled, so a plain re-call purchases
+    // fresh without forceNewPayment.
+    s.queue.push(async (url) => challengeResponse(url));
+    s.queue.push(async () => deliveredResponse());
+    const result = await service.paidFetch({ url: URL_A });
+    expect(result.payment?.paymentId).toBe("pay_2");
+    expect(probe).toHaveBeenCalledWith("pay_1");
+  });
+
+  it("blocks re-purchase when the facilitator reports the payment settled", async () => {
+    const s = scriptedFetch();
+    const builder = builderStub();
+    const service = serviceWith({
+      fetchImpl: s.fetchImpl,
+      builder,
+      paymentStatusFor: async () => "settled"
+    });
+    await intoUnresolved(service, s);
+
+    await expect(service.paidFetch({ url: URL_A })).rejects.toMatchObject({
+      reason: "payment_already_settled",
+      detail: { paymentId: "pay_1" }
+    });
+    expect(builder.buildPaymentSignatureHeader).toHaveBeenCalledTimes(1);
+
+    // Paying twice for the same resource stays possible, but only
+    // deliberately.
+    s.queue.push(async (url) => challengeResponse(url));
+    s.queue.push(async () => deliveredResponse());
+    const result = await service.paidFetch({
+      url: URL_A,
+      forceNewPayment: true
+    });
+    expect(result.payment?.paymentId).toBe("pay_2");
+  });
+
+  it("keeps refusing when the payment status probe is indeterminate", async () => {
+    const s = scriptedFetch();
+    const builder = builderStub();
+    const service = serviceWith({
+      fetchImpl: s.fetchImpl,
+      builder,
+      paymentStatusFor: async () => "indeterminate"
+    });
+    await intoUnresolved(service, s);
+
+    await expect(service.paidFetch({ url: URL_A })).rejects.toMatchObject({
+      reason: "payment_outcome_unknown"
+    });
     expect(builder.buildPaymentSignatureHeader).toHaveBeenCalledTimes(1);
   });
 

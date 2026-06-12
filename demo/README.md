@@ -77,7 +77,10 @@ yield不足などでfacilitatorが拒否した場合は理由コード付きの�
   決済を作らず**同じ署名でretry**する (sellerの冪等な/settleが同じ
   レシートを返す)。署名が生きている間は `forceNewPayment` も無視して
   retryを優先する。結果不明になった場合 (TTL切れ、またはsellerが署名を
-  受け付けなくなった) は `payment_outcome_unknown` を返し、
+  受け付けなくなった) は、`SUBLY_ADMIN_API_TOKEN` があればfacilitatorに
+  決済状態を照会して自動解決する (未settle確定 → 安全に自動再購入、
+  settle済み → `payment_already_settled` で再購入ブロック)。照会できない
+  場合は `payment_outcome_unknown` を返し、いずれもブロック時は
   `forceNewPayment=true` を明示しない限りそのURLへは再支払いしない。
   同一URLへの並行呼び出しは1つのフローに合流し、二重決済しない。
   ロジック本体は `src/client/paid-fetch.ts` (ユニットテスト

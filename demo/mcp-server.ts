@@ -33,7 +33,8 @@ import {
   PaidFetchError,
   PaidFetchService,
   formatRawUsdcAmount,
-  type BudgetSnapshot
+  type BudgetSnapshot,
+  type PaymentOutcomeProbe
 } from "../src/client/paid-fetch.js";
 import { loadKeyPairSigner } from "../src/solana/keys.js";
 import { createRpcFromEnv } from "../src/solana/rpc.js";
@@ -90,6 +91,38 @@ async function fetchBudget(): Promise<BudgetSnapshot | null> {
   }
 }
 
+/**
+ * Resolves lost deliveries via GET /v1/payments/:paymentId (admin auth).
+ * "not_settled" only for terminal pre-submission states; a payment that is
+ * prepared/submitted may still land and stays indeterminate.
+ */
+async function paymentStatusFor(
+  paymentId: string
+): Promise<PaymentOutcomeProbe> {
+  if (adminApiToken === null) {
+    return "indeterminate";
+  }
+  try {
+    const response = await fetch(
+      `${facilitatorBaseUrl}/v1/payments/${paymentId}`,
+      { headers: { authorization: `Bearer ${adminApiToken}` } }
+    );
+    if (response.status !== 200) {
+      return "indeterminate";
+    }
+    const body = (await response.json()) as { status?: string };
+    if (body.status === "settled") {
+      return "settled";
+    }
+    if (body.status === "expired" || body.status === "failed_not_submitted") {
+      return "not_settled";
+    }
+    return "indeterminate";
+  } catch {
+    return "indeterminate";
+  }
+}
+
 const paidFetchService = new PaidFetchService({
   signatureBuilder: new SublyX402Client({
     facilitatorBaseUrl,
@@ -99,7 +132,8 @@ const paidFetchService = new PaidFetchService({
       fetchLookupTablesForTransaction(rpc, serializedTransaction)
   }),
   defaultMaxAmountRawUsdc,
-  fetchBudget
+  fetchBudget,
+  paymentStatusFor
 });
 
 const server = new Server(
@@ -143,9 +177,10 @@ server.setRequestHandler(ListToolsRequestSchema, () => ({
           forceNewPayment: {
             type: "boolean",
             description:
-              "Pay again even though a previous payment for this URL has an " +
-              "unknown outcome. Only set after verifying the previous payment " +
-              "did not settle. Ignored while the previous payment is still " +
+              "Pay again even though a previous payment for this URL settled " +
+              "or has an unknown outcome. Only set deliberately: combined " +
+              "with payment_already_settled this means paying twice for the " +
+              "same resource. Ignored while the previous payment is still " +
               "retryable (the same signature is retried instead)."
           }
         },

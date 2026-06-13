@@ -172,9 +172,29 @@ const paidFetchService = new PaidFetchService({
   stateStore: fileStateStore(pendingStatePath)
 });
 
+const SERVER_INSTRUCTIONS = `Subly lets an agent pay for HTTP 402 (subly-yield-exact) resources from \
+its wallet's Kamino vault YIELD — the deposited principal is never spent.
+
+Before payments can succeed the operator of this server must have, once:
+1. A Solana keypair for the agent wallet. Subly does NOT create wallets; \
+make one with \`solana-keygen new -o agent.json\` (or export a keypair from \
+an existing wallet) and point SUBLY_DEMO_AGENT_KEYPAIR_PATH at it. The \
+private key never leaves that file; this server only signs locally with it.
+2. Funded that wallet with USDC on Solana mainnet (no SOL needed — fees are \
+sponsored) and deposited into the vault (see the project's deposit command). \
+The vault minimum deposit is 1 USDC.
+3. Waited for yield to accrue; a payment needs the price plus a fixed \
+overhead (~0.0024 USDC) of spendable yield.
+
+Then use fetch_with_subly_payment(url) to GET a paid resource: it pays the \
+402 from yield and returns the body plus an on-chain receipt. If it returns \
+insufficient_yield, that is expected — wait for yield, do not loop. If it \
+returns delivery_failed_payment_pending, call the SAME url again (it retries \
+the same payment, never double-pays).`;
+
 const server = new Server(
   { name: "subly-payments", version: "0.1.0" },
-  { capabilities: { tools: {} } }
+  { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS }
 );
 
 server.setRequestHandler(ListToolsRequestSchema, () => ({

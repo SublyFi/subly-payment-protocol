@@ -41,6 +41,23 @@ cover.
 - Only pay for URLs the user actually intends to purchase. Treat the
   per-payment cap as a hard limit.
 
+## One-time wallet setup (if not done yet)
+
+Subly does NOT create wallets — bring your own Solana keypair. If
+`SUBLY_DEMO_AGENT_KEYPAIR_PATH` is not set or the wallet has no vault
+balance, guide the user through this once:
+
+1. Create a keypair (or export one from an existing wallet):
+   `solana-keygen new --no-bip39-passphrase -o ~/.subly/agent.json`
+   The printed public key is the agent wallet address. The private key
+   stays in that file — never share or print it.
+2. Point the skill at it: `export SUBLY_DEMO_AGENT_KEYPAIR_PATH=~/.subly/agent.json`
+3. Send USDC (Solana mainnet) to that address. No SOL is needed — fees are
+   sponsored. Then deposit into the vault (minimum 1 USDC):
+   `npm run demo:deposit -- 1000000` (deposit also self-registers the wallet).
+4. Yield accrues over time; a payment needs the price plus a fixed overhead
+   (~0.0024 USDC) of spendable yield.
+
 ## How to run
 
 From the repository root (the directory containing `package.json`), run the

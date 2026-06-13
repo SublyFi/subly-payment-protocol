@@ -18,7 +18,14 @@ npm version patch          # or minor/major; bumps packages/pay/package.json
 node build.mjs             # bundles dist/ from the repo's demo/ + src/
 npm publish                # public access is set in package.json publishConfig
 
-# sanity check the published artifact from a clean dir:
+# CONFIRM IT IS PUBLIC (scoped packages can publish as restricted despite
+# publishConfig; restricted = npx fails for everyone but you):
+npm access get status @subly_fi/pay      # must print "public"
+# if it prints "restricted", flip it (needs your npm OTP):
+#   npm access set status=public @subly_fi/pay
+
+# sanity check the published artifact from a clean dir (allow ~1-2 min for the
+# registry/CDN to serve a newly public package before this resolves):
 cd /tmp && npx -y @subly_fi/pay@latest fetch https://seller.demo.sublyfi.com/api/premium/alpha
 ```
 
@@ -31,3 +38,8 @@ cd /tmp && npx -y @subly_fi/pay@latest fetch https://seller.demo.sublyfi.com/api
   bundle size jumps, check what new import crossed into the client path.
 - Bump the version in lockstep with any change to the client flow so
   `npx -y @subly_fi/pay@latest` picks it up.
+- First publish of this package on 2026-06-13 landed as `restricted` despite
+  `publishConfig.access: public`; it had to be flipped with
+  `npm access set status=public`. Always run the access check above after
+  publishing. A newly-public package can 404 for a minute or two while the
+  CDN's earlier negative response expires — that is propagation, not failure.

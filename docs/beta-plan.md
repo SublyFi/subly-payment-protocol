@@ -112,7 +112,7 @@ Claude Code / OpenClaw / Cursor 等の MCP クライアントから
 ### オンボーディング (セルフサーブ — 2026-06-13 改修)
 
 **参加者向けガイドは `docs/beta-guide.md`、招待文は
-`docs/beta-invite-template.md`、ウィザードは `demo/setup-beta.sh`。**
+`docs/beta-invite-template.md`。配布は npm パッケージ `@sublyfi/pay` を `npx` で(clone 不要)。**
 
 参加者ごとの運営作業はなし。登録・activate・chain sync は参加者側
 クライアントがウォレット署名認証で自動実行する (deposit 時と MCP 起動時)。
@@ -161,8 +161,9 @@ Claude Code / OpenClaw / Cursor 等の MCP クライアントから
   deposit / MCP 起動時に自動登録 (`src/client/onboarding.ts`)。
   参加者ごとの運営作業はゼロ。manual position sync のみ admin 専用のまま
   (ウォレットが自分の残高を自己申告できてはならないため)。
-- buyer セットアップの残パリティ項目: npm publish で clone 不要の
-  `claude mcp add subly -- npx @subly/mcp`。
+- ~~clone 不要の npm 配布~~ → **実装済み (2026-06-13)**: `packages/pay`
+  (`@sublyfi/pay`)。`npx -y @sublyfi/pay mcp|fetch|deposit|withdraw`。
+  publish 手順は `packages/pay/PUBLISHING.md`。
 - seller 向けドキュメント: 価格設定、payTo ATA の事前作成、
   同一 `PAYMENT-SIGNATURE` での冪等 retry ルール
   (`demo/README.md` の注意節が下敷き)。

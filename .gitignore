@@ -11,3 +11,5 @@ coverage/
 !.claude/skills/subly-beta-setup
 .superstack
 demo/env/mcp-pending-payments.json
+packages/pay/dist/
+packages/pay/*.tgz

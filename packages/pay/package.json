@@ -1,0 +1,38 @@
+{
+  "name": "@sublyfi/pay",
+  "version": "0.1.0",
+  "description": "Subly client: pay for x402 (subly-yield-exact) HTTP resources from Kamino vault yield. Ships an MCP server and a one-shot pay/deposit CLI; non-custodial (signs locally with your own key).",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "pay": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@solana-program/address-lookup-table": "^0.7.0",
+    "@solana/kit": "^2.3.0",
+    "bs58": "^6.0.0",
+    "tweetnacl": "^1.0.3",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SublyFi/subly-payment-protocol"
+  }
+}

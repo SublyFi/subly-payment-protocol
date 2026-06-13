@@ -2,7 +2,8 @@
 
 あなたのエージェント (Claude Code / OpenClaw 等) が、預けた USDC の**元本に
 手を付けず、運用利回り (yield) だけで**有料 API に支払うことを体験する
-クローズドβです。
+クローズドβです。**リポジトリの clone は不要** — npm パッケージ
+`@sublyfi/pay` を `npx` で使います。
 
 > **免責**: これは実験的ソフトウェアであり、実際の資金が Solana mainnet 上で
 > 動きます。**失っても困らない少額のみ**を使用し、参加は自己責任で
@@ -13,93 +14,63 @@
 
 1. あなたの USDC を Kamino の利回り vault に預ける (出し入れ自由)
 2. エージェントが有料 API を叩くと HTTP 402 が返る
-3. MCP ツールが facilitator 経由で支払いを準備し、**あなたの手元の鍵**で署名
+3. クライアントが facilitator 経由で支払いを準備し、**あなたの手元の鍵**で署名
 4. vault の蓄積 yield から決済され、コンテンツとレシートが返る
 5. **spendable yield を超える支払いは facilitator が拒否する** — 元本は減らない
 
-秘密鍵は常にあなたの手元に残ります (非カストディアル)。facilitator は
-あなたの署名なしに資金を動かせず、署名前にはトランザクション内容の
-構造化検証が走り、改ざんされたトランザクションには署名しません。
+秘密鍵は常にあなたの手元に残ります (非カストディアル)。リクエストは鍵の
+署名で認証され、API トークンや事前登録はありません (標準 x402 と同じ考え方)。
 
 ## 必要なもの
 
-- Node.js 20+ / git
+- Node.js 20+
+- Solana のキーペア (自分で用意。`solana-keygen` か手持ちウォレットの export)
 - USDC (Solana mainnet、推奨 50〜500 USDC) を入れた既存ウォレット
-- 運営から受け取る: facilitator URL と有料デモ API の URL (招待に記載)
+- 運営から受け取る: 有料デモ API の URL (facilitator URL は既定値で OK)
 
-API トークンや事前登録は**ありません**。あなたのリクエストはウォレットの
-署名そのもので認証され (標準 x402 と同じ考え方)、ウォレットは初回利用時に
-自動で facilitator に登録されます。
-
-## セットアップ (最短: コマンド 2 つ)
+## セットアップ (clone 不要)
 
 ```bash
-git clone <このリポジトリ> && cd subly-agent-payments
-bash demo/setup-beta.sh   # 鍵生成 + env 作成 + Claude Code への MCP 登録まで一括
+# 1. agent ウォレットの鍵を用意 (Subly は鍵を作りません — 標準ツールで)
+mkdir -p ~/.subly
+solana-keygen new --no-bip39-passphrase -o ~/.subly/agent.json
+#   → 表示される公開鍵があなたの agent ウォレットアドレス
+export SUBLY_DEMO_AGENT_KEYPAIR_PATH=~/.subly/agent.json
+
+# 2. その公開鍵宛てに USDC を送金 (Phantom 等から。SOL は不要 — 手数料は
+#    運営の sponsor が立て替える)
+
+# 3. vault に deposit (最小 1 USDC。deposit がウォレット登録も自動で行う)
+npx -y @sublyfi/pay deposit 100000000      # = 100 USDC
 ```
 
-ウィザードは RPC URL を聞くだけです (空 Enter で公開 RPC を使用)。あとは:
+`solana-keygen` が無い環境なら、手持ちの Solana ウォレットから秘密鍵を
+64 バイト JSON 形式で export して同じパスに置いても構いません。
 
-1. 表示されたあなたの agent ウォレットアドレス宛てに USDC を送金
-   (Phantom 等から。SOL 不要 — 手数料は運営の sponsor が立て替える)
-2. vault に deposit: `source demo/env/buyer.mainnet.env && npm run demo:deposit -- 100000000` (= 100 USDC)。
-   **ウォレット登録もこのとき自動で行われる** — 運営への連絡は不要。
-   vault の最小 deposit は 1 USDC (`1000000` raw)
+## エージェントから支払う
 
-**Claude Code を使っている場合はさらに簡単**: このリポジトリで Claude Code を
-開いて「**Subly βのセットアップをして**」と言うだけで、同梱の
-`subly-beta-setup` スキルが上記を対話的に進めます。
-
-<details>
-<summary>手動セットアップ (ウィザードを使わない場合)</summary>
+### Claude Code (MCP)
 
 ```bash
-npm ci
-npx tsx demo/generate-agent-key.ts demo/env/keys/agent-beta.json  # 鍵生成
-cp demo/env/buyer.beta.env.example demo/env/buyer.mainnet.env      # <...> を埋める
-claude mcp add subly -- bash "$(pwd)/demo/run-mcp.sh"              # MCP 登録
+claude mcp add subly -- npx -y @sublyfi/pay mcp
 ```
 
-</details>
+`SUBLY_DEMO_AGENT_KEYPAIR_PATH` を環境に設定した状態で新しい Claude Code
+セッションを開き、`subly` サーバーを承認 → 「<有料 API の URL> のデータを
+取ってきて」と頼むだけ。ツール実行の許可プロンプトが**あなたの決済承認**に
+あたります (`fetch_with_subly_payment` を「常に許可」にはしない)。
 
-## エージェントから支払う (MCP)
+### OpenClaw (スキル)
 
-```bash
-# Claude Code に登録 (リポジトリルートで)
-claude mcp add subly -- bash "$(pwd)/demo/run-mcp.sh"
-```
+OpenClaw 同梱用スキルは [ClawHub / git から install](https://docs.openclaw.ai/cli/skills)
+できます。スキルは内部で `npx -y @sublyfi/pay fetch <url>` を呼ぶだけなので、
+これも clone 不要です。`SUBLY_DEMO_AGENT_KEYPAIR_PATH` を設定し、エージェントに
+同じ依頼をすれば yield から支払ってレシートを返します。
 
-新しい Claude Code セッションで `subly` サーバーを承認し、
-「<有料デモ API の URL> のデータを取ってきて」と頼むだけです。
-ツール実行の許可プロンプトが**あなたの決済承認**にあたります —
-`fetch_with_subly_payment` を「常に許可」にはしないでください。
-
-CLI で試す場合は
-`source demo/env/buyer.mainnet.env && npm run demo:buyer` でも同じ
-フローが動きます (`SUBLY_DEMO_RESOURCE_URL` に API の URL を設定)。
-
-## エージェントから支払う (OpenClaw スキル)
-
-OpenClaw は同梱のスキル `skills/subly-pay/` をそのまま使えます。スキルは
-ワンショットの決済 CLI `npm run demo:pay -- <url>` を呼ぶ形で、MCP 登録は
-不要です。
+### CLI で直接
 
 ```bash
-# ワークスペースのスキルとして使う (リポジトリを開いた状態): skills/subly-pay を自動認識
-# 全セッションで使うなら ~/.openclaw/skills/ にコピー:
-cp -r skills/subly-pay ~/.openclaw/skills/
-
-# スキルが必要とする env (鍵のパス。他は本番+公開RPCがデフォルト):
-export SUBLY_DEMO_AGENT_KEYPAIR_PATH="$(pwd)/demo/env/keys/agent-beta.json"
-```
-
-OpenClaw のエージェントに「<有料 API の URL> のデータを取ってきて」と頼むと、
-スキルが `npm run demo:pay -- <url>` を実行し、yield から支払って結果と
-レシート (Solscan リンク) を返します。CLI を直接叩いて確認もできます:
-
-```bash
-SUBLY_DEMO_AGENT_KEYPAIR_PATH=demo/env/keys/agent-beta.json \
-  npm run demo:pay -- https://seller.demo.sublyfi.com/api/premium/alpha
+npx -y @sublyfi/pay fetch https://seller.demo.sublyfi.com/api/premium/alpha
 ```
 
 ## 期待値: いくら預けるとどのくらいで支払えるか
@@ -125,16 +96,17 @@ SUBLY_DEMO_AGENT_KEYPAIR_PATH=demo/env/keys/agent-beta.json \
 | `insufficient_yield` | spendable yield が必要額未満。details に内訳 (価格 / gross / fee) が出る。**仕様通りの動作** — yield が貯まるまで待つ |
 | `amount_exceeds_client_cap` | challenge の価格があなたの上限 (`SUBLY_MCP_MAX_AMOUNT_RAW_USDC`) 超え。意図した価格なら上限を上げる |
 | `delivery_failed_payment_pending` | 支払い署名済みで配信だけ失敗。**同じ URL でもう一度呼ぶだけ** (同じ署名で再試行され、二重払いしない) |
-| `payment_outcome_unknown` / `payment_already_settled` | 前回の支払いの結果が不明 / 既に決済済み。ツールが自動で facilitator に照会し、未 settle 確定なら次の呼び出しで安全に再購入される。`payment_already_settled` が出た場合の `forceNewPayment=true` は「同じものに二重に払う」という明示なので安易に使わない |
-| 429 (rate limited) | チャレンジ発行のレート制限。少し待つ |
+| `payment_outcome_unknown` / `payment_already_settled` | 前回の支払いの結果が不明 / 既に決済済み。ツールが自動で facilitator に照会し、未 settle 確定なら次の呼び出しで安全に再購入される。`payment_already_settled` の場合の `forceNewPayment=true` は「同じものに二重に払う」明示なので安易に使わない |
+| `deposit_below_minimum` | vault の最小 deposit は 1 USDC (`1000000` raw) |
+| 429 (rate limited) | レート制限。少し待つ |
 | resource mismatch | URL は 402 を返した URL と完全一致が必要 (末尾スラッシュ等に注意) |
 
 ## 引き出し
 
-預けた USDC はいつでも自分で引き出せます (instant withdraw、mainnet 検証済み。運営への依頼は不要):
+預けた USDC はいつでも自分で引き出せます (instant withdraw、運営への依頼は不要):
 
 ```bash
-source demo/env/buyer.mainnet.env && npm run demo:withdraw -- 1000000  # 1 USDC
+npx -y @sublyfi/pay withdraw 1000000  # 1 USDC
 ```
 
 注意点:

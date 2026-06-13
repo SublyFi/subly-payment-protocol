@@ -5,51 +5,52 @@ description: Subly クローズドβのセットアップを対話的に進め�
 
 # Subly closed-beta setup
 
-You are helping a beta participant set up Subly agent payments (an agent
-pays for paid APIs from Kamino vault yield; the principal is never spent).
-Full participant docs: `docs/beta-guide.md`.
+You are helping a beta participant set up Subly agent payments (an agent pays
+for paid APIs from Kamino vault yield; the principal is never spent). Full
+participant docs: `docs/beta-guide.md`.
 
-There is NO API token and NO operator pre-registration: requests are
-authenticated by the wallet's own signature (same principle as standard
-x402), and the wallet self-registers at the facilitator on first use.
+No repo clone, no API token, no operator pre-registration. The client is the
+published npm package `@sublyfi/pay`, run via `npx`. Requests authenticate
+with the wallet's own signature, and the wallet self-registers at the
+facilitator on first deposit / MCP boot.
 
 ## Steps
 
-1. Optionally ask the user for their own Solana RPC URL (a free
-   Alchemy/Helius endpoint). If they don't have one, the public RPC is fine
-   for the beta — just skip the question.
-2. Run the setup script (non-interactive when env values are set):
+1. Ensure a Solana keypair exists (Subly does NOT create wallets). If the user
+   has none, create one with the standard tool:
 
    ```bash
-   SOLANA_RPC_URL=<rpc url or omit> bash demo/setup-beta.sh
+   mkdir -p ~/.subly && solana-keygen new --no-bip39-passphrase -o ~/.subly/agent.json
+   export SUBLY_DEMO_AGENT_KEYPAIR_PATH=~/.subly/agent.json
    ```
 
-   It installs deps, generates the agent keypair (`demo/env/keys/agent-beta.json`),
-   writes `demo/env/buyer.mainnet.env`, and registers the `subly` MCP server
-   in Claude Code. It is idempotent.
-3. Show the user their AGENT WALLET ADDRESS printed by the script and tell
-   them to send USDC (mainnet, recommended 50–500 USDC) to it. No SOL is
-   needed — fees are sponsored.
-4. After the USDC arrives, run the deposit (amount in raw units, 6 decimals).
-   This also auto-registers the wallet at the facilitator:
+   Show the printed public key — that is the agent wallet address. Never read
+   or print the private key file.
+2. Tell the user to send USDC (Solana mainnet, recommended 50–500 USDC) to that
+   address. No SOL needed — fees are sponsored.
+3. Deposit into the vault (minimum 1 USDC; this also self-registers the wallet):
 
    ```bash
-   source demo/env/buyer.mainnet.env && npm run demo:deposit -- <amountRawUsdc>
+   npx -y @sublyfi/pay deposit 100000000   # 100 USDC, in raw units (6 decimals)
    ```
 
-5. Tell the user that yield must accrue before the first payment (hours,
-   depending on deposit size — see the table in `docs/beta-guide.md`).
-6. The MCP tool `fetch_with_subly_payment` becomes available in the NEXT
-   Claude Code session (after approving the `subly` server). The user can
-   then ask Claude to fetch the paid demo API URL from their invite.
+4. Register the MCP server in Claude Code (no clone):
+
+   ```bash
+   claude mcp add subly -- npx -y @sublyfi/pay mcp
+   ```
+
+5. Tell the user yield must accrue before the first payment (hours, depending
+   on deposit size — see the table in `docs/beta-guide.md`). Then in a NEW
+   Claude Code session they approve the `subly` server and ask Claude to fetch
+   the paid demo API URL from their invite.
 
 ## Guardrails
 
-- NEVER print, read, or transmit the contents of `demo/env/keys/*.json`
-  (private keys). Only the wallet address printed by the script is shared.
-- Do not raise `SUBLY_MCP_MAX_AMOUNT_RAW_USDC` unless the user explicitly
-  asks after understanding it is a per-call payment cap.
-- If a payment tool call fails, read the error's `reason` field; the
-  troubleshooting table in `docs/beta-guide.md` maps each reason to an
-  action. In particular `delivery_failed_payment_pending` means: call the
-  same URL again — do NOT treat it as unpaid.
+- NEVER read, print, or transmit the agent keypair file. Only the public
+  address is shared.
+- Do not raise `SUBLY_MCP_MAX_AMOUNT_RAW_USDC` unless the user explicitly asks
+  after understanding it is a per-call payment cap.
+- On a failed payment, read the error `reason`; the troubleshooting table in
+  `docs/beta-guide.md` maps each to an action. `delivery_failed_payment_pending`
+  means call the same URL again — do NOT treat it as unpaid.

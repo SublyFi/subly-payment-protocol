@@ -9,6 +9,7 @@
  *
  * Env (same as demo/buyer.ts):
  *   SOLANA_RPC_URL              RPC for the agent's own lookup-table view
+ *                               (optional; defaults to the public mainnet RPC)
  *   SUBLY_DEMO_AGENT_KEYPAIR or SUBLY_DEMO_AGENT_KEYPAIR_PATH
  * Optional env:
  *   SUBLY_FACILITATOR_URL       default http://localhost:3000
@@ -42,16 +43,14 @@ import {
 import { ensureWalletOnboarded } from "../src/client/onboarding.js";
 import { walletAuthHeaders } from "../src/client/wallet-auth-headers.js";
 import { loadKeyPairSigner } from "../src/solana/keys.js";
-import { createRpcFromEnv } from "../src/solana/rpc.js";
+import { createRpc } from "../src/solana/rpc.js";
 import { SublyX402Client, X402ClientError } from "../src/x402/client.js";
-import { requireEnv } from "./shared.js";
 
 const TOOL_NAME = "fetch_with_subly_payment";
 const DEFAULT_MAX_AMOUNT_RAW_USDC = 10_000n; // 0.01 USDC
 
-requireEnv("SOLANA_RPC_URL");
 const facilitatorBaseUrl =
-  process.env.SUBLY_FACILITATOR_URL ?? "http://localhost:3000";
+  process.env.SUBLY_FACILITATOR_URL ?? "https://api.demo.sublyfi.com";
 const defaultMaxAmountRawUsdc =
   process.env.SUBLY_MCP_MAX_AMOUNT_RAW_USDC === undefined
     ? DEFAULT_MAX_AMOUNT_RAW_USDC
@@ -63,7 +62,9 @@ const keyPairSigner = await loadKeyPairSigner({
   label: "SUBLY_DEMO_AGENT_KEYPAIR"
 });
 const signer = new LocalKeypairAgentWalletSigner(keyPairSigner);
-const rpc = createRpcFromEnv();
+const rpc = createRpc(
+  process.env.SOLANA_RPC_URL ?? "https://api.mainnet-beta.solana.com"
+);
 
 async function fetchBudget(): Promise<BudgetSnapshot | null> {
   try {
@@ -193,7 +194,7 @@ returns delivery_failed_payment_pending, call the SAME url again (it retries \
 the same payment, never double-pays).`;
 
 const server = new Server(
-  { name: "subly-payments", version: "0.1.0" },
+  { name: "subly-payments", version: "0.1.1" },
   { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS }
 );
 

@@ -24,12 +24,12 @@ old. A brand-new account is rejected.
 clawhub skill publish ./skills/subly-pay \
   --slug subly-pay \
   --name "Subly pay" \
-  --version 0.1.0 \
+  --version 0.1.1 \
   --changelog "Initial release: pay x402 resources from Kamino vault yield."
 
 # server-side security scan results (the skill runs npx + network, which the
 # scan will report — expected for a payment skill):
-clawhub scan download subly-pay --version 0.1.0
+clawhub scan download subly-pay --version 0.1.1
 ```
 
 Bump `--version` (semver) on every change, in lockstep with the SKILL.md

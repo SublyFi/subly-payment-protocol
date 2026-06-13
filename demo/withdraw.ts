@@ -11,6 +11,7 @@
  *
  * Required env:
  *   SOLANA_RPC_URL              RPC for the agent's own lookup-table view
+ *                               (optional; defaults to the public mainnet RPC)
  *   SUBLY_DEMO_AGENT_KEYPAIR or SUBLY_DEMO_AGENT_KEYPAIR_PATH
  * Optional env:
  *   SUBLY_FACILITATOR_URL       default http://localhost:3000
@@ -19,12 +20,11 @@ import { LocalKeypairAgentWalletSigner } from "../src/client/agent-wallet-signer
 import { walletAuthHeaders } from "../src/client/wallet-auth-headers.js";
 import { fetchLookupTablesForTransaction } from "../src/client/lookup-tables.js";
 import { loadKeyPairSigner } from "../src/solana/keys.js";
-import { createRpcFromEnv } from "../src/solana/rpc.js";
-import { fail, formatRawUsdc, requireEnv } from "./shared.js";
+import { createRpc } from "../src/solana/rpc.js";
+import { fail, formatRawUsdc } from "./shared.js";
 
-requireEnv("SOLANA_RPC_URL");
 const facilitatorBaseUrl =
-  process.env.SUBLY_FACILITATOR_URL ?? "http://localhost:3000";
+  process.env.SUBLY_FACILITATOR_URL ?? "https://api.demo.sublyfi.com";
 
 const amountRawUsdc = process.argv[2];
 if (amountRawUsdc === undefined || !/^[1-9]\d*$/.test(amountRawUsdc)) {
@@ -40,7 +40,9 @@ const keyPairSigner = await loadKeyPairSigner({
   label: "SUBLY_DEMO_AGENT_KEYPAIR"
 });
 const signer = new LocalKeypairAgentWalletSigner(keyPairSigner);
-const rpc = createRpcFromEnv();
+const rpc = createRpc(
+  process.env.SOLANA_RPC_URL ?? "https://api.mainnet-beta.solana.com"
+);
 
 async function postJson(path: string, body: unknown): Promise<unknown> {
   const url = `${facilitatorBaseUrl}${path}`;

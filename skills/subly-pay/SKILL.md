@@ -1,7 +1,7 @@
 ---
 name: subly-pay
 description: Fetch a paywalled (HTTP 402) URL and pay for it automatically from the agent wallet's Kamino vault yield, without spending the principal. Use when a request returns 402, when the user asks to buy/access a paid API or resource, or mentions Subly / x402 / yield-funded payment.
-version: 0.1.0
+version: 0.1.1
 metadata:
   openclaw:
     requires:

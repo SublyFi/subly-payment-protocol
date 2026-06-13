@@ -2,6 +2,10 @@ import { createSolanaRpc, type Rpc, type SolanaRpcApi } from "@solana/kit";
 
 export type SolanaRpc = Rpc<SolanaRpcApi>;
 
+export function createRpc(url: string): SolanaRpc {
+  return createSolanaRpc(url);
+}
+
 export function createRpcFromEnv(env: NodeJS.ProcessEnv = process.env): SolanaRpc {
   const url = env.SOLANA_RPC_URL;
   if (url === undefined || url.length === 0) {

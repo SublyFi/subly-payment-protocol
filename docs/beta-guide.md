@@ -74,11 +74,33 @@ claude mcp add subly -- bash "$(pwd)/demo/run-mcp.sh"
 ツール実行の許可プロンプトが**あなたの決済承認**にあたります —
 `fetch_with_subly_payment` を「常に許可」にはしないでください。
 
-OpenClaw 等の他の MCP クライアントには、コマンド
-`bash <リポジトリ絶対パス>/demo/run-mcp.sh` の stdio サーバーとして
-登録します。CLI で試す場合は
+CLI で試す場合は
 `source demo/env/buyer.mainnet.env && npm run demo:buyer` でも同じ
 フローが動きます (`SUBLY_DEMO_RESOURCE_URL` に API の URL を設定)。
+
+## エージェントから支払う (OpenClaw スキル)
+
+OpenClaw は同梱のスキル `skills/subly-pay/` をそのまま使えます。スキルは
+ワンショットの決済 CLI `npm run demo:pay -- <url>` を呼ぶ形で、MCP 登録は
+不要です。
+
+```bash
+# ワークスペースのスキルとして使う (リポジトリを開いた状態): skills/subly-pay を自動認識
+# 全セッションで使うなら ~/.openclaw/skills/ にコピー:
+cp -r skills/subly-pay ~/.openclaw/skills/
+
+# スキルが必要とする env (鍵のパス。他は本番+公開RPCがデフォルト):
+export SUBLY_DEMO_AGENT_KEYPAIR_PATH="$(pwd)/demo/env/keys/agent-beta.json"
+```
+
+OpenClaw のエージェントに「<有料 API の URL> のデータを取ってきて」と頼むと、
+スキルが `npm run demo:pay -- <url>` を実行し、yield から支払って結果と
+レシート (Solscan リンク) を返します。CLI を直接叩いて確認もできます:
+
+```bash
+SUBLY_DEMO_AGENT_KEYPAIR_PATH=demo/env/keys/agent-beta.json \
+  npm run demo:pay -- https://seller.demo.sublyfi.com/api/premium/alpha
+```
 
 ## 期待値: いくら預けるとどのくらいで支払えるか
 

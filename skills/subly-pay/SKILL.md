@@ -54,7 +54,7 @@ balance, guide the user through this once:
 2. Point the skill at it: `export SUBLY_DEMO_AGENT_KEYPAIR_PATH=~/.subly/agent.json`
 3. Send USDC (Solana mainnet) to that address. No SOL is needed — fees are
    sponsored. Then deposit into the vault (minimum 1 USDC):
-   `npx -y @sublyfi/pay deposit 1000000` (deposit also self-registers the wallet).
+   `npx -y @subly_fi/pay deposit 1000000` (deposit also self-registers the wallet).
 4. Yield accrues over time; a payment needs the price plus a fixed overhead
    (~0.0024 USDC) of spendable yield.
 
@@ -64,13 +64,13 @@ Run the one-shot pay command (no clone — uses the published package via npx)
 with the resource URL:
 
 ```bash
-npx -y @sublyfi/pay fetch "<url>"
+npx -y @subly_fi/pay fetch "<url>"
 ```
 
 To set a tighter per-call cap (raw USDC, 6 decimals — e.g. 100 = 0.0001 USDC):
 
 ```bash
-npx -y @sublyfi/pay fetch "<url>" 100
+npx -y @subly_fi/pay fetch "<url>" 100
 ```
 
 The command prints a single JSON object on stdout. On success it contains

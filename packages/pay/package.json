@@ -1,5 +1,5 @@
 {
-  "name": "@sublyfi/pay",
+  "name": "@subly_fi/pay",
   "version": "0.1.0",
   "description": "Subly client: pay for x402 (subly-yield-exact) HTTP resources from Kamino vault yield. Ships an MCP server and a one-shot pay/deposit CLI; non-custodial (signs locally with your own key).",
   "license": "MIT",

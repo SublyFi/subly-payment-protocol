@@ -1,7 +1,7 @@
 # β招待メッセージ テンプレート (運営用)
 
 参加者に送る案内。clone も API トークンも参加者ごとの登録作業も不要
-(`npx @sublyfi/pay` + ウォレット署名認証 + 初回自動登録)。
+(`npx @subly_fi/pay` + ウォレット署名認証 + 初回自動登録)。
 
 ---
 
@@ -21,10 +21,10 @@ mkdir -p ~/.subly && solana-keygen new --no-bip39-passphrase -o ~/.subly/agent.j
 export SUBLY_DEMO_AGENT_KEYPAIR_PATH=~/.subly/agent.json
 
 # 2. 表示された公開鍵に USDC を送金 (SOL 不要)、deposit (登録も自動)
-npx -y @sublyfi/pay deposit 100000000      # = 100 USDC
+npx -y @subly_fi/pay deposit 100000000      # = 100 USDC
 
 # 3. Claude Code に登録
-claude mcp add subly -- npx -y @sublyfi/pay mcp
+claude mcp add subly -- npx -y @subly_fi/pay mcp
 ```
 
 **試す**: 新しい Claude Code セッションで `subly` サーバーを承認して、
@@ -35,7 +35,7 @@ claude mcp add subly -- npx -y @sublyfi/pay mcp
 コンテンツとオンチェーンレシートを返します。支払いは Claude のツール
 許可プロンプトであなたが都度承認します。
 
-CLI で直接試す: `npx -y @sublyfi/pay fetch https://seller.demo.sublyfi.com/api/premium/alpha`
+CLI で直接試す: `npx -y @subly_fi/pay fetch https://seller.demo.sublyfi.com/api/premium/alpha`
 
 詳細・OpenClaw・トラブルシュート・引き出し: `docs/beta-guide.md`
 

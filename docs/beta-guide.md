@@ -3,7 +3,7 @@
 あなたのエージェント (Claude Code / OpenClaw 等) が、預けた USDC の**元本に
 手を付けず、運用利回り (yield) だけで**有料 API に支払うことを体験する
 クローズドβです。**リポジトリの clone は不要** — npm パッケージ
-`@sublyfi/pay` を `npx` で使います。
+`@subly_fi/pay` を `npx` で使います。
 
 > **免責**: これは実験的ソフトウェアであり、実際の資金が Solana mainnet 上で
 > 動きます。**失っても困らない少額のみ**を使用し、参加は自己責任で
@@ -41,7 +41,7 @@ export SUBLY_DEMO_AGENT_KEYPAIR_PATH=~/.subly/agent.json
 #    運営の sponsor が立て替える)
 
 # 3. vault に deposit (最小 1 USDC。deposit がウォレット登録も自動で行う)
-npx -y @sublyfi/pay deposit 100000000      # = 100 USDC
+npx -y @subly_fi/pay deposit 100000000      # = 100 USDC
 ```
 
 `solana-keygen` が無い環境なら、手持ちの Solana ウォレットから秘密鍵を
@@ -52,7 +52,7 @@ npx -y @sublyfi/pay deposit 100000000      # = 100 USDC
 ### Claude Code (MCP)
 
 ```bash
-claude mcp add subly -- npx -y @sublyfi/pay mcp
+claude mcp add subly -- npx -y @subly_fi/pay mcp
 ```
 
 `SUBLY_DEMO_AGENT_KEYPAIR_PATH` を環境に設定した状態で新しい Claude Code
@@ -63,14 +63,14 @@ claude mcp add subly -- npx -y @sublyfi/pay mcp
 ### OpenClaw (スキル)
 
 OpenClaw 同梱用スキルは [ClawHub / git から install](https://docs.openclaw.ai/cli/skills)
-できます。スキルは内部で `npx -y @sublyfi/pay fetch <url>` を呼ぶだけなので、
+できます。スキルは内部で `npx -y @subly_fi/pay fetch <url>` を呼ぶだけなので、
 これも clone 不要です。`SUBLY_DEMO_AGENT_KEYPAIR_PATH` を設定し、エージェントに
 同じ依頼をすれば yield から支払ってレシートを返します。
 
 ### CLI で直接
 
 ```bash
-npx -y @sublyfi/pay fetch https://seller.demo.sublyfi.com/api/premium/alpha
+npx -y @subly_fi/pay fetch https://seller.demo.sublyfi.com/api/premium/alpha
 ```
 
 ## 期待値: いくら預けるとどのくらいで支払えるか
@@ -106,7 +106,7 @@ npx -y @sublyfi/pay fetch https://seller.demo.sublyfi.com/api/premium/alpha
 預けた USDC はいつでも自分で引き出せます (instant withdraw、運営への依頼は不要):
 
 ```bash
-npx -y @sublyfi/pay withdraw 1000000  # 1 USDC
+npx -y @subly_fi/pay withdraw 1000000  # 1 USDC
 ```
 
 注意点:

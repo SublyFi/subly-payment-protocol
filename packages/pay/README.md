@@ -1,16 +1,16 @@
-# @sublyfi/pay
+# @subly_fi/pay
 
 Subly client for [x402](https://x402.org)-style HTTP payments funded by
 **Kamino vault yield** — your agent pays for paywalled APIs from the yield on
 deposited USDC, and the principal is never spent. Non-custodial: it signs
 locally with your own Solana key; Subly never holds it.
 
-Ships three entry points, all runnable with `npx` (no clone):
+Ships one `pay` dispatcher bin with subcommands, all runnable with `npx` (no clone):
 
-- `subly-mcp` — an MCP server (Claude Code, Cursor, any MCP client)
-- `subly-pay <url>` — one-shot: pay for a URL, print the receipt (used by the
+- `pay mcp` — an MCP server (Claude Code, Cursor, any MCP client)
+- `pay fetch <url>` — one-shot: pay for a URL, print the receipt (used by the
   OpenClaw skill)
-- `subly-deposit <amountRawUsdc>` / `subly-withdraw <amountRawUsdc>` — vault
+- `pay deposit <amountRawUsdc>` / `pay withdraw <amountRawUsdc>` — vault
   deposit / withdraw
 
 ## Wallet
@@ -27,17 +27,17 @@ sponsored — then deposit (vault minimum 1 USDC; deposit self-registers the
 wallet):
 
 ```bash
-npx -y @sublyfi/pay subly-deposit 1000000   # 1 USDC
+npx -y @subly_fi/pay deposit 1000000   # 1 USDC
 ```
 
 ## Use it
 
 ```bash
 # Claude Code (no clone):
-claude mcp add subly -- npx -y @sublyfi/pay subly-mcp
+claude mcp add subly -- npx -y @subly_fi/pay mcp
 
 # One-shot pay (also what the OpenClaw skill calls):
-npx -y @sublyfi/pay subly-pay https://seller.example.com/api/premium
+npx -y @subly_fi/pay fetch https://seller.example.com/api/premium
 ```
 
 ## Environment

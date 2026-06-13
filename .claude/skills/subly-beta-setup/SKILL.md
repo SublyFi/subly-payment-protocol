@@ -10,7 +10,7 @@ for paid APIs from Kamino vault yield; the principal is never spent). Full
 participant docs: `docs/beta-guide.md`.
 
 No repo clone, no API token, no operator pre-registration. The client is the
-published npm package `@sublyfi/pay`, run via `npx`. Requests authenticate
+published npm package `@subly_fi/pay`, run via `npx`. Requests authenticate
 with the wallet's own signature, and the wallet self-registers at the
 facilitator on first deposit / MCP boot.
 
@@ -31,13 +31,13 @@ facilitator on first deposit / MCP boot.
 3. Deposit into the vault (minimum 1 USDC; this also self-registers the wallet):
 
    ```bash
-   npx -y @sublyfi/pay deposit 100000000   # 100 USDC, in raw units (6 decimals)
+   npx -y @subly_fi/pay deposit 100000000   # 100 USDC, in raw units (6 decimals)
    ```
 
 4. Register the MCP server in Claude Code (no clone):
 
    ```bash
-   claude mcp add subly -- npx -y @sublyfi/pay mcp
+   claude mcp add subly -- npx -y @subly_fi/pay mcp
    ```
 
 5. Tell the user yield must accrue before the first payment (hours, depending

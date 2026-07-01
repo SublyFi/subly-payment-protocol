@@ -1,6 +1,6 @@
 {
   "name": "@subly_fi/pay",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Subly client: pay for ANY standard x402 (HTTP 402) paid API from Kamino vault yield — the seller needs no Subly integration. Ships an MCP server and a one-shot pay/deposit CLI; non-custodial (signs locally with your own key).",
   "license": "MIT",
   "type": "module",
@@ -15,20 +15,22 @@
     "README.md"
   ],
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@solana-program/address-lookup-table": "^0.7.0",
-    "@solana/kit": "^2.3.0",
-    "@solana/web3.js": "^1.98.4",
+    "@solana-program/address-lookup-table": "^0.10.0",
+    "@solana/kit": "^5.1.0",
+    "@x402/fetch": "^2.17.0",
+    "@x402/svm": "^2.17.0",
     "bs58": "^6.0.0",
     "tweetnacl": "^1.0.3",
-    "x402-solana": "^2.0.4",
     "zod": "^4.1.13"
   },
   "devDependencies": {
-    "esbuild": "^0.28.1"
+    "esbuild": "^0.28.1",
+    "typescript": "^5.9.3"
   },
   "publishConfig": {
     "access": "public"

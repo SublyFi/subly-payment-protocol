@@ -10,10 +10,19 @@ import { build } from "esbuild";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..", "..");
-const entries = ["mcp-server", "pay", "deposit", "withdraw"];
+
+// The paying entries (mcp-server, pay) live in packages/pay/src and build the
+// x402 payment on the official @x402/svm client (kit v5). deposit/withdraw have
+// no x402 payment and reuse the repo's relayer-flow demo entries as-is.
+const entries = {
+  "mcp-server": join(here, "src", "mcp-server.ts"),
+  pay: join(here, "src", "pay.ts"),
+  deposit: join(repoRoot, "demo", "deposit.ts"),
+  withdraw: join(repoRoot, "demo", "withdraw.ts")
+};
 
 await build({
-  entryPoints: entries.map((name) => join(repoRoot, "demo", `${name}.ts`)),
+  entryPoints: entries,
   outdir: join(here, "dist"),
   bundle: true,
   platform: "node",
@@ -25,4 +34,4 @@ await build({
 
 copyFileSync(join(here, "cli.mjs"), join(here, "dist", "cli.js"));
 chmodSync(join(here, "dist", "cli.js"), 0o755);
-console.log("built", entries.join(", "), "+ cli dispatcher");
+console.log("built", Object.keys(entries).join(", "), "+ cli dispatcher");

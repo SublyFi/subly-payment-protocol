@@ -1,6 +1,6 @@
 import { createX402Client } from "x402-solana/client";
 import type { AgentWalletSigner } from "./agent-wallet-signer.js";
-import { RelayerYieldRealizer } from "./relayer-yield-realizer.js";
+import { createRelayerX402Payer } from "./relayer-payer.js";
 import {
   StandardX402Payer,
   type FetchLike,
@@ -35,13 +35,6 @@ export interface StandardX402PayerFactoryConfig {
 export function createStandardX402Payer(
   config: StandardX402PayerFactoryConfig
 ): StandardX402Payer {
-  const realizer = new RelayerYieldRealizer({
-    facilitatorBaseUrl: config.facilitatorBaseUrl,
-    signer: config.signer,
-    rpc: config.rpc,
-    forceRealizeFullAmount: config.forceRealizeFullAmount ?? false
-  });
-
   const client = createX402Client({
     wallet: createX402WalletAdapter(config.agentSecretKey),
     network: config.network ?? "solana",
@@ -51,9 +44,14 @@ export function createStandardX402Payer(
   const x402Fetch: FetchLike = (url, init) =>
     client.fetch(url, init) as Promise<FetchResponseLike>;
 
-  return new StandardX402Payer({
-    realizer,
+  return createRelayerX402Payer({
+    facilitatorBaseUrl: config.facilitatorBaseUrl,
+    signer: config.signer,
+    rpc: config.rpc,
     x402Fetch,
-    defaultMaxAmountRawUsdc: config.defaultMaxAmountRawUsdc
+    defaultMaxAmountRawUsdc: config.defaultMaxAmountRawUsdc,
+    ...(config.forceRealizeFullAmount === undefined
+      ? {}
+      : { forceRealizeFullAmount: config.forceRealizeFullAmount })
   });
 }

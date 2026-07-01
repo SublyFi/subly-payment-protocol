@@ -103,7 +103,8 @@ server.setRequestHandler(ListToolsRequestSchema, () => ({
     {
       name: TOOL_NAME,
       description:
-        "GET a URL, automatically paying a standard x402 (HTTP 402) challenge " +
+        "Fetch a URL (GET or POST), automatically paying a standard x402 " +
+        "(HTTP 402) challenge " +
         "from any x402-compatible seller (Nansen, etc.) out of the agent " +
         "wallet's Kamino vault yield. Subly realizes just enough yield to the " +
         "agent's USDC ATA (sponsored) and pays the seller's Solana USDC " +
@@ -121,7 +122,27 @@ server.setRequestHandler(ListToolsRequestSchema, () => ({
           url: {
             type: "string",
             description:
-              "URL to fetch (GET). Must match the seller's resource URL exactly."
+              "URL to fetch. Must match the seller's resource URL exactly."
+          },
+          method: {
+            type: "string",
+            description:
+              "HTTP method (default GET). Some x402 sellers deliver the paid " +
+              "resource over POST (e.g. an API that takes a JSON query body)."
+          },
+          body: {
+            type: "string",
+            description:
+              "Request body sent on both the probe and the paid retry. Provide " +
+              "a JSON string for POST sellers; sent as content-type " +
+              "application/json unless headers override it."
+          },
+          headers: {
+            type: "object",
+            description:
+              "Extra request headers (object of string values), merged into " +
+              "both the probe and the paid retry.",
+            additionalProperties: { type: "string" }
           },
           maxAmountRawUsdc: {
             type: "string",
@@ -182,9 +203,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
   }
 
+  const method = typeof args.method === "string" ? args.method : undefined;
+  const body = typeof args.body === "string" ? args.body : undefined;
+  const headers =
+    args.headers !== null &&
+    typeof args.headers === "object" &&
+    !Array.isArray(args.headers)
+      ? Object.fromEntries(
+          Object.entries(args.headers as Record<string, unknown>)
+            .filter(([, v]) => typeof v === "string")
+            .map(([k, v]) => [k, v as string])
+        )
+      : undefined;
+  const mergedHeaders =
+    body === undefined
+      ? headers
+      : { "content-type": "application/json", ...(headers ?? {}) };
+
   try {
     const result = await payer.pay({
       url,
+      ...(method === undefined ? {} : { method }),
+      ...(body === undefined ? {} : { body }),
+      ...(mergedHeaders === undefined ? {} : { headers: mergedHeaders }),
       ...(maxAmountRawUsdc === undefined ? {} : { maxAmountRawUsdc })
     });
     return {

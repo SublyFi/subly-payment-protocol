@@ -19,7 +19,8 @@
     "demo:withdraw": "NODE_ENV=development tsx demo/withdraw.ts",
     "demo:mcp": "NODE_ENV=development tsx demo/mcp-server.ts",
     "demo:pay": "NODE_ENV=development tsx demo/pay.ts",
-    "demo:pay-x402": "NODE_ENV=development tsx demo/pay-x402.ts"
+    "demo:pay-x402": "NODE_ENV=development tsx demo/pay-x402.ts",
+    "demo:pay-x402-local": "NODE_ENV=development tsx demo/pay-x402-local.ts"
   },
   "dependencies": {
     "@kamino-finance/farms-sdk": "3.2.24",

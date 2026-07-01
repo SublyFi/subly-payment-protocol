@@ -47,6 +47,14 @@ export interface RelayerYieldRealizerConfig {
   usdcMint?: string;
   fetchImpl?: typeof fetch;
   /**
+   * Demo/experience mode: realize the FULL payment amount from vault yield on
+   * every call, ignoring any USDC already sitting in the agent ATA. This makes
+   * each payment a visible Kamino redeem ("Subly from the start") instead of
+   * silently reusing leftover ATA balance. Off in production, where the
+   * idempotent shortfall behaviour protects against double-realizing.
+   */
+  forceRealizeFullAmount?: boolean;
+  /**
    * Resolves a prepared transaction's lookup tables for intent validation.
    * Defaults to the RPC-backed resolver; injectable for tests.
    */
@@ -72,6 +80,7 @@ export class RelayerYieldRealizer implements YieldRealizer {
   private readonly config: {
     facilitatorBaseUrl: string;
     usdcMint: string;
+    forceRealizeFullAmount: boolean;
   };
   private readonly signer: AgentWalletSigner;
   private readonly rpc: SolanaRpc;
@@ -83,7 +92,8 @@ export class RelayerYieldRealizer implements YieldRealizer {
   constructor(config: RelayerYieldRealizerConfig) {
     this.config = {
       facilitatorBaseUrl: config.facilitatorBaseUrl.replace(/\/$/, ""),
-      usdcMint: config.usdcMint ?? SUBLY_VAULT.usdcMint
+      usdcMint: config.usdcMint ?? SUBLY_VAULT.usdcMint,
+      forceRealizeFullAmount: config.forceRealizeFullAmount ?? false
     };
     this.signer = config.signer;
     this.rpc = config.rpc;
@@ -102,13 +112,20 @@ export class RelayerYieldRealizer implements YieldRealizer {
       mint: this.config.usdcMint
     });
 
-    // Idempotency: a realize that landed before a lost/failed payment left the
-    // USDC in the ATA — reuse it instead of redeeming yield a second time.
-    const currentBalance = await this.readTokenBalance(agentAta);
-    if (currentBalance >= input.amountRawUsdc) {
-      return { realizedRawUsdc: 0n, txSignature: null };
+    // Demo/experience mode redeems the full price from vault yield every call
+    // so the payment is always a visible Kamino redeem; production reuses any
+    // ATA balance (idempotency: a realize that landed before a lost/failed
+    // payment left the USDC in the ATA — reuse it, don't redeem yield twice).
+    let shortfallRawUsdc: bigint;
+    if (this.config.forceRealizeFullAmount) {
+      shortfallRawUsdc = input.amountRawUsdc;
+    } else {
+      const currentBalance = await this.readTokenBalance(agentAta);
+      if (currentBalance >= input.amountRawUsdc) {
+        return { realizedRawUsdc: 0n, txSignature: null };
+      }
+      shortfallRawUsdc = input.amountRawUsdc - currentBalance;
     }
-    const shortfallRawUsdc = input.amountRawUsdc - currentBalance;
 
     await this.assertSpendableYield(shortfallRawUsdc);
 
@@ -123,23 +140,32 @@ export class RelayerYieldRealizer implements YieldRealizer {
       lookupTables: await this.lookupTablesFor(prepared.serializedTransaction)
     });
 
-    const submitted = (await this.postJson("/v1/withdrawals/submit", {
+    let settled = (await this.postJson("/v1/withdrawals/submit", {
       withdrawalId: prepared.withdrawalId,
       serializedTransaction: signed.serializedTransaction,
       agentSignature: signed.agentSignature
     })) as SubmittedWithdrawal;
 
-    if (submitted.status !== "confirmed" || submitted.txSignature === null) {
+    // The relayer submits the sponsor-signed tx but may return before the tx
+    // confirms on-chain (status "submitted"). Poll the reconciling GET endpoint
+    // until it reaches a terminal state; each read looks the tx up on-chain and
+    // finalizes to "confirmed" once it lands (or a terminal failure if the
+    // blockhash expires without landing).
+    if (settled.status === "submitted") {
+      settled = await this.pollUntilSettled(prepared.withdrawalId);
+    }
+
+    if (settled.status !== "confirmed" || settled.txSignature === null) {
       throw new RelayerRealizeError(
         "realize_not_confirmed",
-        `yield realize withdrawal did not confirm (status=${submitted.status})`,
-        submitted
+        `yield realize withdrawal did not confirm (status=${settled.status})`,
+        settled
       );
     }
 
     return {
-      realizedRawUsdc: BigInt(submitted.actualWithdrawRawUsdc ?? "0"),
-      txSignature: submitted.txSignature
+      realizedRawUsdc: BigInt(settled.actualWithdrawRawUsdc ?? "0"),
+      txSignature: settled.txSignature
     };
   }
 
@@ -180,6 +206,43 @@ export class RelayerYieldRealizer implements YieldRealizer {
         { spendableYieldRawUsdc: spendable.toString() }
       );
     }
+  }
+
+  /**
+   * Polls GET /v1/withdrawals/:id (which reconciles a submitted intent against
+   * the chain) until it leaves the "submitted" state or the timeout elapses.
+   */
+  private async pollUntilSettled(
+    withdrawalId: string,
+    { timeoutMs = 90_000, intervalMs = 2_500 } = {}
+  ): Promise<SubmittedWithdrawal> {
+    const deadline = Date.now() + timeoutMs;
+    let latest: SubmittedWithdrawal | null = null;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      const url = `${this.config.facilitatorBaseUrl}/v1/withdrawals/${withdrawalId}`;
+      const response = await this.fetchImpl(url, {
+        headers: await walletAuthHeaders({
+          signer: this.signer,
+          method: "GET",
+          url
+        })
+      });
+      if (response.status !== 200) {
+        continue;
+      }
+      latest = (await response.json()) as SubmittedWithdrawal;
+      if (latest.status !== "submitted") {
+        return latest;
+      }
+    }
+    return (
+      latest ?? {
+        status: "submitted",
+        txSignature: null,
+        actualWithdrawRawUsdc: null
+      }
+    );
   }
 
   private async postJson(path: string, body: unknown): Promise<unknown> {

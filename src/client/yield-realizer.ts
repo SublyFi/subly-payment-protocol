@@ -66,6 +66,13 @@ export interface LocalSponsorYieldRealizerConfig {
   /** Overhead reserved on top of the shortfall (fee debt). Default 0.0025 USDC. */
   overheadRawUsdc?: bigint;
   usdcMint?: string;
+  /**
+   * Demo/experience mode: redeem the full payment amount from vault yield on
+   * every call, ignoring USDC already in the agent ATA, so each payment is a
+   * visible Kamino redeem ("DeFi yield -> x402 payment"). See the same flag on
+   * RelayerYieldRealizer.
+   */
+  forceRealizeFullAmount?: boolean;
 }
 
 const DEFAULT_OVERHEAD_RAW_USDC = 2_500n;
@@ -89,11 +96,16 @@ export class LocalSponsorYieldRealizer implements YieldRealizer {
       mint: this.usdcMint
     });
 
-    const currentBalance = await this.readTokenBalance(agentAta);
-    if (currentBalance >= input.amountRawUsdc) {
-      return { realizedRawUsdc: 0n, txSignature: null };
+    let shortfallRawUsdc: bigint;
+    if (this.config.forceRealizeFullAmount === true) {
+      shortfallRawUsdc = input.amountRawUsdc;
+    } else {
+      const currentBalance = await this.readTokenBalance(agentAta);
+      if (currentBalance >= input.amountRawUsdc) {
+        return { realizedRawUsdc: 0n, txSignature: null };
+      }
+      shortfallRawUsdc = input.amountRawUsdc - currentBalance;
     }
-    const shortfallRawUsdc = input.amountRawUsdc - currentBalance;
 
     const context = await this.config.vaultAdapter.loadContext();
     const userShares = await this.config.vaultAdapter.getUserSharesRaw(

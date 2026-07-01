@@ -25,6 +25,11 @@ export interface StandardX402PayerFactoryConfig {
   rpcUrl: string;
   defaultMaxAmountRawUsdc: bigint;
   network?: "solana" | "solana-devnet";
+  /**
+   * Demo/experience mode: realize the full price from vault yield on every
+   * payment instead of reusing leftover ATA balance. See RelayerYieldRealizer.
+   */
+  forceRealizeFullAmount?: boolean;
 }
 
 export function createStandardX402Payer(
@@ -33,7 +38,8 @@ export function createStandardX402Payer(
   const realizer = new RelayerYieldRealizer({
     facilitatorBaseUrl: config.facilitatorBaseUrl,
     signer: config.signer,
-    rpc: config.rpc
+    rpc: config.rpc,
+    forceRealizeFullAmount: config.forceRealizeFullAmount ?? false
   });
 
   const client = createX402Client({

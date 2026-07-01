@@ -51,13 +51,19 @@ const agentSecretKey = loadSecretKeyBytes({
 const signer = new LocalKeypairAgentWalletSigner(keyPairSigner);
 const rpc = createRpc(rpcUrl);
 
+// Demo/experience mode: realize the full price from vault yield every call so
+// each payment is a visible Kamino redeem, instead of reusing leftover ATA
+// balance. Set SUBLY_DEMO_FORCE_REALIZE=1 to focus on the Subly flow.
+const forceRealizeFullAmount = process.env.SUBLY_DEMO_FORCE_REALIZE === "1";
+
 const payer = createStandardX402Payer({
   facilitatorBaseUrl,
   signer,
   agentSecretKey,
   rpc,
   rpcUrl,
-  defaultMaxAmountRawUsdc
+  defaultMaxAmountRawUsdc,
+  forceRealizeFullAmount
 });
 
 console.error(`[pay-x402] agent ${signer.walletAddress} -> ${url}`);

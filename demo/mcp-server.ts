@@ -1,28 +1,29 @@
 /**
  * Subly MCP server: exposes the buyer-side x402 flow as one MCP tool so agent
- * harnesses (Claude Code, OpenClaw, Cursor, ...) can pay for Subly-gated APIs
- * from Kamino vault yield in a single tool call.
+ * harnesses (Claude Code, OpenClaw, Cursor, ...) can pay for ANY standard
+ * x402-compatible paid API from Kamino vault yield in a single tool call. The
+ * seller needs no Subly integration.
  *
- * This file is only env wiring and MCP transport; the payment flow itself
- * (including double-payment protection and the client-side amount cap) lives
- * in src/client/paid-fetch.ts and is unit-tested there.
+ * This file is env wiring and MCP transport; the payment flow itself lives in
+ * src/client/standard-x402-payer.ts (probe -> cap -> realize yield -> pay) and
+ * src/client/relayer-yield-realizer.ts (sponsored withdraw of yield), both
+ * unit-tested there.
  *
- * Env (same as demo/buyer.ts):
- *   SOLANA_RPC_URL              RPC for the agent's own lookup-table view
+ * Env (same as demo/pay-x402.ts):
+ *   SOLANA_RPC_URL              RPC for the agent's own view
  *                               (optional; defaults to the public mainnet RPC)
  *   SUBLY_DEMO_AGENT_KEYPAIR or SUBLY_DEMO_AGENT_KEYPAIR_PATH
  * Optional env:
- *   SUBLY_FACILITATOR_URL       default http://localhost:3000
+ *   SUBLY_FACILITATOR_URL       realize relayer; default https://api.demo.sublyfi.com
  *   SUBLY_MCP_MAX_AMOUNT_RAW_USDC  default client-side payment cap when the
  *                               tool call has no maxAmountRawUsdc (default
  *                               10000 = 0.01 USDC)
  *
- * No API token: requests authenticate with the wallet's own signature, and
- * the wallet self-registers at the facilitator on boot.
+ * No API token: the agent wallet signs its own realize withdrawals; the
+ * seller's x402 payment is fee-sponsored by the seller's facilitator.
  *
  * stdout is the MCP transport; all diagnostics must go to stderr.
  */
-import { readFileSync, writeFileSync } from "node:fs";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -30,27 +31,20 @@ import {
   ListToolsRequestSchema
 } from "@modelcontextprotocol/sdk/types.js";
 import { LocalKeypairAgentWalletSigner } from "../src/client/agent-wallet-signer.js";
-import { fetchLookupTablesForTransaction } from "../src/client/lookup-tables.js";
-import {
-  PaidFetchError,
-  PaidFetchService,
-  formatRawUsdcAmount,
-  type BudgetSnapshot,
-  type PaymentOutcomeProbe,
-  type PendingPaymentRecord,
-  type PendingStateStore
-} from "../src/client/paid-fetch.js";
 import { ensureWalletOnboarded } from "../src/client/onboarding.js";
-import { walletAuthHeaders } from "../src/client/wallet-auth-headers.js";
-import { loadKeyPairSigner } from "../src/solana/keys.js";
+import { createStandardX402Payer } from "../src/client/standard-x402-factory.js";
+import { StandardX402PayError } from "../src/client/standard-x402-payer.js";
+import { formatRawUsdcAmount } from "../src/client/paid-fetch.js";
+import { loadKeyPairSigner, loadSecretKeyBytes } from "../src/solana/keys.js";
 import { createRpc } from "../src/solana/rpc.js";
-import { SublyX402Client, X402ClientError } from "../src/x402/client.js";
 
 const TOOL_NAME = "fetch_with_subly_payment";
 const DEFAULT_MAX_AMOUNT_RAW_USDC = 10_000n; // 0.01 USDC
 
 const facilitatorBaseUrl =
   process.env.SUBLY_FACILITATOR_URL ?? "https://api.demo.sublyfi.com";
+const rpcUrl =
+  process.env.SOLANA_RPC_URL ?? "https://api.mainnet-beta.solana.com";
 const defaultMaxAmountRawUsdc =
   process.env.SUBLY_MCP_MAX_AMOUNT_RAW_USDC === undefined
     ? DEFAULT_MAX_AMOUNT_RAW_USDC
@@ -61,140 +55,46 @@ const keyPairSigner = await loadKeyPairSigner({
   jsonFilePath: process.env.SUBLY_DEMO_AGENT_KEYPAIR_PATH,
   label: "SUBLY_DEMO_AGENT_KEYPAIR"
 });
+const agentSecretKey = loadSecretKeyBytes({
+  base58Secret: process.env.SUBLY_DEMO_AGENT_KEYPAIR,
+  jsonFilePath: process.env.SUBLY_DEMO_AGENT_KEYPAIR_PATH,
+  label: "SUBLY_DEMO_AGENT_KEYPAIR"
+});
 const signer = new LocalKeypairAgentWalletSigner(keyPairSigner);
-const rpc = createRpc(
-  process.env.SOLANA_RPC_URL ?? "https://api.mainnet-beta.solana.com"
-);
+const rpc = createRpc(rpcUrl);
 
-async function fetchBudget(): Promise<BudgetSnapshot | null> {
-  try {
-    const url = `${facilitatorBaseUrl}/v1/wallets/${signer.walletAddress}/budget`;
-    const response = await fetch(url, {
-      headers: await walletAuthHeaders({ signer, method: "GET", url })
-    });
-    if (response.status !== 200) {
-      return null;
-    }
-    const body = (await response.json()) as {
-      budget?: { positionValueRawUsdc: string; spendableYieldRawUsdc: string };
-    };
-    if (body.budget === undefined) {
-      return null;
-    }
-    return {
-      positionValueUsdc: formatRawUsdcAmount(body.budget.positionValueRawUsdc),
-      spendableYieldUsdc: formatRawUsdcAmount(
-        body.budget.spendableYieldRawUsdc
-      )
-    };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Resolves lost deliveries via GET /v1/payments/:paymentId (the wallet may
- * read its own payments). "not_settled" only for terminal pre-submission
- * states; a payment that is prepared/submitted may still land and stays
- * indeterminate.
- */
-async function paymentStatusFor(
-  paymentId: string
-): Promise<PaymentOutcomeProbe> {
-  try {
-    const url = `${facilitatorBaseUrl}/v1/payments/${paymentId}`;
-    const response = await fetch(url, {
-      headers: await walletAuthHeaders({ signer, method: "GET", url })
-    });
-    if (response.status !== 200) {
-      return "indeterminate";
-    }
-    const body = (await response.json()) as { status?: string };
-    if (body.status === "settled") {
-      return "settled";
-    }
-    // Terminal failures (payment-service isTerminalFailedPaymentStatus):
-    // "failed" landed on-chain but did not pay the seller.
-    if (
-      body.status === "expired" ||
-      body.status === "failed" ||
-      body.status === "failed_not_submitted"
-    ) {
-      return "not_settled";
-    }
-    return "indeterminate";
-  } catch {
-    return "indeterminate";
-  }
-}
-
-/**
- * Persists pending-payment markers so a server restart cannot forget a signed
- * payment with an unconfirmed delivery (the file holds signed payment headers
- * for this agent; keep it next to the gitignored env files).
- */
-function fileStateStore(path: string): PendingStateStore {
-  return {
-    load(): PendingPaymentRecord[] {
-      try {
-        const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-        return Array.isArray(parsed) ? (parsed as PendingPaymentRecord[]) : [];
-      } catch {
-        return [];
-      }
-    },
-    save(records: PendingPaymentRecord[]): void {
-      try {
-        writeFileSync(path, JSON.stringify(records));
-      } catch (error) {
-        console.error(
-          `[subly-mcp] failed to persist pending payments: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
-      }
-    }
-  };
-}
-
-const pendingStatePath =
-  process.env.SUBLY_MCP_STATE_PATH ?? "demo/env/mcp-pending-payments.json";
-
-const paidFetchService = new PaidFetchService({
-  signatureBuilder: new SublyX402Client({
-    facilitatorBaseUrl,
-    signer,
-    lookupTablesFor: (serializedTransaction) =>
-      fetchLookupTablesForTransaction(rpc, serializedTransaction)
-  }),
-  defaultMaxAmountRawUsdc,
-  fetchBudget,
-  paymentStatusFor,
-  stateStore: fileStateStore(pendingStatePath)
+const payer = createStandardX402Payer({
+  facilitatorBaseUrl,
+  signer,
+  agentSecretKey,
+  rpc,
+  rpcUrl,
+  defaultMaxAmountRawUsdc
 });
 
-const SERVER_INSTRUCTIONS = `Subly lets an agent pay for HTTP 402 (subly-yield-exact) resources from \
-its wallet's Kamino vault YIELD — the deposited principal is never spent.
+const SERVER_INSTRUCTIONS = `Subly lets an agent pay for ANY standard x402 \
+(HTTP 402) paid API from its wallet's Kamino vault YIELD — the deposited \
+principal is never spent, and the seller needs no Subly integration.
 
 Before payments can succeed the operator of this server must have, once:
 1. A Solana keypair for the agent wallet. Subly does NOT create wallets; \
 make one with \`solana-keygen new -o agent.json\` (or export a keypair from \
 an existing wallet) and point SUBLY_DEMO_AGENT_KEYPAIR_PATH at it. The \
 private key never leaves that file; this server only signs locally with it.
-2. Funded that wallet with USDC on Solana mainnet (no SOL needed — fees are \
-sponsored) and deposited into the vault (see the project's deposit command). \
-The vault minimum deposit is 1 USDC.
-3. Waited for yield to accrue; a payment needs the price plus a fixed \
-overhead (~0.0024 USDC) of spendable yield.
+2. Funded that wallet with USDC on Solana mainnet (no SOL needed — realize \
+fees are sponsored) and deposited into the vault (see the project's deposit \
+command). The vault minimum deposit is 1 USDC.
+3. Waited for yield to accrue; a payment needs the seller's price of \
+spendable yield.
 
-Then use fetch_with_subly_payment(url) to GET a paid resource: it pays the \
-402 from yield and returns the body plus an on-chain receipt. If it returns \
-insufficient_yield, that is expected — wait for yield, do not loop. If it \
-returns delivery_failed_payment_pending, call the SAME url again (it retries \
-the same payment, never double-pays).`;
+Then use fetch_with_subly_payment(url) to GET a paid resource from any x402 \
+seller (e.g. Nansen): it realizes just enough yield to the agent's USDC ATA \
+and pays the seller's standard x402 challenge, returning the body plus the \
+payment details. If it returns insufficient_yield, that is expected — wait \
+for yield, do not loop.`;
 
 const server = new Server(
-  { name: "subly-payments", version: "0.1.1" },
+  { name: "subly-payments", version: "0.2.0" },
   { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS }
 );
 
@@ -203,19 +103,18 @@ server.setRequestHandler(ListToolsRequestSchema, () => ({
     {
       name: TOOL_NAME,
       description:
-        "GET a URL, automatically paying a Subly x402 (subly-yield-exact) " +
-        "402 challenge from the agent wallet's Kamino vault yield. Returns " +
-        "the response body; when a payment was made, also returns the " +
-        "settlement receipt (amount, payee, paymentId, Solscan link). " +
-        "Challenges above maxAmountRawUsdc (default " +
-        `${defaultMaxAmountRawUsdc} raw = ${formatRawUsdcAmount(
+        "GET a URL, automatically paying a standard x402 (HTTP 402) challenge " +
+        "from any x402-compatible seller (Nansen, etc.) out of the agent " +
+        "wallet's Kamino vault yield. Subly realizes just enough yield to the " +
+        "agent's USDC ATA (sponsored) and pays the seller's Solana USDC " +
+        "`exact` challenge; the seller needs no Subly integration. Returns the " +
+        "response body and, when a payment was made, the payment details " +
+        "(amount, payee, realize tx). Challenges above maxAmountRawUsdc " +
+        `(default ${defaultMaxAmountRawUsdc} raw = ${formatRawUsdcAmount(
           defaultMaxAmountRawUsdc
-        )} USDC) are refused without paying. ` +
-        "If delivery fails after the payment was signed, the signature is " +
-        "kept and calling again with the same URL retries the same payment " +
-        "instead of paying twice. Payments are refused by the facilitator " +
-        "when the spendable yield budget cannot cover them — the principal " +
-        "is never spent. Use only for URLs you intend to purchase access to.",
+        )} USDC) are refused without paying. Payments are refused when the ` +
+        "spendable yield budget cannot cover them — the principal is never " +
+        "spent. Use only for URLs you intend to purchase access to.",
       inputSchema: {
         type: "object",
         properties: {
@@ -230,15 +129,6 @@ server.setRequestHandler(ListToolsRequestSchema, () => ({
               "Refuse (without paying) any challenge above this amount in raw " +
               "USDC units (6 decimals, e.g. \"10000\" = 0.01 USDC). Defaults " +
               "to the server-side cap."
-          },
-          forceNewPayment: {
-            type: "boolean",
-            description:
-              "Pay again even though a previous payment for this URL settled " +
-              "or has an unknown outcome. Only set deliberately: combined " +
-              "with payment_already_settled this means paying twice for the " +
-              "same resource. Ignored while the previous payment is still " +
-              "retryable (the same signature is retried instead)."
           }
         },
         required: ["url"]
@@ -293,16 +183,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   try {
-    const result = await paidFetchService.paidFetch({
+    const result = await payer.pay({
       url,
-      ...(maxAmountRawUsdc === undefined ? {} : { maxAmountRawUsdc }),
-      forceNewPayment: args.forceNewPayment === true
+      ...(maxAmountRawUsdc === undefined ? {} : { maxAmountRawUsdc })
     });
     return {
       content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
     };
   } catch (error) {
-    if (error instanceof PaidFetchError) {
+    if (error instanceof StandardX402PayError) {
       return {
         content: [
           {
@@ -314,26 +203,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 reason: error.reason,
                 message: error.message,
                 detail: error.detail
-              },
-              null,
-              2
-            )
-          }
-        ],
-        isError: true
-      };
-    }
-    if (error instanceof X402ClientError) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                paid: false,
-                refused: true,
-                reason: error.reason,
-                detail: error.detail ?? null
               },
               null,
               2
@@ -355,11 +224,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-// Self-serve onboarding: register + activate + chain-sync this wallet so
-// no operator step is needed before the first deposit or payment.
+// Self-serve onboarding: register + activate + chain-sync this wallet so the
+// realize relayer can serve budget reads and sponsored withdrawals.
 try {
   await ensureWalletOnboarded({ facilitatorBaseUrl, signer });
-  console.error("[subly-mcp] wallet registered and synced at the facilitator");
+  console.error("[subly-mcp] wallet registered and synced at the relayer");
 } catch (error) {
   console.error(
     `[subly-mcp] wallet onboarding failed (will still serve tools): ${
@@ -371,6 +240,6 @@ try {
 const transport = new StdioServerTransport();
 await server.connect(transport);
 console.error(
-  `[subly-mcp] ready: agent wallet ${signer.walletAddress}, facilitator ${facilitatorBaseUrl}, ` +
+  `[subly-mcp] ready: agent wallet ${signer.walletAddress}, relayer ${facilitatorBaseUrl}, ` +
     `default cap ${formatRawUsdcAmount(defaultMaxAmountRawUsdc)} USDC`
 );

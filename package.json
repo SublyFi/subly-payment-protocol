@@ -18,7 +18,8 @@
     "demo:deposit": "NODE_ENV=development tsx demo/deposit.ts",
     "demo:withdraw": "NODE_ENV=development tsx demo/withdraw.ts",
     "demo:mcp": "NODE_ENV=development tsx demo/mcp-server.ts",
-    "demo:pay": "NODE_ENV=development tsx demo/pay.ts"
+    "demo:pay": "NODE_ENV=development tsx demo/pay.ts",
+    "demo:pay-x402": "NODE_ENV=development tsx demo/pay-x402.ts"
   },
   "dependencies": {
     "@kamino-finance/farms-sdk": "3.2.24",
@@ -30,11 +31,13 @@
     "@solana-program/system": "^0.7.0",
     "@solana-program/token": "^0.5.1",
     "@solana/kit": "^2.3.0",
+    "@solana/web3.js": "^1.98.4",
     "bs58": "^6.0.0",
     "decimal.js": "^10.6.0",
     "fastify": "^5.6.2",
     "pg": "^8.16.3",
     "tweetnacl": "^1.0.3",
+    "x402-solana": "^2.0.4",
     "zod": "^4.1.13"
   },
   "devDependencies": {

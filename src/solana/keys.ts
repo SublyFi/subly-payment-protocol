@@ -33,3 +33,32 @@ export async function loadKeyPairSigner(params: {
 
   throw new Error(`${label} keypair is not configured`);
 }
+
+/**
+ * Loads the raw 64-byte ed25519 secret from the same sources as
+ * loadKeyPairSigner. Needed by consumers that build a legacy @solana/web3.js
+ * Keypair (e.g. the x402-solana wallet adapter) rather than a @solana/kit
+ * signer. The bytes never leave the process.
+ */
+export function loadSecretKeyBytes(params: {
+  base58Secret?: string | undefined;
+  jsonFilePath?: string | undefined;
+  label: string;
+}): Uint8Array {
+  const { base58Secret, jsonFilePath, label } = params;
+  if (base58Secret !== undefined && base58Secret.length > 0) {
+    const bytes = bs58.decode(base58Secret);
+    if (bytes.length !== 64) {
+      throw new Error(`${label} base58 secret must decode to 64 bytes`);
+    }
+    return bytes;
+  }
+  if (jsonFilePath !== undefined && jsonFilePath.length > 0) {
+    const raw = JSON.parse(readFileSync(jsonFilePath, "utf8"));
+    if (!Array.isArray(raw) || raw.length !== 64) {
+      throw new Error(`${label} keypair file must be a 64-byte JSON array`);
+    }
+    return Uint8Array.from(raw);
+  }
+  throw new Error(`${label} keypair is not configured`);
+}

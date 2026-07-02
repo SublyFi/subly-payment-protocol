@@ -16,6 +16,7 @@ import {
  * the caller as `x402Fetch`).
  */
 export interface RelayerX402PayerConfig {
+  /** Subly relayer API base URL. Kept as facilitatorBaseUrl for env compatibility. */
   facilitatorBaseUrl: string;
   /** Structured-intent signer over the agent keypair (for realize withdrawals). */
   signer: AgentWalletSigner;

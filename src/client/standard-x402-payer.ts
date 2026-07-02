@@ -21,7 +21,7 @@ import {
  *   2. select the Solana `exact` USDC requirement, enforce the client cap
  *   3. realize just enough yield into the agent's USDC ATA (realizer)
  *   4. delegate to the injected x402 client, which builds/signs the transfer
- *      and retries; the seller's facilitator verifies + settles it
+ *      and retries; the seller's x402 facilitator verifies + settles it
  *
  * The realize step (a Kamino withdraw) and the x402 payment are two separate
  * transactions by necessity: PayAI's `exact` verifier accepts only a fixed

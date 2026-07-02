@@ -1,6 +1,6 @@
 /**
  * Demo deposit CLI: moves USDC from the agent wallet into the Subly vault
- * through the facilitator's prepare/sign/submit flow.
+ * through the Subly relayer prepare/sign/submit flow.
  *
  * Flow: /v1/deposits/prepare -> structured-intent validation + local signing
  * -> /v1/deposits/submit (sponsor co-signs and broadcasts) -> terminal status.
@@ -13,7 +13,7 @@
  *                               (optional; defaults to the public mainnet RPC)
  *   SUBLY_DEMO_AGENT_KEYPAIR or SUBLY_DEMO_AGENT_KEYPAIR_PATH
  * Optional env:
- *   SUBLY_FACILITATOR_URL       default http://localhost:3000
+ *   SUBLY_RELAYER_URL           Subly relayer API; default https://api.demo.sublyfi.com
  */
 import { LocalKeypairAgentWalletSigner } from "../src/client/agent-wallet-signer.js";
 import { ensureWalletOnboarded } from "../src/client/onboarding.js";
@@ -23,8 +23,10 @@ import { loadKeyPairSigner } from "../src/solana/keys.js";
 import { createRpc } from "../src/solana/rpc.js";
 import { fail, formatRawUsdc } from "./shared.js";
 
-const facilitatorBaseUrl =
-  process.env.SUBLY_FACILITATOR_URL ?? "https://api.demo.sublyfi.com";
+const relayerBaseUrl =
+  process.env.SUBLY_RELAYER_URL ??
+  process.env.SUBLY_FACILITATOR_URL ??
+  "https://api.demo.sublyfi.com";
 
 const amountRawUsdc = process.argv[2];
 if (amountRawUsdc === undefined || !/^[1-9]\d*$/.test(amountRawUsdc)) {
@@ -45,7 +47,7 @@ const rpc = createRpc(
 );
 
 async function postJson(path: string, body: unknown): Promise<unknown> {
-  const url = `${facilitatorBaseUrl}${path}`;
+  const url = `${relayerBaseUrl}${path}`;
   const serialized = JSON.stringify(body);
   const response = await fetch(url, {
     method: "POST",
@@ -68,9 +70,9 @@ async function postJson(path: string, body: unknown): Promise<unknown> {
 }
 
 console.log(`[deposit] agent wallet: ${signer.walletAddress}`);
-console.log(`[deposit] facilitator:  ${facilitatorBaseUrl}`);
+console.log(`[deposit] relayer:  ${relayerBaseUrl}`);
 console.log("\n[deposit] step 0: ensure the wallet is registered (self-serve)");
-await ensureWalletOnboarded({ facilitatorBaseUrl, signer });
+await ensureWalletOnboarded({ facilitatorBaseUrl: relayerBaseUrl, signer });
 console.log("[deposit] wallet registered and synced");
 
 console.log(
@@ -121,7 +123,7 @@ if (submitted.txSignature !== null) {
 if (submitted.status !== "confirmed") {
   fail(
     `[deposit] not confirmed (errorCode=${submitted.errorCode}); ` +
-      `check GET /v1/deposits/${prepared.depositId} and the facilitator logs`
+      `check GET /v1/deposits/${prepared.depositId} and the relayer logs`
   );
 }
 console.log(

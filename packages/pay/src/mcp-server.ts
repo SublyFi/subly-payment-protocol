@@ -7,7 +7,8 @@
  * Subly relayer, so the agent needs only its own key and no SOL.
  *
  * Env: same as the repo demo (SUBLY_DEMO_AGENT_KEYPAIR[_PATH],
- * SUBLY_FACILITATOR_URL, SOLANA_RPC_URL, SUBLY_MCP_MAX_AMOUNT_RAW_USDC).
+ * SUBLY_RELAYER_URL as the Subly relayer API, SOLANA_RPC_URL,
+ * SUBLY_MCP_MAX_AMOUNT_RAW_USDC).
  */
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -19,8 +20,10 @@ import { loadKeyPairSigner, loadSecretKeyBytes } from "../../../src/solana/keys.
 import { createRpc } from "../../../src/solana/rpc.js";
 import { createSvmX402Fetch } from "./svm-x402-fetch.js";
 
-const facilitatorBaseUrl =
-  process.env.SUBLY_FACILITATOR_URL ?? "https://api.demo.sublyfi.com";
+const relayerBaseUrl =
+  process.env.SUBLY_RELAYER_URL ??
+  process.env.SUBLY_FACILITATOR_URL ??
+  "https://api.demo.sublyfi.com";
 const rpcUrl =
   process.env.SOLANA_RPC_URL ?? "https://api.mainnet-beta.solana.com";
 const defaultMaxAmountRawUsdc =
@@ -45,7 +48,7 @@ const signer = new LocalKeypairAgentWalletSigner(keyPairSigner);
 const rpc = createRpc(rpcUrl);
 
 const payer = createRelayerX402Payer({
-  facilitatorBaseUrl,
+  facilitatorBaseUrl: relayerBaseUrl,
   signer,
   rpc,
   x402Fetch: await createSvmX402Fetch({ agentSecretKey, rpcUrl }),
@@ -56,6 +59,6 @@ const payer = createRelayerX402Payer({
 await runMcpPaymentServer({
   payer,
   signer,
-  facilitatorBaseUrl,
+  facilitatorBaseUrl: relayerBaseUrl,
   defaultMaxAmountRawUsdc
 });

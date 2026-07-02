@@ -44,7 +44,7 @@ export interface AgentWalletSigner {
     lookupTables?: Record<string, readonly string[]> | undefined;
   }): Promise<SignedAgentTransaction>;
   /**
-   * Signs a facilitator API auth message (wallet-signature request auth).
+   * Signs a Subly relayer API auth message (wallet-signature request auth).
    * Unlike the transaction signers above this signs arbitrary bytes, so the
    * message MUST be the canonical wallet-auth string, never transaction
    * bytes (see src/api/wallet-auth.ts).

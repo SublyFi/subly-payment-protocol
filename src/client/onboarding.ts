@@ -1,6 +1,6 @@
 /**
  * Self-serve wallet onboarding: registers (and activates) the agent wallet
- * at the facilitator and syncs its position from chain. Requests are
+ * at the Subly relayer and syncs its position from chain. Requests are
  * wallet-signature authenticated, so no operator involvement or shared token
  * is needed — the wallet key itself is the credential. Idempotent: safe to
  * call before every flow.
@@ -22,6 +22,7 @@ export class OnboardingError extends Error {
 }
 
 export async function ensureWalletOnboarded(params: {
+  /** Subly relayer API base URL. Kept as facilitatorBaseUrl for env compatibility. */
   facilitatorBaseUrl: string;
   signer: AgentWalletSigner;
   fetchImpl?: typeof fetch;

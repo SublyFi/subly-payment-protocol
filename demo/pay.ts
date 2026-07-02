@@ -1,11 +1,10 @@
 /**
- * One-shot Subly paid fetch CLI: GET a URL, paying a subly-yield-exact 402
- * challenge from the agent wallet's Kamino vault yield, and print the result
- * as JSON. This is the command the OpenClaw skill (skills/subly-pay) invokes;
- * it is the same engine as the MCP server (src/client/paid-fetch.ts).
+ * LEGACY: one-shot Subly paid fetch CLI for the old subly-yield-exact Seller
+ * demo. The current public package and skill use standard x402 in
+ * packages/pay/src/pay.ts.
  *
  * Usage:
- *   npm run demo:pay -- <url> [maxAmountRawUsdc]
+ *   npm run demo:legacy:pay -- <url> [maxAmountRawUsdc]
  *
  * Required env:
  *   SUBLY_DEMO_AGENT_KEYPAIR or SUBLY_DEMO_AGENT_KEYPAIR_PATH
@@ -40,7 +39,7 @@ import { fail } from "./shared.js";
 
 const url = process.argv[2];
 if (url === undefined || !/^https?:\/\//.test(url)) {
-  fail("Usage: npm run demo:pay -- <url> [maxAmountRawUsdc]");
+  fail("Usage: npm run demo:legacy:pay -- <url> [maxAmountRawUsdc]");
 }
 const maxAmountArg = process.argv[3];
 

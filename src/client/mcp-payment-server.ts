@@ -44,6 +44,7 @@ plus the payment details. If it returns insufficient_yield, that is expected \
 export interface McpPaymentServerConfig {
   payer: StandardX402Payer;
   signer: AgentWalletSigner;
+  /** Subly relayer API base URL. Kept as facilitatorBaseUrl for env compatibility. */
   facilitatorBaseUrl: string;
   defaultMaxAmountRawUsdc: bigint;
   serverVersion?: string;

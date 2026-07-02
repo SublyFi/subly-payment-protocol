@@ -1,8 +1,10 @@
 /**
- * Demo seller: a paid HTTP API gated by Subly yield payments.
+ * LEGACY demo seller: a paid HTTP API gated by Subly yield payments. Current
+ * product direction does not ask Sellers to install this helper; it pays
+ * existing standard x402 Sellers from the Buyer side.
  *
  * Serves GET /api/premium/alpha. Requests without PAYMENT-SIGNATURE get a 402
- * challenge; retries are settled through the Subly facilitator
+ * challenge; retries are settled through the legacy Subly relayer/facilitator
  * (settle-before-deliver) and only then receive the premium response.
  *
  * Required env:

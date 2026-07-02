@@ -2,7 +2,7 @@
  * Wallet-signature authentication for buyer-facing endpoints.
  *
  * Standard x402 has no buyer-side API credential: the wallet key itself is
- * the identity. Subly's buyer-facing facilitator endpoints (prepare, vault
+ * the identity. Subly's buyer-facing relayer endpoints (vault
  * flows, self-serve registration, budget reads) follow the same principle —
  * each request is signed with the agent wallet's ed25519 key, so only the
  * wallet owner can act on (or reserve budget against) that wallet. No shared

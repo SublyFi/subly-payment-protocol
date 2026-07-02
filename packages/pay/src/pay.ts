@@ -7,7 +7,7 @@
  *   pay fetch <url> [maxAmountRawUsdc]
  * Env:
  *   SUBLY_DEMO_AGENT_KEYPAIR or SUBLY_DEMO_AGENT_KEYPAIR_PATH   (required)
- *   SUBLY_FACILITATOR_URL   default https://api.demo.sublyfi.com
+ *   SUBLY_RELAYER_URL       Subly relayer API; default https://api.demo.sublyfi.com
  *   SOLANA_RPC_URL          default public mainnet RPC
  *   SUBLY_MCP_MAX_AMOUNT_RAW_USDC   default cap (10000 = 0.01 USDC)
  *   SUBLY_PAY_METHOD / SUBLY_PAY_BODY   for POST-body sellers
@@ -34,8 +34,10 @@ if (url === undefined || !/^https?:\/\//.test(url)) {
 }
 const maxAmountArg = process.argv[3];
 
-const facilitatorBaseUrl =
-  process.env.SUBLY_FACILITATOR_URL ?? "https://api.demo.sublyfi.com";
+const relayerBaseUrl =
+  process.env.SUBLY_RELAYER_URL ??
+  process.env.SUBLY_FACILITATOR_URL ??
+  "https://api.demo.sublyfi.com";
 const rpcUrl =
   process.env.SOLANA_RPC_URL ?? "https://api.mainnet-beta.solana.com";
 const defaultMaxAmountRawUsdc =
@@ -60,7 +62,7 @@ const signer = new LocalKeypairAgentWalletSigner(keyPairSigner);
 const rpc = createRpc(rpcUrl);
 
 const payer = createRelayerX402Payer({
-  facilitatorBaseUrl,
+  facilitatorBaseUrl: relayerBaseUrl,
   signer,
   rpc,
   x402Fetch: await createSvmX402Fetch({ agentSecretKey, rpcUrl }),
@@ -73,7 +75,7 @@ const body = process.env.SUBLY_PAY_BODY;
 
 console.error(`[pay] agent ${signer.walletAddress} -> ${url}`);
 try {
-  await ensureWalletOnboarded({ facilitatorBaseUrl, signer });
+  await ensureWalletOnboarded({ facilitatorBaseUrl: relayerBaseUrl, signer });
 } catch (error) {
   console.error(
     `[pay] onboarding skipped: ${

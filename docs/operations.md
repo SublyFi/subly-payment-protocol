@@ -1,5 +1,10 @@
 # Subly Operations Runbook
 
+> Legacy note: この runbook は旧 `subly-yield-exact` / Seller 導入型フローの
+> 運用記録であり、現在の「既存 standard x402 Seller に Buyer 側から
+> yield 支払いする」導線の手順ではない。現在の正は `docs/README.md` と
+> `packages/pay/README.md` を参照する。
+
 最終更新: 2026-06-11 JST
 
 技術設計は `docs/technical-design.md` を正とする。本書はmainnet運用の構成と起動前チェックを記す。

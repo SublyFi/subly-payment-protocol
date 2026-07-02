@@ -13,9 +13,9 @@ metadata:
       - name: SUBLY_DEMO_AGENT_KEYPAIR_PATH
         required: true
         description: Path to the agent wallet keypair JSON (create with solana-keygen). The private key never leaves this file.
-      - name: SUBLY_FACILITATOR_URL
+      - name: SUBLY_RELAYER_URL
         required: false
-        description: Subly facilitator base URL. Defaults to https://api.demo.sublyfi.com.
+        description: Subly relayer API base URL. Defaults to https://api.demo.sublyfi.com.
       - name: SOLANA_RPC_URL
         required: false
         description: Solana RPC endpoint. Defaults to the public mainnet RPC.
@@ -31,7 +31,7 @@ metadata:
 This skill lets you fetch a paid HTTP resource and settle a standard x402
 Solana USDC `exact` 402 challenge automatically. Payment comes from the agent
 wallet's Kamino vault **yield** — the deposited principal is never spent, and
-the facilitator refuses any payment the spendable yield cannot cover.
+the Subly relayer refuses any payment the spendable yield cannot cover.
 
 ## When to use
 

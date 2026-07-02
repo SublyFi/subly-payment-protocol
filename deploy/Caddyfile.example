@@ -1,3 +1,5 @@
+# LEGACY:旧 subly-yield-exact / hosted Seller proxy config.
+# Current standard-x402 mode does not deploy a Seller-facing Subly facilitator.
 # Copy to deploy/Caddyfile and replace the domains (DNS A records must point
 # at this host). Caddy provisions TLS certificates automatically.
 #

@@ -1,8 +1,7 @@
 /**
- * Buyer-side paid fetch: GET a URL and, on a subly-yield-exact 402 challenge,
- * pay it via the facilitator and retry with PAYMENT-SIGNATURE. This is the
- * engine behind the MCP tool (demo/mcp-server.ts); it is transport-agnostic
- * and fully injectable for tests.
+ * LEGACY buyer-side paid fetch for the old subly-yield-exact Seller flow.
+ * Current standard x402 payment code lives in standard-x402-payer.ts and
+ * packages/pay/src/pay.ts.
  *
  * Double-payment protection (the calling agent is assumed to retry blindly):
  *

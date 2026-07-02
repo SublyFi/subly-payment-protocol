@@ -2,10 +2,13 @@
 
 最終更新: 2026-07-02 JST
 
-このドキュメントは、Subly 独自 `subly-yield-exact` facilitator / hosted
-Seller flow の技術仕様として残す。現在の公開クライアント導線は
-standard x402 Seller へ buyer-side で yield 支払いする `@subly_fi/pay` であり、
-利用手順は `packages/pay/README.md` を正とする。
+> Legacy note: このドキュメントは、過去に検討・実装した Subly 独自
+> `subly-yield-exact` / Seller 導入型フローの技術記録であり、現在の
+> デモ・GTM・公開クライアント導線の正ではない。現在の正は、既存の
+> standard x402 Seller に対して Buyer 側で yield 支払いする
+> `@subly_fi/pay` である。参照順は `docs/README.md`、
+> `docs/nansen-x402-yield-payment-architecture.md`、
+> `docs/buyer-side-yield-payment-strategy.md`、`packages/pay/README.md`。
 
 ## Goal
 
@@ -231,7 +234,7 @@ Subly adds:
 - `requestBindingHash` for seller request, method, canonical URL, body hash, amount, asset, payee, and seller USDC token account binding
 - `preparedMessageHash` matching and duplicate settlement cache
 
-Generic x402 facilitators will not support this scheme. Sellers accepting Subly payments must point to the Subly facilitator and check `/supported`.
+In this legacy scheme, generic x402 facilitators will not support `subly-yield-exact`; a Seller experiment would have had to point to the Subly-specific relayer/facilitator and check `/supported`. This is not the current GTM path.
 
 This is intentional. Standard x402 Solana `exact` is a narrow SPL token transfer scheme and cannot express Kamino withdraw + seller transfer in one settlement transaction. Subly keeps the x402-style HTTP payment experience while using a custom settlement scheme.
 

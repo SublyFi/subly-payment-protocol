@@ -28,6 +28,7 @@ import {
  * point shared by the CLI and the MCP server.
  */
 export interface StandardX402PayerFactoryConfig {
+  /** Subly relayer API base URL. Kept as facilitatorBaseUrl for env compatibility. */
   facilitatorBaseUrl: string;
   /** Structured-intent signer over the agent keypair (for realize withdrawals). */
   signer: AgentWalletSigner;

@@ -27,7 +27,7 @@ export type FetchLike = (
 ) => Promise<{ status: number; json(): Promise<unknown> }>;
 
 export interface SellerGateConfig {
-  /** Subly facilitator base URL, e.g. https://facilitator.subly.dev */
+  /** Legacy subly-yield-exact relayer/facilitator base URL. */
   facilitatorBaseUrl: string;
   sellerApiToken: string;
   /** Seller wallet that receives USDC. */
@@ -69,6 +69,7 @@ export type SellerGateResult =
  * retry, passes the PAYMENT-SIGNATURE header to `settle`. Access is granted
  * only after the facilitator's /settle reports success (settle-before-deliver).
  */
+/** @deprecated Legacy Seller-side helper for subly-yield-exact experiments. */
 export class SublySellerGate {
   private readonly config: Required<
     Pick<SellerGateConfig, "facilitatorBaseUrl" | "sellerApiToken" | "payTo">

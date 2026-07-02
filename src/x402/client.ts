@@ -28,6 +28,7 @@ export type ClientFetchLike = (
   json(): Promise<unknown>;
 }>;
 
+/** @deprecated Legacy client for Subly's old subly-yield-exact Seller flow. */
 export interface SublyX402ClientConfig {
   facilitatorBaseUrl: string;
   signer: AgentWalletSigner;

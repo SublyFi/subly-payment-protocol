@@ -7,7 +7,7 @@ import type { YieldRealizer } from "./standard-x402-payer.js";
 
 /**
  * Product/distribution-form yield realizer. The sponsor keypair lives ONLY on
- * the Subly relayer (facilitator), never in a third party's MCP install — so
+ * the Subly relayer, never in a third party's MCP install — so
  * anyone who installs the client with just their agent key still gets gas
  * sponsorship, exactly like the existing beta.
  *
@@ -38,6 +38,7 @@ export class RelayerRealizeError extends Error {
 }
 
 export interface RelayerYieldRealizerConfig {
+  /** Subly relayer API base URL. Kept as facilitatorBaseUrl for env compatibility. */
   facilitatorBaseUrl: string;
   signer: AgentWalletSigner;
   /** Used only to resolve lookup tables for structured-intent validation. */

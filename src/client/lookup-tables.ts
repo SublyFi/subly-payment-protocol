@@ -31,7 +31,7 @@ export function lookupTableAddressesForTransaction(
 /**
  * Fetches lookup table contents through the caller's own RPC so intent
  * validation is anchored to the signer's view of the chain rather than data
- * supplied by the facilitator.
+ * supplied by the relayer.
  */
 export async function fetchLookupTablesForTransaction(
   rpc: SolanaRpc,

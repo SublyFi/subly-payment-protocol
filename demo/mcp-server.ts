@@ -8,7 +8,7 @@
  *
  * Env:
  *   SUBLY_DEMO_AGENT_KEYPAIR or SUBLY_DEMO_AGENT_KEYPAIR_PATH   (required)
- *   SUBLY_FACILITATOR_URL   realize relayer; default https://api.demo.sublyfi.com
+ *   SUBLY_RELAYER_URL       Subly relayer API; default https://api.demo.sublyfi.com
  *   SOLANA_RPC_URL          default public mainnet RPC
  *   SUBLY_MCP_MAX_AMOUNT_RAW_USDC   default per-call cap (10000 = 0.01 USDC)
  */
@@ -19,8 +19,10 @@ import { fileStandardX402StateStore } from "../src/client/standard-x402-state-st
 import { loadKeyPairSigner, loadSecretKeyBytes } from "../src/solana/keys.js";
 import { createRpc } from "../src/solana/rpc.js";
 
-const facilitatorBaseUrl =
-  process.env.SUBLY_FACILITATOR_URL ?? "https://api.demo.sublyfi.com";
+const relayerBaseUrl =
+  process.env.SUBLY_RELAYER_URL ??
+  process.env.SUBLY_FACILITATOR_URL ??
+  "https://api.demo.sublyfi.com";
 const rpcUrl =
   process.env.SOLANA_RPC_URL ?? "https://api.mainnet-beta.solana.com";
 const defaultMaxAmountRawUsdc =
@@ -44,7 +46,7 @@ const signer = new LocalKeypairAgentWalletSigner(keyPairSigner);
 const rpc = createRpc(rpcUrl);
 
 const payer = createStandardX402Payer({
-  facilitatorBaseUrl,
+  facilitatorBaseUrl: relayerBaseUrl,
   signer,
   agentSecretKey,
   rpc,
@@ -56,6 +58,6 @@ const payer = createStandardX402Payer({
 await runMcpPaymentServer({
   payer,
   signer,
-  facilitatorBaseUrl,
+  facilitatorBaseUrl: relayerBaseUrl,
   defaultMaxAmountRawUsdc
 });

@@ -45,10 +45,11 @@ npx -y @subly_fi/pay fetch https://seller.example.com/api/premium
 | Var | Required | Default |
 |---|---|---|
 | `SUBLY_DEMO_AGENT_KEYPAIR_PATH` | yes (or `SUBLY_DEMO_AGENT_KEYPAIR` base58) | — |
-| `SUBLY_FACILITATOR_URL` | no | `https://api.demo.sublyfi.com` |
+| `SUBLY_RELAYER_URL` | no | `https://api.demo.sublyfi.com` |
 | `SOLANA_RPC_URL` | no | public mainnet RPC |
 | `SUBLY_MCP_MAX_AMOUNT_RAW_USDC` | no | `10000` (0.01 USDC) per-payment cap |
 
 Requests authenticate with a signature from your wallet key — there is no API
-token. The cap and the facilitator's yield-budget check both bound spending;
+token. `SUBLY_FACILITATOR_URL` is still accepted as a legacy fallback for
+`SUBLY_RELAYER_URL`. The cap and the relayer's yield-budget check both bound spending;
 the principal is never touched.

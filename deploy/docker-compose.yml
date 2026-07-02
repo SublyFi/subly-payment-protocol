@@ -1,3 +1,5 @@
+# LEGACY:旧 subly-yield-exact / hosted Seller closed-beta deployment.
+# 現在の主導線ではSeller向けSubly facilitatorは立てない。
 # Subly closed-beta deployment: facilitator + hosted seller + Postgres,
 # fronted by Caddy (automatic HTTPS). Run from the deploy/ directory:
 #

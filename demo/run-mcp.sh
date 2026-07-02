@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Launches the Subly MCP server with the mainnet buyer env when present
-# (falls back to the detached env). stdout is the MCP transport.
+# Launches the current standard-x402 Subly MCP server with the configured
+# relayer env. The detached env fallback is only for local legacy dev.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export NODE_ENV="${NODE_ENV:-development}"

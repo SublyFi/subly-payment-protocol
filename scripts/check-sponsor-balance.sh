@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Sponsor SOL balance / facilitator health check for cron. Alerts a webhook
-# (Slack/Discord-compatible {"text": ...}) when the facilitator is down or
+# Sponsor SOL balance / Subly relayer health check for cron. Alerts a webhook
+# (Slack/Discord-compatible {"text": ...}) when the relayer is down or
 # the sponsor balance is below SUBLY_MIN_SPONSOR_BALANCE_LAMPORTS.
 #
-#   SUBLY_FACILITATOR_URL=https://facilitator.example.com \
+#   SUBLY_RELAYER_URL=https://api.example.com \
 #   SUBLY_ADMIN_API_TOKEN=... \
 #   SUBLY_ALERT_WEBHOOK_URL=https://hooks.slack.com/... \
 #   bash scripts/check-sponsor-balance.sh
 #
 # Cron example (every 10 minutes):
-#   */10 * * * * cd /opt/subly && SUBLY_FACILITATOR_URL=... SUBLY_ADMIN_API_TOKEN=... SUBLY_ALERT_WEBHOOK_URL=... bash scripts/check-sponsor-balance.sh >> /var/log/subly-monitor.log 2>&1
+#   */10 * * * * cd /opt/subly && SUBLY_RELAYER_URL=... SUBLY_ADMIN_API_TOKEN=... SUBLY_ALERT_WEBHOOK_URL=... bash scripts/check-sponsor-balance.sh >> /var/log/subly-monitor.log 2>&1
 set -uo pipefail
 
-FACILITATOR="${SUBLY_FACILITATOR_URL:-http://localhost:3000}"
+RELAYER="${SUBLY_RELAYER_URL:-${SUBLY_FACILITATOR_URL:-http://localhost:3000}}"
 ADMIN="${SUBLY_ADMIN_API_TOKEN:?SUBLY_ADMIN_API_TOKEN is required}"
 WEBHOOK="${SUBLY_ALERT_WEBHOOK_URL:-}"
 
@@ -27,10 +27,10 @@ alert() {
   fi
 }
 
-body=$(curl -fsS -m 20 "$FACILITATOR/v1/admin/monitoring" \
+body=$(curl -fsS -m 20 "$RELAYER/v1/admin/monitoring" \
   -H "authorization: Bearer $ADMIN" 2>/dev/null)
 if [ -z "$body" ]; then
-  alert "facilitator unreachable at $FACILITATOR"
+  alert "relayer unreachable at $RELAYER"
   exit 1
 fi
 
@@ -52,7 +52,7 @@ case "$result" in
     echo "$(date -u +%FT%TZ) sponsor balance ok"
     ;;
   none)
-    alert "facilitator is running without sponsor monitoring (detached mode?)"
+    alert "relayer is running without sponsor monitoring (detached mode?)"
     exit 1
     ;;
   low*)
@@ -60,7 +60,7 @@ case "$result" in
     exit 1
     ;;
   *)
-    alert "unexpected monitoring response from $FACILITATOR"
+    alert "unexpected monitoring response from $RELAYER"
     exit 1
     ;;
 esac

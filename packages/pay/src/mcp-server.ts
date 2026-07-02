@@ -9,9 +9,12 @@
  * Env: same as the repo demo (SUBLY_DEMO_AGENT_KEYPAIR[_PATH],
  * SUBLY_FACILITATOR_URL, SOLANA_RPC_URL, SUBLY_MCP_MAX_AMOUNT_RAW_USDC).
  */
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { LocalKeypairAgentWalletSigner } from "../../../src/client/agent-wallet-signer.js";
 import { runMcpPaymentServer } from "../../../src/client/mcp-payment-server.js";
 import { createRelayerX402Payer } from "../../../src/client/relayer-payer.js";
+import { fileStandardX402StateStore } from "../../../src/client/standard-x402-state-store.js";
 import { loadKeyPairSigner, loadSecretKeyBytes } from "../../../src/solana/keys.js";
 import { createRpc } from "../../../src/solana/rpc.js";
 import { createSvmX402Fetch } from "./svm-x402-fetch.js";
@@ -24,6 +27,9 @@ const defaultMaxAmountRawUsdc =
   process.env.SUBLY_MCP_MAX_AMOUNT_RAW_USDC === undefined
     ? 10_000n
     : BigInt(process.env.SUBLY_MCP_MAX_AMOUNT_RAW_USDC);
+const pendingStatePath =
+  process.env.SUBLY_MCP_STATE_PATH ??
+  join(homedir(), ".subly", "standard-x402-pending.json");
 
 const keyPairSigner = await loadKeyPairSigner({
   base58Secret: process.env.SUBLY_DEMO_AGENT_KEYPAIR,
@@ -43,7 +49,8 @@ const payer = createRelayerX402Payer({
   signer,
   rpc,
   x402Fetch: await createSvmX402Fetch({ agentSecretKey, rpcUrl }),
-  defaultMaxAmountRawUsdc
+  defaultMaxAmountRawUsdc,
+  stateStore: fileStandardX402StateStore(pendingStatePath)
 });
 
 await runMcpPaymentServer({

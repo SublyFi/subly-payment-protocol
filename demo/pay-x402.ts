@@ -19,6 +19,7 @@ import { LocalKeypairAgentWalletSigner } from "../src/client/agent-wallet-signer
 import { ensureWalletOnboarded } from "../src/client/onboarding.js";
 import { createStandardX402Payer } from "../src/client/standard-x402-factory.js";
 import { StandardX402PayError } from "../src/client/standard-x402-payer.js";
+import { fileStandardX402StateStore } from "../src/client/standard-x402-state-store.js";
 import { loadKeyPairSigner, loadSecretKeyBytes } from "../src/solana/keys.js";
 import { createRpc } from "../src/solana/rpc.js";
 import { fail } from "./shared.js";
@@ -37,6 +38,8 @@ const defaultMaxAmountRawUsdc =
   process.env.SUBLY_MCP_MAX_AMOUNT_RAW_USDC === undefined
     ? 10_000n
     : BigInt(process.env.SUBLY_MCP_MAX_AMOUNT_RAW_USDC);
+const pendingStatePath =
+  process.env.SUBLY_MCP_STATE_PATH ?? "demo/env/standard-x402-pending.json";
 
 const keyPairSigner = await loadKeyPairSigner({
   base58Secret: process.env.SUBLY_DEMO_AGENT_KEYPAIR,
@@ -51,11 +54,6 @@ const agentSecretKey = loadSecretKeyBytes({
 const signer = new LocalKeypairAgentWalletSigner(keyPairSigner);
 const rpc = createRpc(rpcUrl);
 
-// Demo/experience mode: realize the full price from vault yield every call so
-// each payment is a visible Kamino redeem, instead of reusing leftover ATA
-// balance. Set SUBLY_DEMO_FORCE_REALIZE=1 to focus on the Subly flow.
-const forceRealizeFullAmount = process.env.SUBLY_DEMO_FORCE_REALIZE === "1";
-
 const payer = createStandardX402Payer({
   facilitatorBaseUrl,
   signer,
@@ -63,7 +61,7 @@ const payer = createStandardX402Payer({
   rpc,
   rpcUrl,
   defaultMaxAmountRawUsdc,
-  forceRealizeFullAmount
+  stateStore: fileStandardX402StateStore(pendingStatePath)
 });
 
 console.error(`[pay-x402] agent ${signer.walletAddress} -> ${url}`);
@@ -82,7 +80,10 @@ try {
     url,
     ...(maxAmountArg === undefined
       ? {}
-      : { maxAmountRawUsdc: BigInt(maxAmountArg) })
+      : { maxAmountRawUsdc: BigInt(maxAmountArg) }),
+    ...(process.env.SUBLY_PAY_FORCE_NEW_PAYMENT === "1"
+      ? { forceNewPayment: true }
+      : {})
   });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (!result.paid) {

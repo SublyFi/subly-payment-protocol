@@ -1,6 +1,4 @@
-import { address } from "@solana/kit";
 import { SUBLY_VAULT } from "../config/constants.js";
-import { deriveAssociatedTokenAddress } from "../lib/associated-token-account.js";
 import type { SolanaRpc } from "../solana/rpc.js";
 import type { AgentWalletSigner } from "./agent-wallet-signer.js";
 import { fetchLookupTablesForTransaction } from "./lookup-tables.js";
@@ -47,11 +45,8 @@ export interface RelayerYieldRealizerConfig {
   usdcMint?: string;
   fetchImpl?: typeof fetch;
   /**
-   * Demo/experience mode: realize the FULL payment amount from vault yield on
-   * every call, ignoring any USDC already sitting in the agent ATA. This makes
-   * each payment a visible Kamino redeem ("Subly from the start") instead of
-   * silently reusing leftover ATA balance. Off in production, where the
-   * idempotent shortfall behaviour protects against double-realizing.
+   * Deprecated compatibility flag. Realization is now always full-price so an
+   * untracked ATA top-up can never be treated as yield provenance.
    */
   forceRealizeFullAmount?: boolean;
   /**
@@ -107,25 +102,10 @@ export class RelayerYieldRealizer implements YieldRealizer {
   async ensureUsdcAvailable(input: {
     amountRawUsdc: bigint;
   }): Promise<{ realizedRawUsdc: bigint; txSignature: string | null }> {
-    const agentAta = deriveAssociatedTokenAddress({
-      owner: this.signer.walletAddress,
-      mint: this.config.usdcMint
-    });
-
-    // Demo/experience mode redeems the full price from vault yield every call
-    // so the payment is always a visible Kamino redeem; production reuses any
-    // ATA balance (idempotency: a realize that landed before a lost/failed
-    // payment left the USDC in the ATA — reuse it, don't redeem yield twice).
-    let shortfallRawUsdc: bigint;
-    if (this.config.forceRealizeFullAmount) {
-      shortfallRawUsdc = input.amountRawUsdc;
-    } else {
-      const currentBalance = await this.readTokenBalance(agentAta);
-      if (currentBalance >= input.amountRawUsdc) {
-        return { realizedRawUsdc: 0n, txSignature: null };
-      }
-      shortfallRawUsdc = input.amountRawUsdc - currentBalance;
-    }
+    // Always realize the full payment amount from the yield ledger. The agent's
+    // ATA may contain manual top-ups or unrelated USDC, so raw ATA balance is
+    // not valid provenance for a "yield-funded" payment.
+    const shortfallRawUsdc = input.amountRawUsdc;
 
     await this.assertSpendableYield(shortfallRawUsdc);
 
@@ -269,16 +249,5 @@ export class RelayerYieldRealizer implements YieldRealizer {
       );
     }
     return JSON.parse(text);
-  }
-
-  private async readTokenBalance(ata: string): Promise<bigint> {
-    try {
-      const response = await this.rpc
-        .getTokenAccountBalance(address(ata), { commitment: "confirmed" })
-        .send();
-      return BigInt(response.value.amount);
-    } catch {
-      return 0n;
-    }
   }
 }

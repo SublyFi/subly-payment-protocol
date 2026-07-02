@@ -155,3 +155,39 @@ export function selectPayableSolanaRequirement(
     feePayer: requirement.extra?.feePayer ?? null
   };
 }
+
+/**
+ * Strict equality used to bind a preflight-approved challenge to the actual
+ * x402 payment client execution. A seller may return a fresh challenge on the
+ * paid retry path; Subly must not pay it unless the parsed requirement object
+ * is identical to the one that passed the yield/cap checks.
+ */
+export function standardRequirementMatchesSelected(
+  candidate: unknown,
+  selected: SelectedSolanaRequirement
+): boolean {
+  const parsed = standardExactRequirementSchema.safeParse(candidate);
+  return (
+    parsed.success &&
+    stableJson(parsed.data) === stableJson(selected.requirement)
+  );
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(sortJson(value));
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortJson);
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, entry]) => [key, sortJson(entry)])
+    );
+  }
+  return value;
+}

@@ -1,4 +1,4 @@
-import { address, type KeyPairSigner } from "@solana/kit";
+import type { KeyPairSigner } from "@solana/kit";
 import { SUBLY_VAULT } from "../config/constants.js";
 import { deriveAssociatedTokenAddress } from "../lib/associated-token-account.js";
 import { evaluatePaymentBudget } from "../domain/budget.js";
@@ -67,10 +67,8 @@ export interface LocalSponsorYieldRealizerConfig {
   overheadRawUsdc?: bigint;
   usdcMint?: string;
   /**
-   * Demo/experience mode: redeem the full payment amount from vault yield on
-   * every call, ignoring USDC already in the agent ATA, so each payment is a
-   * visible Kamino redeem ("DeFi yield -> x402 payment"). See the same flag on
-   * RelayerYieldRealizer.
+   * Deprecated compatibility flag. Realization is now always full-price so an
+   * untracked ATA top-up can never be treated as yield provenance.
    */
   forceRealizeFullAmount?: boolean;
 }
@@ -96,16 +94,9 @@ export class LocalSponsorYieldRealizer implements YieldRealizer {
       mint: this.usdcMint
     });
 
-    let shortfallRawUsdc: bigint;
-    if (this.config.forceRealizeFullAmount === true) {
-      shortfallRawUsdc = input.amountRawUsdc;
-    } else {
-      const currentBalance = await this.readTokenBalance(agentAta);
-      if (currentBalance >= input.amountRawUsdc) {
-        return { realizedRawUsdc: 0n, txSignature: null };
-      }
-      shortfallRawUsdc = input.amountRawUsdc - currentBalance;
-    }
+    // Always realize the full payment amount from yield. The agent's ATA can
+    // hold manual top-ups or unrelated funds, so it is not yield provenance.
+    const shortfallRawUsdc = input.amountRawUsdc;
 
     const context = await this.config.vaultAdapter.loadContext();
     const userShares = await this.config.vaultAdapter.getUserSharesRaw(
@@ -229,17 +220,5 @@ export class LocalSponsorYieldRealizer implements YieldRealizer {
       version: 0,
       status: "active"
     } as WalletPosition;
-  }
-
-  private async readTokenBalance(ata: string): Promise<bigint> {
-    try {
-      const response = await this.config.rpc
-        .getTokenAccountBalance(address(ata), { commitment: "confirmed" })
-        .send();
-      return BigInt(response.value.amount);
-    } catch {
-      // Missing/uninitialized ATA reads as zero available balance.
-      return 0n;
-    }
   }
 }

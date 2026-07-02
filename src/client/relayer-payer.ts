@@ -3,7 +3,8 @@ import type { AgentWalletSigner } from "./agent-wallet-signer.js";
 import { RelayerYieldRealizer } from "./relayer-yield-realizer.js";
 import {
   StandardX402Payer,
-  type FetchLike
+  type StandardX402FetchLike,
+  type StandardX402StateStore
 } from "./standard-x402-payer.js";
 
 /**
@@ -20,10 +21,11 @@ export interface RelayerX402PayerConfig {
   signer: AgentWalletSigner;
   rpc: SolanaRpc;
   /** The x402 client's fetch: given a 402, builds/signs/retries the payment. */
-  x402Fetch: FetchLike;
+  x402Fetch: StandardX402FetchLike;
   defaultMaxAmountRawUsdc: bigint;
-  /** Demo/experience mode: realize the full price from yield on every call. */
+  /** Deprecated compatibility flag; yield realization is always full-price. */
   forceRealizeFullAmount?: boolean;
+  stateStore?: StandardX402StateStore;
 }
 
 export function createRelayerX402Payer(
@@ -39,6 +41,7 @@ export function createRelayerX402Payer(
   return new StandardX402Payer({
     realizer,
     x402Fetch: config.x402Fetch,
-    defaultMaxAmountRawUsdc: config.defaultMaxAmountRawUsdc
+    defaultMaxAmountRawUsdc: config.defaultMaxAmountRawUsdc,
+    ...(config.stateStore === undefined ? {} : { stateStore: config.stateStore })
   });
 }

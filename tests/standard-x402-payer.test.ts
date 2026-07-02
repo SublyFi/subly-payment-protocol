@@ -1,11 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { SOLANA_MAINNET_NETWORK, SUBLY_VAULT } from "../src/config/constants.js";
 import { encodeX402Header, PAYMENT_REQUIRED_HEADER } from "../src/x402/headers.js";
+import { EMPTY_BODY_HASH } from "../src/lib/hash.js";
 import {
   StandardX402Payer,
   StandardX402PayError,
   type FetchLike,
   type FetchResponseLike,
+  type StandardX402FetchLike,
+  type StandardX402PendingPaymentRecord,
+  type StandardX402StateStore,
   type YieldRealizer
 } from "../src/client/standard-x402-payer.js";
 
@@ -64,6 +68,20 @@ function okRealizer(): YieldRealizer {
   };
 }
 
+function memoryStore(
+  initial: StandardX402PendingPaymentRecord[] = []
+): StandardX402StateStore & { records: StandardX402PendingPaymentRecord[] } {
+  return {
+    records: initial,
+    load() {
+      return this.records;
+    },
+    save(records) {
+      this.records = records;
+    }
+  };
+}
+
 describe("StandardX402Payer", () => {
   it("probes, realizes yield, then pays via the x402 client", async () => {
     const realizer = okRealizer();
@@ -72,8 +90,12 @@ describe("StandardX402Payer", () => {
         status: 402,
         headers: { [PAYMENT_REQUIRED_HEADER]: encodeX402Header(challenge()) }
       });
-    const x402Fetch = vi.fn<FetchLike>(async () =>
-      resp({ status: 200, body: { data: "screener rows" } })
+    const x402Fetch = vi.fn<StandardX402FetchLike>(
+      async (_url, _init, expected) => {
+        expect(expected.payTo).toBe("J7ZvJEspvwP1oRxQZ7mYmNmT22NTm3GWq3t7HEbvPZYx");
+        expect(expected.amountRawUsdc).toBe(10_000n);
+        return resp({ status: 200, body: { data: "screener rows" } });
+      }
     );
 
     const payer = new StandardX402Payer({
@@ -102,7 +124,7 @@ describe("StandardX402Payer", () => {
     const realizer = okRealizer();
     const probeFetch: FetchLike = async () =>
       resp({ status: 402, body: challenge() });
-    const x402Fetch: FetchLike = async () =>
+    const x402Fetch: StandardX402FetchLike = async () =>
       resp({ status: 200, body: { ok: true } });
 
     const payer = new StandardX402Payer({
@@ -118,7 +140,9 @@ describe("StandardX402Payer", () => {
 
   it("refuses without realizing or paying when the price exceeds the cap", async () => {
     const realizer = okRealizer();
-    const x402Fetch = vi.fn<FetchLike>(async () => resp({ status: 200 }));
+    const x402Fetch = vi.fn<StandardX402FetchLike>(async () =>
+      resp({ status: 200 })
+    );
     const probeFetch: FetchLike = async () =>
       resp({
         status: 402,
@@ -145,7 +169,9 @@ describe("StandardX402Payer", () => {
     const realizer = okRealizer();
     const probeFetch: FetchLike = async () =>
       resp({ status: 200, body: "already free" });
-    const x402Fetch = vi.fn<FetchLike>(async () => resp({ status: 200 }));
+    const x402Fetch = vi.fn<StandardX402FetchLike>(async () =>
+      resp({ status: 200 })
+    );
 
     const payer = new StandardX402Payer({
       realizer,
@@ -158,6 +184,46 @@ describe("StandardX402Payer", () => {
     expect(result.paid).toBe(false);
     expect(realizer.ensureUsdcAvailable).not.toHaveBeenCalled();
     expect(x402Fetch).not.toHaveBeenCalled();
+  });
+
+  it("coalesces concurrent identical standard x402 purchases", async () => {
+    let releaseProbe: () => void = () => {
+      throw new Error("probe promise was not created");
+    };
+    const probeFetch = vi.fn<FetchLike>(
+      () =>
+        new Promise((resolve) => {
+          releaseProbe = () =>
+            resolve(
+              resp({
+                status: 402,
+                headers: {
+                  [PAYMENT_REQUIRED_HEADER]: encodeX402Header(challenge())
+                }
+              })
+            );
+        })
+    );
+    const realizer = okRealizer();
+    const x402Fetch = vi.fn<StandardX402FetchLike>(async () =>
+      resp({ status: 200, body: "ok" })
+    );
+    const payer = new StandardX402Payer({
+      realizer,
+      x402Fetch,
+      probeFetch,
+      defaultMaxAmountRawUsdc: 20_000n
+    });
+
+    const first = payer.pay({ url: URL });
+    const second = payer.pay({ url: URL });
+    expect(probeFetch).toHaveBeenCalledTimes(1);
+    releaseProbe();
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult).toBe(secondResult);
+    expect(realizer.ensureUsdcAvailable).toHaveBeenCalledTimes(1);
+    expect(x402Fetch).toHaveBeenCalledTimes(1);
   });
 
   it("raises no_payable_requirement when only EVM rails are offered", async () => {
@@ -188,5 +254,105 @@ describe("StandardX402Payer", () => {
     await expect(payer.pay({ url: URL })).rejects.toBeInstanceOf(
       StandardX402PayError
     );
+  });
+
+  it("records unknown outcome after yield realization and blocks blind retry", async () => {
+    const store = memoryStore();
+    const payer = new StandardX402Payer({
+      realizer: okRealizer(),
+      x402Fetch: async () => resp({ status: 500, body: "lost delivery" }),
+      probeFetch: async () =>
+        resp({
+          status: 402,
+          headers: { [PAYMENT_REQUIRED_HEADER]: encodeX402Header(challenge()) }
+        }),
+      defaultMaxAmountRawUsdc: 20_000n,
+      stateStore: store,
+      nowMs: () => 1_000
+    });
+
+    await expect(payer.pay({ url: URL })).rejects.toMatchObject({
+      reason: "payment_outcome_unknown"
+    });
+    expect(store.records).toHaveLength(1);
+    expect(store.records[0]?.status).toBe("external_outcome_unknown");
+
+    const restarted = new StandardX402Payer({
+      realizer: okRealizer(),
+      x402Fetch: async () => resp({ status: 200 }),
+      probeFetch: async () =>
+        resp({
+          status: 402,
+          headers: { [PAYMENT_REQUIRED_HEADER]: encodeX402Header(challenge()) }
+        }),
+      defaultMaxAmountRawUsdc: 20_000n,
+      stateStore: store
+    });
+
+    await expect(restarted.pay({ url: URL })).rejects.toMatchObject({
+      reason: "payment_outcome_unknown"
+    });
+  });
+
+  it("refuses to call x402 when the pending marker cannot be persisted", async () => {
+    const x402Fetch = vi.fn<StandardX402FetchLike>(async () =>
+      resp({ status: 200, body: "ok" })
+    );
+    const store: StandardX402StateStore = {
+      load: () => [],
+      save: () => {
+        throw new Error("disk full");
+      }
+    };
+    const payer = new StandardX402Payer({
+      realizer: okRealizer(),
+      x402Fetch,
+      probeFetch: async () =>
+        resp({
+          status: 402,
+          headers: { [PAYMENT_REQUIRED_HEADER]: encodeX402Header(challenge()) }
+        }),
+      defaultMaxAmountRawUsdc: 20_000n,
+      stateStore: store
+    });
+
+    await expect(payer.pay({ url: URL })).rejects.toMatchObject({
+      reason: "state_persist_failed"
+    });
+    expect(x402Fetch).not.toHaveBeenCalled();
+  });
+
+  it("allows an explicit forceNewPayment retry after unknown outcome", async () => {
+    const store = memoryStore([
+      {
+        key: `GET:${URL}:${EMPTY_BODY_HASH}`,
+        url: URL,
+        method: "GET",
+        requestBodyHash: EMPTY_BODY_HASH,
+        amountRawUsdc: "10000",
+        payTo: "payTo",
+        feePayer: null,
+        realizedRawUsdc: "10000",
+        realizeTxSignature: "sig",
+        status: "external_outcome_unknown",
+        createdAtMs: 1,
+        updatedAtMs: 1
+      }
+    ]);
+    const payer = new StandardX402Payer({
+      realizer: okRealizer(),
+      x402Fetch: async () => resp({ status: 200, body: "ok" }),
+      probeFetch: async () =>
+        resp({
+          status: 402,
+          headers: { [PAYMENT_REQUIRED_HEADER]: encodeX402Header(challenge()) }
+        }),
+      defaultMaxAmountRawUsdc: 20_000n,
+      stateStore: store
+    });
+
+    const result = await payer.pay({ url: URL, forceNewPayment: true });
+    expect(result.paid).toBe(true);
+    expect(store.records).toEqual([]);
   });
 });

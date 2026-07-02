@@ -18,7 +18,8 @@
  * Prints a single JSON object on stdout; diagnostics go to stderr. Exit code
  * is non-zero when nothing was delivered (refused or errored).
  */
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { LocalKeypairAgentWalletSigner } from "../src/client/agent-wallet-signer.js";
 import { fetchLookupTablesForTransaction } from "../src/client/lookup-tables.js";
 import { ensureWalletOnboarded } from "../src/client/onboarding.js";
@@ -118,25 +119,65 @@ async function paymentStatusFor(
 function fileStateStore(path: string): PendingStateStore {
   return {
     load(): PendingPaymentRecord[] {
+      let text: string;
       try {
-        const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-        return Array.isArray(parsed) ? (parsed as PendingPaymentRecord[]) : [];
-      } catch {
-        return [];
+        text = readFileSync(path, "utf8");
+      } catch (error) {
+        if (isMissingFileError(error)) {
+          return [];
+        }
+        throw error;
       }
+
+      const parsed: unknown = JSON.parse(text);
+      if (!Array.isArray(parsed)) {
+        throw new Error(`pending payment state is not an array: ${path}`);
+      }
+      for (const [index, record] of parsed.entries()) {
+        if (!isPendingPaymentRecord(record)) {
+          throw new Error(
+            `pending payment state has an invalid record at index ${index}: ${path}`
+          );
+        }
+      }
+      return parsed as PendingPaymentRecord[];
     },
     save(records: PendingPaymentRecord[]): void {
-      try {
-        writeFileSync(path, JSON.stringify(records));
-      } catch (error) {
-        console.error(
-          `[subly-pay] failed to persist pending payments: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        );
-      }
+      const directory = dirname(path);
+      mkdirSync(directory, { recursive: true });
+      const tempPath = join(
+        directory,
+        `.${basename(path)}.${process.pid}.${Date.now()}.tmp`
+      );
+      writeFileSync(tempPath, JSON.stringify(records, null, 2));
+      renameSync(tempPath, path);
     }
   };
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    "code" in error &&
+    error.code === "ENOENT"
+  );
+}
+
+function isPendingPaymentRecord(value: unknown): value is PendingPaymentRecord {
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.url === "string" &&
+    typeof record.headerValue === "string" &&
+    typeof record.paymentId === "string" &&
+    typeof record.amountUsdc === "string" &&
+    typeof record.payTo === "string" &&
+    typeof record.challengeAtMs === "number" &&
+    typeof record.unresolved === "boolean"
+  );
 }
 
 const service = new PaidFetchService({

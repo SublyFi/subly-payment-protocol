@@ -12,10 +12,13 @@
  *   SUBLY_MCP_MAX_AMOUNT_RAW_USDC   default cap (10000 = 0.01 USDC)
  *   SUBLY_PAY_METHOD / SUBLY_PAY_BODY   for POST-body sellers
  */
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { LocalKeypairAgentWalletSigner } from "../../../src/client/agent-wallet-signer.js";
 import { ensureWalletOnboarded } from "../../../src/client/onboarding.js";
 import { createRelayerX402Payer } from "../../../src/client/relayer-payer.js";
 import { StandardX402PayError } from "../../../src/client/standard-x402-payer.js";
+import { fileStandardX402StateStore } from "../../../src/client/standard-x402-state-store.js";
 import { loadKeyPairSigner, loadSecretKeyBytes } from "../../../src/solana/keys.js";
 import { createRpc } from "../../../src/solana/rpc.js";
 import { createSvmX402Fetch } from "./svm-x402-fetch.js";
@@ -39,6 +42,9 @@ const defaultMaxAmountRawUsdc =
   process.env.SUBLY_MCP_MAX_AMOUNT_RAW_USDC === undefined
     ? 10_000n
     : BigInt(process.env.SUBLY_MCP_MAX_AMOUNT_RAW_USDC);
+const pendingStatePath =
+  process.env.SUBLY_MCP_STATE_PATH ??
+  join(homedir(), ".subly", "standard-x402-pending.json");
 
 const keyPairSigner = await loadKeyPairSigner({
   base58Secret: process.env.SUBLY_DEMO_AGENT_KEYPAIR,
@@ -58,7 +64,8 @@ const payer = createRelayerX402Payer({
   signer,
   rpc,
   x402Fetch: await createSvmX402Fetch({ agentSecretKey, rpcUrl }),
-  defaultMaxAmountRawUsdc
+  defaultMaxAmountRawUsdc,
+  stateStore: fileStandardX402StateStore(pendingStatePath)
 });
 
 const method = process.env.SUBLY_PAY_METHOD;
@@ -84,7 +91,10 @@ try {
       : { body, headers: { "content-type": "application/json" } }),
     ...(maxAmountArg === undefined
       ? {}
-      : { maxAmountRawUsdc: BigInt(maxAmountArg) })
+      : { maxAmountRawUsdc: BigInt(maxAmountArg) }),
+    ...(process.env.SUBLY_PAY_FORCE_NEW_PAYMENT === "1"
+      ? { forceNewPayment: true }
+      : {})
   });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (!result.paid) {

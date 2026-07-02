@@ -110,6 +110,13 @@ export async function runMcpPaymentServer(
                 "Refuse (without paying) any challenge above this amount in " +
                 "raw USDC units (6 decimals, e.g. \"10000\" = 0.01 USDC). " +
                 "Defaults to the server-side cap."
+            },
+            forceNewPayment: {
+              type: "boolean",
+              description:
+                "Pay again even if a previous external x402 attempt for the " +
+                "same URL/method/body has an unknown outcome. This may pay " +
+                "twice for the same resource."
             }
           },
           required: ["url"]
@@ -163,6 +170,7 @@ export async function runMcpPaymentServer(
 
     const method = typeof args.method === "string" ? args.method : undefined;
     const body = typeof args.body === "string" ? args.body : undefined;
+    const forceNewPayment = args.forceNewPayment === true;
     const headers =
       args.headers !== null &&
       typeof args.headers === "object" &&
@@ -184,7 +192,8 @@ export async function runMcpPaymentServer(
         ...(method === undefined ? {} : { method }),
         ...(body === undefined ? {} : { body }),
         ...(mergedHeaders === undefined ? {} : { headers: mergedHeaders }),
-        ...(maxAmountRawUsdc === undefined ? {} : { maxAmountRawUsdc })
+        ...(maxAmountRawUsdc === undefined ? {} : { maxAmountRawUsdc }),
+        ...(forceNewPayment ? { forceNewPayment } : {})
       });
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }]

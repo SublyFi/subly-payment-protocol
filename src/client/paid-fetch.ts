@@ -115,6 +115,7 @@ export class PaidFetchError extends Error {
     readonly reason:
       | "invalid_challenge"
       | "amount_exceeds_client_cap"
+      | "state_persist_failed"
       | "delivery_failed_payment_pending"
       | "payment_outcome_unknown"
       | "payment_already_settled",
@@ -145,7 +146,8 @@ export interface PendingPaymentRecord extends PendingPayment {
 /**
  * Persists pending-payment markers across process restarts so a restarted
  * server still refuses to blindly re-pay a lost delivery. Implementations
- * must never throw from save(); load() may return [] when no state exists.
+ * may return [] when no state exists, and should throw on save() when
+ * persistence is not durable.
  */
 export interface PendingStateStore {
   load(): PendingPaymentRecord[];
@@ -367,7 +369,7 @@ export class PaidFetchService {
     }
 
     if (second.status === 200) {
-      this.untrack(url);
+      this.clearDelivered(url);
       const transaction = receiptTransaction(second.headers);
       return {
         paid: true,
@@ -394,7 +396,18 @@ export class PaidFetchService {
       // seller restarted). Whether the payment settled is unknown; keep the
       // entry so plain re-calls are refused until forceNewPayment.
       entry.unresolved = true;
-      this.persist();
+      try {
+        this.persist();
+      } catch (error) {
+        entry.unresolved = false;
+        throw new PaidFetchError(
+          "payment_outcome_unknown",
+          `the seller no longer accepts the signed payment (paymentId=${entry.paymentId}); ` +
+            "it may or may not have settled, and the unresolved marker could " +
+            "not be persisted. Verify the payment before purchasing again.",
+          { paymentId: entry.paymentId, persistError: error }
+        );
+      }
       throw new PaidFetchError(
         "payment_outcome_unknown",
         `the seller no longer accepts the signed payment (paymentId=${entry.paymentId}); ` +
@@ -420,6 +433,7 @@ export class PaidFetchService {
   }
 
   private track(url: string, entry: PendingPayment): void {
+    const previous = new Map(this.pending);
     if (!this.pending.has(url) && this.pending.size >= this.maxTrackedUrls) {
       const oldest = this.pending.keys().next();
       if (!oldest.done) {
@@ -427,12 +441,55 @@ export class PaidFetchService {
       }
     }
     this.pending.set(url, entry);
-    this.persist();
+    try {
+      this.persist();
+    } catch (error) {
+      this.pending.clear();
+      for (const [previousUrl, previousEntry] of previous.entries()) {
+        this.pending.set(previousUrl, previousEntry);
+      }
+      throw new PaidFetchError(
+        "state_persist_failed",
+        `could not persist the signed payment marker (paymentId=${entry.paymentId}); ` +
+          "refusing to deliver it because a restart would not be double-payment safe",
+        { paymentId: entry.paymentId, error }
+      );
+    }
   }
 
   private untrack(url: string): void {
+    const previous = new Map(this.pending);
     this.pending.delete(url);
-    this.persist();
+    try {
+      this.persist();
+    } catch (error) {
+      this.pending.clear();
+      for (const [previousUrl, previousEntry] of previous.entries()) {
+        this.pending.set(previousUrl, previousEntry);
+      }
+      throw new PaidFetchError(
+        "state_persist_failed",
+        "could not persist pending-payment marker removal",
+        error
+      );
+    }
+  }
+
+  private clearDelivered(url: string): void {
+    const previous = new Map(this.pending);
+    this.pending.delete(url);
+    try {
+      this.persist();
+    } catch (error) {
+      this.pending.clear();
+      for (const [previousUrl, previousEntry] of previous.entries()) {
+        this.pending.set(previousUrl, previousEntry);
+      }
+      console.error(
+        `[subly-pay] payment delivered but pending marker could not be ` +
+          `cleared: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
 
   private persist(): void {

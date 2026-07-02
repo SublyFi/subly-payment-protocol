@@ -5,6 +5,7 @@ import {
   decodeStandardPaymentRequiredHeader,
   parseStandardChallenge,
   selectPayableSolanaRequirement,
+  standardRequirementMatchesSelected,
   StandardX402ChallengeError
 } from "../src/x402/standard-requirements.js";
 
@@ -96,6 +97,47 @@ describe("selectPayableSolanaRequirement", () => {
     expect(selected.amountRawUsdc).toBe(10_000n);
     expect(selected.payTo).toBe("J7ZvJEspvwP1oRxQZ7mYmNmT22NTm3GWq3t7HEbvPZYx");
     expect(selected.feePayer).toBe("2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4");
+  });
+
+  it("detects when a later challenge changes the checked requirement", () => {
+    const { solanaExactRequirements } = parseStandardChallenge(
+      nansenChallenge()
+    );
+    const selected = selectPayableSolanaRequirement(solanaExactRequirements);
+    expect(
+      standardRequirementMatchesSelected(solanaExactRequirements[0]!, selected)
+    ).toBe(true);
+    expect(
+      standardRequirementMatchesSelected(
+        { ...solanaExactRequirements[0]!, amount: "50000" },
+        selected
+      )
+    ).toBe(false);
+    expect(
+      standardRequirementMatchesSelected(
+        { ...solanaExactRequirements[0]!, payTo: "DifferentPayTo111" },
+        selected
+      )
+    ).toBe(false);
+    expect(
+      standardRequirementMatchesSelected(
+        { ...solanaExactRequirements[0]!, maxTimeoutSeconds: 1 },
+        selected
+      )
+    ).toBe(false);
+    expect(
+      standardRequirementMatchesSelected(
+        {
+          ...solanaExactRequirements[0]!,
+          extra: {
+            ...solanaExactRequirements[0]!.extra,
+            memo: "changed"
+          }
+        },
+        selected
+      )
+    ).toBe(false);
+    expect(standardRequirementMatchesSelected(null, selected)).toBe(false);
   });
 
   it("throws when no Solana USDC requirement is present", () => {

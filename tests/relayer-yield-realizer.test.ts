@@ -85,18 +85,51 @@ describe("RelayerYieldRealizer", () => {
     ]);
   });
 
-  it("skips realize when the ATA already covers the price (idempotency)", async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse(200, {}));
+  it("does not treat existing ATA balance as yield provenance", async () => {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      calls.push(u);
+      if (u.endsWith("/budget")) {
+        return jsonResponse(200, {
+          budget: { spendableYieldRawUsdc: "1000000" }
+        });
+      }
+      if (u.endsWith("/v1/withdrawals/prepare")) {
+        return jsonResponse(200, {
+          withdrawalId: "wd_1",
+          serializedTransaction: "preparedTxB64",
+          destinationUsdcAta: "ata",
+          signingIntent: { wallet: WALLET }
+        });
+      }
+      if (u.endsWith("/v1/withdrawals/submit")) {
+        return jsonResponse(200, {
+          status: "confirmed",
+          txSignature: "realizeSig",
+          actualWithdrawRawUsdc: "10000"
+        });
+      }
+      throw new Error(`unexpected url ${u}`);
+    });
     const realizer = new RelayerYieldRealizer({
       facilitatorBaseUrl: BASE,
       signer: fakeSigner(),
-      rpc: fakeRpc(20_000n), // already funded
-      fetchImpl: fetchImpl as unknown as typeof fetch
+      rpc: fakeRpc(20_000n), // existing ATA funds are not yield provenance
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      lookupTablesFor: async () => ({})
     });
 
     const result = await realizer.ensureUsdcAvailable({ amountRawUsdc: 10_000n });
-    expect(result).toEqual({ realizedRawUsdc: 0n, txSignature: null });
-    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      realizedRawUsdc: 10_000n,
+      txSignature: "realizeSig"
+    });
+    expect(calls).toEqual([
+      `${BASE}/v1/wallets/${WALLET}/budget`,
+      `${BASE}/v1/withdrawals/prepare`,
+      `${BASE}/v1/withdrawals/submit`
+    ]);
   });
 
   it("refuses when spendable yield cannot cover the shortfall", async () => {

@@ -528,6 +528,30 @@ describe("PaidFetchService state persistence", () => {
     });
     expect(builder.buildPaymentSignatureHeader).toHaveBeenCalledTimes(1);
   });
+
+  it("does not deliver a signed payment when the pending marker cannot be persisted", async () => {
+    const s = scriptedFetch();
+    const builder = builderStub();
+    const service = new PaidFetchService({
+      signatureBuilder: builder,
+      defaultMaxAmountRawUsdc: 10_000n,
+      fetchImpl: s.fetchImpl,
+      stateStore: {
+        load: () => [],
+        save: () => {
+          throw new Error("disk full");
+        }
+      }
+    });
+    s.queue.push(async (url) => challengeResponse(url));
+    s.queue.push(async () => deliveredResponse());
+
+    await expect(service.paidFetch({ url: URL_A })).rejects.toMatchObject({
+      reason: "state_persist_failed"
+    });
+    expect(builder.buildPaymentSignatureHeader).toHaveBeenCalledTimes(1);
+    expect(s.calls).toHaveLength(1);
+  });
 });
 
 describe("formatRawUsdcAmount", () => {

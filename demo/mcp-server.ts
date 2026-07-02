@@ -15,6 +15,7 @@
 import { LocalKeypairAgentWalletSigner } from "../src/client/agent-wallet-signer.js";
 import { runMcpPaymentServer } from "../src/client/mcp-payment-server.js";
 import { createStandardX402Payer } from "../src/client/standard-x402-factory.js";
+import { fileStandardX402StateStore } from "../src/client/standard-x402-state-store.js";
 import { loadKeyPairSigner, loadSecretKeyBytes } from "../src/solana/keys.js";
 import { createRpc } from "../src/solana/rpc.js";
 
@@ -26,6 +27,8 @@ const defaultMaxAmountRawUsdc =
   process.env.SUBLY_MCP_MAX_AMOUNT_RAW_USDC === undefined
     ? 10_000n
     : BigInt(process.env.SUBLY_MCP_MAX_AMOUNT_RAW_USDC);
+const pendingStatePath =
+  process.env.SUBLY_MCP_STATE_PATH ?? "demo/env/standard-x402-pending.json";
 
 const keyPairSigner = await loadKeyPairSigner({
   base58Secret: process.env.SUBLY_DEMO_AGENT_KEYPAIR,
@@ -46,7 +49,8 @@ const payer = createStandardX402Payer({
   agentSecretKey,
   rpc,
   rpcUrl,
-  defaultMaxAmountRawUsdc
+  defaultMaxAmountRawUsdc,
+  stateStore: fileStandardX402StateStore(pendingStatePath)
 });
 
 await runMcpPaymentServer({

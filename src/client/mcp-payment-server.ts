@@ -38,7 +38,7 @@ are sponsored.
 
 From there the agent can do everything with these tools:
 1. deposit_to_subly_vault(amountRawUsdc) puts wallet USDC into the vault \
-(minimum 1 USDC = 1000000 raw) so it starts earning yield.
+(minimum just over 1 USDC, e.g. 1010000 raw) so it starts earning yield.
 2. get_subly_yield_budget() shows the principal, position value, and the \
 spendable yield a payment can use right now.
 3. fetch_with_subly_payment(url) GETs or POSTs a paid resource from any \
@@ -85,9 +85,11 @@ export async function runMcpPaymentServer(
               "Deposit USDC from the agent wallet into the Subly/Kamino vault " +
               "so it starts earning the yield that funds x402 payments. The " +
               "transaction fee is sponsored — the agent wallet needs USDC " +
-              "only, never SOL. The vault minimum deposit is 1 USDC " +
-              "(1000000 raw). The deposited amount becomes protected " +
-              "principal: payments can only ever spend the yield on top of it.",
+              "only, never SOL. The vault minimum is just over 1 USDC: " +
+              "share rounding refuses exactly 1000000 raw, so deposit e.g. " +
+              "1010000 (1.01 USDC) or more. The deposited amount becomes " +
+              "protected principal: payments can only ever spend the yield " +
+              "on top of it.",
             inputSchema: {
               type: "object",
               properties: {
@@ -95,7 +97,8 @@ export async function runMcpPaymentServer(
                   type: "string",
                   description:
                     "Amount to deposit in raw USDC units (6 decimals, e.g. " +
-                    "\"1000000\" = 1 USDC). Must be at least 1000000."
+                    "\"1010000\" = 1.01 USDC). Must exceed the 1 USDC vault " +
+                    "minimum by a small rounding margin."
                 }
               },
               required: ["amountRawUsdc"]

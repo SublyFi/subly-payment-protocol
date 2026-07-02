@@ -52,8 +52,10 @@ balance, guide the user through this once:
    stays in that file — never share or print it.
 2. Point the skill at it: `export SUBLY_DEMO_AGENT_KEYPAIR_PATH=~/.subly/agent.json`
 3. Send USDC (Solana mainnet) to that address. No SOL is needed — fees are
-   sponsored. Then deposit into the vault (minimum 1 USDC):
-   `npx -y @subly_fi/pay deposit 1000000` (deposit also self-registers the wallet).
+   sponsored. Then deposit into the vault (minimum just over 1 USDC — the
+   vault's share rounding refuses exactly 1.000000):
+   `npx -y @subly_fi/pay deposit 1010000` (1.01 USDC; deposit also
+   self-registers the wallet).
 4. Yield accrues over time; a payment needs the price plus a fixed overhead
    (~0.0024 USDC) of spendable yield.
 

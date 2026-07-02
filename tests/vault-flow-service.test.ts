@@ -159,7 +159,7 @@ describe("VaultFlowService gates", () => {
 
     const prepared = await service.prepareDeposit({
       wallet: WALLET,
-      amountRawUsdc: "1000000"
+      amountRawUsdc: "1000010"
     });
     expect(prepared.status).toBe("prepared");
     expect(prepared.signingIntent.feePayer).toBe(WALLET);
@@ -179,6 +179,20 @@ describe("VaultFlowService gates", () => {
     });
   });
 
+  it("rejects a deposit of exactly the minimum (share rounding margin)", async () => {
+    const { service, ledger } = buildService();
+    await registerPosition(ledger);
+
+    // kvault rounds the effective deposit down by a few raw units, so a
+    // deposit of exactly the minimum lands below it on-chain.
+    await expect(
+      service.prepareDeposit({ wallet: WALLET, amountRawUsdc: "1000000" })
+    ).rejects.toMatchObject({
+      code: "deposit_below_minimum",
+      details: { effectiveMinDepositRaw: "1000010" }
+    });
+  });
+
   it("rejects flows for wallets without a non-interactive signer", async () => {
     const { service, ledger } = buildService();
     await registerPosition(ledger, {
@@ -187,14 +201,14 @@ describe("VaultFlowService gates", () => {
     });
 
     await expect(
-      service.prepareDeposit({ wallet: WALLET, amountRawUsdc: "1000000" })
+      service.prepareDeposit({ wallet: WALLET, amountRawUsdc: "1000010" })
     ).rejects.toMatchObject({ code: "observed_only" });
   });
 
   it("rejects a second flow while one is pending", async () => {
     const { service, ledger } = buildService();
     await registerPosition(ledger);
-    await service.prepareDeposit({ wallet: WALLET, amountRawUsdc: "1000000" });
+    await service.prepareDeposit({ wallet: WALLET, amountRawUsdc: "1000010" });
 
     await expect(
       service.prepareDeposit({ wallet: WALLET, amountRawUsdc: "2000000" })
@@ -221,7 +235,7 @@ describe("VaultFlowService gates", () => {
     await registerPosition(ledger);
 
     await expect(
-      service.prepareDeposit({ wallet: WALLET, amountRawUsdc: "1000000" })
+      service.prepareDeposit({ wallet: WALLET, amountRawUsdc: "1000010" })
     ).rejects.toMatchObject({ code: "needs_baseline_reset" });
     const position = await ledger.getPosition(WALLET, SUBLY_VAULT.address);
     expect(position?.status).toBe("needs_baseline_reset");

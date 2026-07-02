@@ -26,11 +26,11 @@ export SUBLY_DEMO_AGENT_KEYPAIR_PATH=~/.subly/agent.json
 ```
 
 Send USDC (Solana mainnet) to the printed address — no SOL needed, fees are
-sponsored — then deposit (vault minimum 1 USDC; deposit self-registers the
-wallet):
+sponsored — then deposit (vault minimum is just over 1 USDC: share rounding
+refuses exactly 1.000000; deposit self-registers the wallet):
 
 ```bash
-npx -y @subly_fi/pay deposit 1000000   # 1 USDC
+npx -y @subly_fi/pay deposit 1010000   # 1.01 USDC
 ```
 
 ## Use it

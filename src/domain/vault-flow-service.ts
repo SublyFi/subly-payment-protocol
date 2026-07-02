@@ -69,6 +69,15 @@ const DEFAULT_FLOW_CONFIG: VaultFlowServiceConfig = {
   realizeOverheadRawUsdc: 2_500n
 };
 
+/**
+ * kvault issues whole shares and rounds the effective deposited tokens down,
+ * shaving up to ~tokens-per-share (a few raw units while the exchange rate
+ * is near 1.0) off the requested amount. 10 raw (0.00001 USDC) comfortably
+ * covers that so a minimum-sized deposit cannot land below the on-chain
+ * minimum after rounding.
+ */
+const DEPOSIT_SHARE_ROUNDING_MARGIN_RAW = 10n;
+
 export interface SubmitFlowInput {
   serializedTransaction: string;
   agentSignature: string;
@@ -120,13 +129,21 @@ export class VaultFlowService {
       const context = await this.adapter.loadContext();
       // The kvault program rejects DepositAmountBelowMinimum at execution;
       // failing here turns an opaque simulation failure into a clear error.
-      if (amountRawUsdc < context.minDepositAmountRaw) {
+      // The margin exists because kvault rounds the effective deposit DOWN
+      // by a few raw units to whole shares (observed: 1_000_000 requested ->
+      // 999_997 effective), so depositing exactly the minimum fails on-chain.
+      const effectiveMinDepositRaw =
+        context.minDepositAmountRaw + DEPOSIT_SHARE_ROUNDING_MARGIN_RAW;
+      if (amountRawUsdc < effectiveMinDepositRaw) {
         throw badRequest(
           "deposit_below_minimum",
-          `Deposit amount ${amountRawUsdc} is below the vault minimum ${context.minDepositAmountRaw}`,
+          `Deposit at least ${effectiveMinDepositRaw} raw USDC: the vault ` +
+            `minimum is ${context.minDepositAmountRaw} and share rounding ` +
+            `can shave a few raw units off the effective deposit`,
           {
             amountRawUsdc: amountRawUsdc.toString(),
-            minDepositAmountRaw: context.minDepositAmountRaw.toString()
+            minDepositAmountRaw: context.minDepositAmountRaw.toString(),
+            effectiveMinDepositRaw: effectiveMinDepositRaw.toString()
           }
         );
       }

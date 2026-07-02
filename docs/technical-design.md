@@ -1,8 +1,11 @@
 # Subly Kamino Yield Payment Technical Design
 
-最終更新: 2026-06-11 JST
+最終更新: 2026-07-02 JST
 
-このドキュメントを現在の技術設計の正とする。
+このドキュメントは、Subly 独自 `subly-yield-exact` facilitator / hosted
+Seller flow の技術仕様として残す。現在の公開クライアント導線は
+standard x402 Seller へ buyer-side で yield 支払いする `@subly_fi/pay` であり、
+利用手順は `packages/pay/README.md` を正とする。
 
 ## Goal
 

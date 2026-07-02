@@ -66,11 +66,6 @@ export interface LocalSponsorYieldRealizerConfig {
   /** Overhead reserved on top of the shortfall (fee debt). Default 0.0025 USDC. */
   overheadRawUsdc?: bigint;
   usdcMint?: string;
-  /**
-   * Deprecated compatibility flag. Realization is now always full-price so an
-   * untracked ATA top-up can never be treated as yield provenance.
-   */
-  forceRealizeFullAmount?: boolean;
 }
 
 const DEFAULT_OVERHEAD_RAW_USDC = 2_500n;

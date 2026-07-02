@@ -37,8 +37,6 @@ export interface StandardX402PayerFactoryConfig {
   rpcUrl: string;
   defaultMaxAmountRawUsdc: bigint;
   network?: "solana" | "solana-devnet";
-  /** Deprecated compatibility flag; yield realization is always full-price. */
-  forceRealizeFullAmount?: boolean;
   stateStore?: StandardX402StateStore;
 }
 
@@ -67,10 +65,7 @@ export function createStandardX402Payer(
     rpc: config.rpc,
     x402Fetch,
     defaultMaxAmountRawUsdc: config.defaultMaxAmountRawUsdc,
-    ...(config.stateStore === undefined ? {} : { stateStore: config.stateStore }),
-    ...(config.forceRealizeFullAmount === undefined
-      ? {}
-      : { forceRealizeFullAmount: config.forceRealizeFullAmount })
+    ...(config.stateStore === undefined ? {} : { stateStore: config.stateStore })
   });
 }
 

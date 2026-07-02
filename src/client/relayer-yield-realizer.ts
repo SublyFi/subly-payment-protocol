@@ -45,11 +45,6 @@ export interface RelayerYieldRealizerConfig {
   usdcMint?: string;
   fetchImpl?: typeof fetch;
   /**
-   * Deprecated compatibility flag. Realization is now always full-price so an
-   * untracked ATA top-up can never be treated as yield provenance.
-   */
-  forceRealizeFullAmount?: boolean;
-  /**
    * Resolves a prepared transaction's lookup tables for intent validation.
    * Defaults to the RPC-backed resolver; injectable for tests.
    */
@@ -75,7 +70,6 @@ export class RelayerYieldRealizer implements YieldRealizer {
   private readonly config: {
     facilitatorBaseUrl: string;
     usdcMint: string;
-    forceRealizeFullAmount: boolean;
   };
   private readonly signer: AgentWalletSigner;
   private readonly rpc: SolanaRpc;
@@ -87,8 +81,7 @@ export class RelayerYieldRealizer implements YieldRealizer {
   constructor(config: RelayerYieldRealizerConfig) {
     this.config = {
       facilitatorBaseUrl: config.facilitatorBaseUrl.replace(/\/$/, ""),
-      usdcMint: config.usdcMint ?? SUBLY_VAULT.usdcMint,
-      forceRealizeFullAmount: config.forceRealizeFullAmount ?? false
+      usdcMint: config.usdcMint ?? SUBLY_VAULT.usdcMint
     };
     this.signer = config.signer;
     this.rpc = config.rpc;

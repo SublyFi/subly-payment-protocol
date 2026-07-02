@@ -28,11 +28,10 @@ metadata:
 
 # Subly pay (yield-funded x402)
 
-This skill lets you fetch a paid HTTP resource and settle its x402
-(`subly-yield-exact`) 402 challenge automatically. Payment comes from the
-agent wallet's Kamino vault **yield** — the deposited principal is never
-spent, and the facilitator refuses any payment the spendable yield cannot
-cover.
+This skill lets you fetch a paid HTTP resource and settle a standard x402
+Solana USDC `exact` 402 challenge automatically. Payment comes from the agent
+wallet's Kamino vault **yield** — the deposited principal is never spent, and
+the facilitator refuses any payment the spendable yield cannot cover.
 
 ## When to use
 
@@ -87,11 +86,11 @@ body and the receipt to the user.
     tell the user to wait (yield accrues over time) — do NOT retry in a loop.
   - `amount_exceeds_client_cap` → the price exceeds the cap. Only re-run with a
     higher cap if the user confirms the price is expected.
-  - `delivery_failed_payment_pending` → the payment was signed but delivery
-    failed. Run the **exact same command again** — it retries the same payment
-    and does NOT pay twice. Do not treat this as unpaid.
-  - `payment_already_settled` / `payment_outcome_unknown` → a previous payment
-    is unresolved. Do not blindly re-pay; report the `paymentId` to the user.
+  - `payment_outcome_unknown` → a previous external x402 attempt may already
+    have settled. Do not blindly re-pay; report the message and ask the user
+    before using `SUBLY_PAY_FORCE_NEW_PAYMENT=1`.
+  - `state_persist_failed` → the local pending-payment marker could not be
+    stored. Do not retry until the state path/disk issue is fixed.
 
 ## Guardrails
 

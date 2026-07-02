@@ -43,9 +43,7 @@ SUBLY_ADMIN_API_TOKEN=<admin token> \
 bash ../scripts/onboard-agent.sh --with-policy <テスト agent pubkey>
 ```
 
-## 3. 起動前チェック (β開始の最終ゲート)
-
-`docs/beta-plan.md` の Phase A チェックリストに対応:
+## 3. 起動前チェック
 
 - [ ] `curl https://<facilitator>/healthz` → `{"ok":true}`
 - [ ] デプロイ先の env で `npm run validate:mainnet` FULL PASS
@@ -72,15 +70,15 @@ lamports の立替なので、0.5 SOL で数万決済分)。
 0 4 * * * cd /opt/subly/deploy && docker compose exec -T postgres pg_dump -U postgres subly | gzip > /var/backups/subly-$(date +\%u).sql.gz
 ```
 
-## 5. 参加者オンボーディング (1 人あたり)
+## 5. 参加者オンボーディング
 
-参加者ごとの運営作業は**ありません**。招待 (`docs/beta-invite-template.md`)
-を送るだけで、ウォレット登録・activate・sync はすべて参加者側の
-クライアントがウォレット署名認証で自動実行する (deposit 時および MCP
-サーバー起動時)。`scripts/onboard-agent.sh` は手動での再 sync 等の
+参加者ごとの運営作業は**ありません**。利用手順は
+`packages/pay/README.md` を案内する。ウォレット登録・activate・sync は
+参加者側のクライアントがウォレット署名認証で自動実行する (deposit 時および
+MCP サーバー起動時)。`scripts/onboard-agent.sh` は手動での再 sync 等の
 運用ツールとして残っている (admin トークンで任意のウォレットに実行可)。
 
 ## 障害対応
 
 `docs/operations.md` の「失敗時の挙動」を参照。設計の正は
-`docs/technical-design.md`、計画は `docs/beta-plan.md`。
+`docs/technical-design.md`。

@@ -23,8 +23,6 @@ export interface RelayerX402PayerConfig {
   /** The x402 client's fetch: given a 402, builds/signs/retries the payment. */
   x402Fetch: StandardX402FetchLike;
   defaultMaxAmountRawUsdc: bigint;
-  /** Deprecated compatibility flag; yield realization is always full-price. */
-  forceRealizeFullAmount?: boolean;
   stateStore?: StandardX402StateStore;
 }
 
@@ -34,8 +32,7 @@ export function createRelayerX402Payer(
   const realizer = new RelayerYieldRealizer({
     facilitatorBaseUrl: config.facilitatorBaseUrl,
     signer: config.signer,
-    rpc: config.rpc,
-    forceRealizeFullAmount: config.forceRealizeFullAmount ?? false
+    rpc: config.rpc
   });
 
   return new StandardX402Payer({

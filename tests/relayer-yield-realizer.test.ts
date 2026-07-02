@@ -39,10 +39,18 @@ function jsonResponse(status: number, body: unknown): Response {
 
 describe("RelayerYieldRealizer", () => {
   it("reuses the sponsored withdrawal flow to realize yield", async () => {
-    const calls: Array<{ url: string; method: string }> = [];
+    const calls: Array<{ url: string; method: string; body?: unknown }> = [];
     const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const u = String(url);
-      calls.push({ url: u, method: init?.method ?? "GET" });
+      calls.push({
+        url: u,
+        method: init?.method ?? "GET",
+        body:
+          typeof init?.body === "string" ? JSON.parse(init.body) : undefined
+      });
+      if (u.endsWith("/sync")) {
+        return jsonResponse(200, { position: {} });
+      }
       if (u.endsWith("/budget")) {
         return jsonResponse(200, {
           budget: { spendableYieldRawUsdc: "1000000" }
@@ -78,11 +86,17 @@ describe("RelayerYieldRealizer", () => {
 
     expect(result.txSignature).toBe("realizeSig");
     expect(result.realizedRawUsdc).toBe(10_000n);
+    // Syncs the ledger from chain first so freshly accrued yield is visible.
     expect(calls.map((c) => c.url)).toEqual([
+      `${BASE}/v1/wallets/${WALLET}/sync`,
       `${BASE}/v1/wallets/${WALLET}/budget`,
       `${BASE}/v1/withdrawals/prepare`,
       `${BASE}/v1/withdrawals/submit`
     ]);
+    // The prepare must be marked yield_realize so the relayer enforces the
+    // spendable-yield cap server-side.
+    const prepare = calls.find((c) => c.url.endsWith("/prepare"));
+    expect(prepare?.body).toMatchObject({ purpose: "yield_realize" });
   });
 
   it("does not treat existing ATA balance as yield provenance", async () => {
@@ -90,6 +104,9 @@ describe("RelayerYieldRealizer", () => {
     const fetchImpl = vi.fn(async (url: string | URL | Request) => {
       const u = String(url);
       calls.push(u);
+      if (u.endsWith("/sync")) {
+        return jsonResponse(200, { position: {} });
+      }
       if (u.endsWith("/budget")) {
         return jsonResponse(200, {
           budget: { spendableYieldRawUsdc: "1000000" }
@@ -126,6 +143,7 @@ describe("RelayerYieldRealizer", () => {
       txSignature: "realizeSig"
     });
     expect(calls).toEqual([
+      `${BASE}/v1/wallets/${WALLET}/sync`,
       `${BASE}/v1/wallets/${WALLET}/budget`,
       `${BASE}/v1/withdrawals/prepare`,
       `${BASE}/v1/withdrawals/submit`
@@ -134,7 +152,11 @@ describe("RelayerYieldRealizer", () => {
 
   it("refuses when spendable yield cannot cover the shortfall", async () => {
     const fetchImpl = vi.fn(async (url: string | URL | Request) => {
-      if (String(url).endsWith("/budget")) {
+      const u = String(url);
+      if (u.endsWith("/sync")) {
+        return jsonResponse(200, { position: {} });
+      }
+      if (u.endsWith("/budget")) {
         return jsonResponse(200, { budget: { spendableYieldRawUsdc: "5000" } });
       }
       throw new Error("should not reach withdrawal endpoints");
@@ -149,7 +171,93 @@ describe("RelayerYieldRealizer", () => {
     await expect(
       realizer.ensureUsdcAvailable({ amountRawUsdc: 10_000n })
     ).rejects.toMatchObject({ code: "insufficient_yield" });
-    expect(fetchImpl).toHaveBeenCalledTimes(1); // budget only
+    expect(fetchImpl).toHaveBeenCalledTimes(2); // sync + budget only
+  });
+
+  it("keeps the realize-fee headroom in the precheck (matches the server guard)", async () => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.endsWith("/sync")) {
+        return jsonResponse(200, { position: {} });
+      }
+      if (u.endsWith("/budget")) {
+        // Exactly the payment amount: gross fits, but the fee headroom
+        // (2500 raw) does not — the server guard would refuse this too.
+        return jsonResponse(200, { budget: { spendableYieldRawUsdc: "10000" } });
+      }
+      throw new Error("should not reach withdrawal endpoints");
+    });
+    const realizer = new RelayerYieldRealizer({
+      facilitatorBaseUrl: BASE,
+      signer: fakeSigner(),
+      rpc: fakeRpc(0n),
+      fetchImpl: fetchImpl as unknown as typeof fetch
+    });
+
+    await expect(
+      realizer.ensureUsdcAvailable({ amountRawUsdc: 10_000n })
+    ).rejects.toMatchObject({ code: "insufficient_yield" });
+  });
+
+  it("still reads the budget when the chain sync fails (best-effort)", async () => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.endsWith("/sync")) {
+        return jsonResponse(503, {
+          error: { code: "chain_sync_unavailable" }
+        });
+      }
+      if (u.endsWith("/budget")) {
+        return jsonResponse(200, { budget: { spendableYieldRawUsdc: "5000" } });
+      }
+      throw new Error("should not reach withdrawal endpoints");
+    });
+    const realizer = new RelayerYieldRealizer({
+      facilitatorBaseUrl: BASE,
+      signer: fakeSigner(),
+      rpc: fakeRpc(0n),
+      fetchImpl: fetchImpl as unknown as typeof fetch
+    });
+
+    await expect(
+      realizer.ensureUsdcAvailable({ amountRawUsdc: 10_000n })
+    ).rejects.toMatchObject({ code: "insufficient_yield" });
+  });
+
+  it("maps the relayer's server-side yield guard to insufficient_yield", async () => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.endsWith("/sync")) {
+        return jsonResponse(200, { position: {} });
+      }
+      if (u.endsWith("/budget")) {
+        // Stale client-side view says there is enough...
+        return jsonResponse(200, {
+          budget: { spendableYieldRawUsdc: "1000000" }
+        });
+      }
+      if (u.endsWith("/v1/withdrawals/prepare")) {
+        // ...but the relayer's own guard refuses beyond the spendable yield.
+        return jsonResponse(409, {
+          success: false,
+          error: {
+            code: "insufficient_yield",
+            message: "Yield-realize withdrawals are limited to the spendable yield"
+          }
+        });
+      }
+      throw new Error(`unexpected url ${u}`);
+    });
+    const realizer = new RelayerYieldRealizer({
+      facilitatorBaseUrl: BASE,
+      signer: fakeSigner(),
+      rpc: fakeRpc(0n),
+      fetchImpl: fetchImpl as unknown as typeof fetch
+    });
+
+    await expect(
+      realizer.ensureUsdcAvailable({ amountRawUsdc: 10_000n })
+    ).rejects.toMatchObject({ code: "insufficient_yield" });
   });
 
   it("uses the vault USDC mint by default", () => {

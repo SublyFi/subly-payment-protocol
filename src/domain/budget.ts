@@ -84,6 +84,23 @@ export function evaluatePaymentBudget(params: {
   requiredWithdrawRawUsdc?: bigint;
   activeWithdrawReservedRawUsdc?: bigint;
 }): PaymentBudgetEvaluation | PaymentBudgetRejection {
+  // Must precede computeBudgetSnapshot, which throws on a non-positive rate;
+  // checking after it made this rejection unreachable (an HTTP 500 instead).
+  if (params.position.exchangeRateScaled <= 0n) {
+    return {
+      ok: false,
+      code: "invalid_exchange_rate",
+      budget: {
+        positionValueRawUsdc: 0n,
+        grossYieldRawUsdc: 0n,
+        spendableYieldRawUsdc: 0n
+      },
+      details: {
+        exchangeRateScaled: params.position.exchangeRateScaled.toString()
+      }
+    };
+  }
+
   const budget = computeBudgetSnapshot(params.position);
   const requiredWithdrawRawUsdc =
     params.requiredWithdrawRawUsdc ?? params.sellerAmountRawUsdc;
@@ -95,17 +112,6 @@ export function evaluatePaymentBudget(params: {
     requiredWithdrawRawUsdc + params.estimatedFeeDebtRawUsdc;
   const activeWithdrawReservedRawUsdc =
     params.activeWithdrawReservedRawUsdc ?? 0n;
-
-  if (params.position.exchangeRateScaled <= 0n) {
-    return {
-      ok: false,
-      code: "invalid_exchange_rate",
-      budget,
-      details: {
-        exchangeRateScaled: params.position.exchangeRateScaled.toString()
-      }
-    };
-  }
 
   if (budget.spendableYieldRawUsdc < requiredBudgetRawUsdc) {
     return {

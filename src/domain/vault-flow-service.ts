@@ -29,7 +29,7 @@ import {
   buildVersionedTransaction,
   signatureBase58ForSigner
 } from "../solana/tx.js";
-import { computePositionValueRawUsdc } from "./budget.js";
+import { computePositionValueRawUsdc, evaluatePaymentBudget } from "./budget.js";
 import { badRequest, conflict, notFound } from "./errors.js";
 import type { Ledger } from "./ledger.js";
 import type {
@@ -54,12 +54,19 @@ export interface VaultFlowServiceConfig {
   flowExpirySeconds: number;
   computeUnitLimit: number;
   computeUnitPriceMicroLamports: bigint;
+  /**
+   * Fee-debt headroom a yield-realize withdrawal must leave in the spendable
+   * yield on top of the gross withdraw, covering the sponsored realize fee
+   * that is charged to the position only after confirmation.
+   */
+  realizeOverheadRawUsdc: bigint;
 }
 
 const DEFAULT_FLOW_CONFIG: VaultFlowServiceConfig = {
   flowExpirySeconds: 120,
   computeUnitLimit: 1_000_000,
-  computeUnitPriceMicroLamports: 1n
+  computeUnitPriceMicroLamports: 1n,
+  realizeOverheadRawUsdc: 2_500n
 };
 
 export interface SubmitFlowInput {
@@ -298,7 +305,11 @@ export class VaultFlowService {
     return serializeDepositIntent(intent);
   }
 
-  async prepareWithdrawal(input: { wallet: string; amountRawUsdc: string }) {
+  async prepareWithdrawal(input: {
+    wallet: string;
+    amountRawUsdc: string;
+    purpose?: "yield_realize" | undefined;
+  }) {
     const wallet = requireAddress(input.wallet, "wallet");
     const amountRawUsdc = parsePositiveRawUnits(
       input.amountRawUsdc,
@@ -380,6 +391,38 @@ export class VaultFlowService {
               context.instantRedeemCapacityRawUsdc.toString()
           }
         );
+      }
+
+      // Yield-realize withdrawals fund x402 payments; unlike a normal exit
+      // withdrawal they must never dig into the deposited principal, so the
+      // gross withdraw (incl. the vault penalty) plus the sponsored-fee
+      // headroom must fit in the spendable yield — enforced HERE, server-side,
+      // against the fresh chain exchange rate, not just by the client.
+      if (input.purpose === "yield_realize") {
+        const evaluation = evaluatePaymentBudget({
+          position: {
+            ...position,
+            stakedSharesRaw: userShares.stakedSharesRaw,
+            unstakedSharesRaw: userShares.unstakedSharesRaw,
+            totalSharesRaw: userShares.totalSharesRaw,
+            exchangeRateScaled: context.exchangeRateScaled,
+            instantRedeemCapacityRawUsdc: context.instantRedeemCapacityRawUsdc
+          },
+          sellerAmountRawUsdc: amountRawUsdc,
+          estimatedFeeDebtRawUsdc: this.config.realizeOverheadRawUsdc,
+          requiredWithdrawRawUsdc: grossWithdrawRawUsdc
+        });
+        if (!evaluation.ok) {
+          throw conflict(
+            evaluation.code,
+            "Yield-realize withdrawals are limited to the spendable yield; the deposited principal is never spent",
+            {
+              ...evaluation.details,
+              spendableYieldRawUsdc:
+                evaluation.budget.spendableYieldRawUsdc.toString()
+            }
+          );
+        }
       }
 
       const requestedSharesRaw = minBigInt(

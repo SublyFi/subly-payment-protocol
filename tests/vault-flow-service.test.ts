@@ -237,3 +237,59 @@ describe("VaultFlowService gates", () => {
     ).rejects.toMatchObject({ code: "withdraw_illiquid" });
   });
 });
+
+describe("VaultFlowService yield-realize guard", () => {
+  // Position: 101 shares @ rate 1.0 = 101 USDC value, basis 100 USDC
+  // -> spendable yield 1 USDC (1_000_000 raw).
+
+  it("prepares a yield-realize withdrawal within the spendable yield", async () => {
+    const { service, ledger } = buildService();
+    await registerPosition(ledger);
+
+    const prepared = await service.prepareWithdrawal({
+      wallet: WALLET,
+      amountRawUsdc: "10000", // 0.01 USDC, well inside 1 USDC of yield
+      purpose: "yield_realize"
+    });
+    expect(prepared.status).toBe("prepared");
+  });
+
+  it("refuses a yield-realize withdrawal beyond the spendable yield", async () => {
+    const { service, ledger } = buildService();
+    await registerPosition(ledger);
+
+    await expect(
+      service.prepareWithdrawal({
+        wallet: WALLET,
+        amountRawUsdc: "2000000", // 2 USDC > 1 USDC spendable yield
+        purpose: "yield_realize"
+      })
+    ).rejects.toMatchObject({ code: "insufficient_yield" });
+  });
+
+  it("keeps the sponsored-fee headroom out of the spendable yield", async () => {
+    const { service, ledger } = buildService();
+    await registerPosition(ledger);
+
+    // Exactly the whole yield: gross withdraw fits, but the realize-fee
+    // headroom (default 2500 raw) does not — the principal would pay it.
+    await expect(
+      service.prepareWithdrawal({
+        wallet: WALLET,
+        amountRawUsdc: "1000000",
+        purpose: "yield_realize"
+      })
+    ).rejects.toMatchObject({ code: "insufficient_yield" });
+  });
+
+  it("still allows a plain exit withdrawal beyond the yield", async () => {
+    const { service, ledger } = buildService();
+    await registerPosition(ledger);
+
+    const prepared = await service.prepareWithdrawal({
+      wallet: WALLET,
+      amountRawUsdc: "2000000" // principal exit, no purpose flag
+    });
+    expect(prepared.status).toBe("prepared");
+  });
+});

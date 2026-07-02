@@ -16,6 +16,7 @@ import { LocalKeypairAgentWalletSigner } from "../src/client/agent-wallet-signer
 import { runMcpPaymentServer } from "../src/client/mcp-payment-server.js";
 import { createStandardX402Payer } from "../src/client/standard-x402-factory.js";
 import { fileStandardX402StateStore } from "../src/client/standard-x402-state-store.js";
+import { VaultFlowClient } from "../src/client/vault-flows.js";
 import { loadKeyPairSigner, loadSecretKeyBytes } from "../src/solana/keys.js";
 import { createRpc } from "../src/solana/rpc.js";
 
@@ -59,5 +60,10 @@ await runMcpPaymentServer({
   payer,
   signer,
   facilitatorBaseUrl: relayerBaseUrl,
-  defaultMaxAmountRawUsdc
+  defaultMaxAmountRawUsdc,
+  vaultFlows: new VaultFlowClient({
+    facilitatorBaseUrl: relayerBaseUrl,
+    signer,
+    rpc
+  })
 });

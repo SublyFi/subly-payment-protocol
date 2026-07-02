@@ -11,6 +11,7 @@ import {
   StandardX402PayError,
   type StandardX402Payer
 } from "./standard-x402-payer.js";
+import { VaultFlowClientError, type VaultFlowClient } from "./vault-flows.js";
 
 /**
  * The Subly MCP payment server, decoupled from any concrete x402 payment
@@ -19,27 +20,34 @@ import {
  * reuse this exact tool surface + onboarding + stdio wiring.
  */
 const TOOL_NAME = "fetch_with_subly_payment";
+const DEPOSIT_TOOL_NAME = "deposit_to_subly_vault";
+const WITHDRAW_TOOL_NAME = "withdraw_from_subly_vault";
+const BUDGET_TOOL_NAME = "get_subly_yield_budget";
 
 const SERVER_INSTRUCTIONS = `Subly lets an agent pay for ANY standard x402 \
 (HTTP 402) paid API from its wallet's Kamino vault YIELD — the deposited \
 principal is never spent, and the seller needs no Subly integration.
 
-Before payments can succeed the operator of this server must have, once:
-1. A Solana keypair for the agent wallet. Subly does NOT create wallets; \
-make one with \`solana-keygen new -o agent.json\` (or export a keypair from \
-an existing wallet) and point SUBLY_DEMO_AGENT_KEYPAIR_PATH at it. The \
-private key never leaves that file; this server only signs locally with it.
-2. Funded that wallet with USDC on Solana mainnet (no SOL needed — realize \
-fees are sponsored) and deposited into the vault (see the project's deposit \
-command). The vault minimum deposit is 1 USDC.
-3. Waited for yield to accrue; a payment needs the seller's price of \
-spendable yield.
+One-time setup: the operator needs a Solana keypair for the agent wallet. \
+Subly does NOT create wallets; make one with \`solana-keygen new -o \
+agent.json\` (or export a keypair from an existing wallet) and point \
+SUBLY_DEMO_AGENT_KEYPAIR_PATH at it. The private key never leaves that \
+file; this server only signs locally with it. Then fund the wallet with \
+USDC on Solana mainnet — no SOL is ever needed, all vault transaction fees \
+are sponsored.
 
-Then use fetch_with_subly_payment(url) to GET or POST a paid resource from \
-any x402 seller (e.g. Nansen): it realizes just enough yield to the agent's \
+From there the agent can do everything with these tools:
+1. deposit_to_subly_vault(amountRawUsdc) puts wallet USDC into the vault \
+(minimum 1 USDC = 1000000 raw) so it starts earning yield.
+2. get_subly_yield_budget() shows the principal, position value, and the \
+spendable yield a payment can use right now.
+3. fetch_with_subly_payment(url) GETs or POSTs a paid resource from any \
+x402 seller (e.g. Nansen): it realizes just enough yield to the agent's \
 USDC ATA and pays the seller's standard x402 challenge, returning the body \
 plus the payment details. If it returns insufficient_yield, that is expected \
-— wait for yield, do not loop.`;
+— yield accrues over time; wait, do not loop.
+4. withdraw_from_subly_vault(amountRawUsdc) exits: moves vault funds \
+(principal included) back to the agent wallet's USDC account.`;
 
 export interface McpPaymentServerConfig {
   payer: StandardX402Payer;
@@ -47,6 +55,12 @@ export interface McpPaymentServerConfig {
   /** Subly relayer API base URL. Kept as facilitatorBaseUrl for env compatibility. */
   facilitatorBaseUrl: string;
   defaultMaxAmountRawUsdc: bigint;
+  /**
+   * Sponsored vault flows (deposit / withdraw / budget). When provided, the
+   * server exposes them as tools so an agent can complete the whole
+   * lifecycle — fund, check yield, pay, exit — without leaving MCP.
+   */
+  vaultFlows?: VaultFlowClient;
   serverVersion?: string;
 }
 
@@ -54,14 +68,95 @@ export async function runMcpPaymentServer(
   config: McpPaymentServerConfig
 ): Promise<void> {
   const { payer, signer, facilitatorBaseUrl, defaultMaxAmountRawUsdc } = config;
+  const vaultFlows = config.vaultFlows ?? null;
 
   const server = new Server(
     { name: "subly-payments", version: config.serverVersion ?? "0.3.0" },
     { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS }
   );
 
+  const vaultTools =
+    vaultFlows === null
+      ? []
+      : [
+          {
+            name: DEPOSIT_TOOL_NAME,
+            description:
+              "Deposit USDC from the agent wallet into the Subly/Kamino vault " +
+              "so it starts earning the yield that funds x402 payments. The " +
+              "transaction fee is sponsored — the agent wallet needs USDC " +
+              "only, never SOL. The vault minimum deposit is 1 USDC " +
+              "(1000000 raw). The deposited amount becomes protected " +
+              "principal: payments can only ever spend the yield on top of it.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                amountRawUsdc: {
+                  type: "string",
+                  description:
+                    "Amount to deposit in raw USDC units (6 decimals, e.g. " +
+                    "\"1000000\" = 1 USDC). Must be at least 1000000."
+                }
+              },
+              required: ["amountRawUsdc"]
+            },
+            annotations: {
+              title: "Deposit into the Subly vault",
+              readOnlyHint: false,
+              destructiveHint: false,
+              idempotentHint: false,
+              openWorldHint: false
+            }
+          },
+          {
+            name: WITHDRAW_TOOL_NAME,
+            description:
+              "Withdraw USDC from the Subly/Kamino vault back to the agent " +
+              "wallet's USDC account (fee sponsored, no SOL needed). This is " +
+              "the exit path and may spend PRINCIPAL — it reduces the " +
+              "deposit that earns yield. Limited to the vault's instant " +
+              "liquidity.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                amountRawUsdc: {
+                  type: "string",
+                  description:
+                    "Amount to withdraw in raw USDC units (6 decimals, e.g. " +
+                    "\"1000000\" = 1 USDC)."
+                }
+              },
+              required: ["amountRawUsdc"]
+            },
+            annotations: {
+              title: "Withdraw from the Subly vault",
+              readOnlyHint: false,
+              destructiveHint: true,
+              idempotentHint: false,
+              openWorldHint: false
+            }
+          },
+          {
+            name: BUDGET_TOOL_NAME,
+            description:
+              "Show the agent wallet's Subly vault budget: protected " +
+              "principal, current position value, and the spendable yield " +
+              "available for x402 payments right now. Syncs the position " +
+              "from chain first, so newly accrued yield is included.",
+            inputSchema: { type: "object", properties: {} },
+            annotations: {
+              title: "Get Subly yield budget",
+              readOnlyHint: true,
+              destructiveHint: false,
+              idempotentHint: true,
+              openWorldHint: false
+            }
+          }
+        ];
+
   server.setRequestHandler(ListToolsRequestSchema, () => ({
     tools: [
+      ...vaultTools,
       {
         name: TOOL_NAME,
         description:
@@ -133,7 +228,147 @@ export async function runMcpPaymentServer(
     ]
   }));
 
+  const textResult = (value: unknown, isError = false) => ({
+    content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
+    ...(isError ? { isError: true } : {})
+  });
+
+  const vaultFlowFailure = (error: unknown) => {
+    if (error instanceof VaultFlowClientError) {
+      return textResult(
+        { ok: false, step: error.step, message: error.message },
+        true
+      );
+    }
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: error instanceof Error ? error.message : String(error)
+        }
+      ],
+      isError: true
+    };
+  };
+
+  const parseRawAmount = (value: unknown): bigint | null => {
+    if (typeof value !== "string" && typeof value !== "number") {
+      return null;
+    }
+    try {
+      const amount = BigInt(value);
+      return amount > 0n ? amount : null;
+    } catch {
+      return null;
+    }
+  };
+
+  /**
+   * Presents a deposit/withdrawal outcome to the agent. "submitted" means the
+   * transaction may still confirm — the message must steer the agent away
+   * from resubmitting (which would move funds twice once the first confirms).
+   */
+  const vaultFlowOutcome = (
+    outcome: { status: string; txSignature: string | null },
+    amountField: Record<string, string>
+  ) => {
+    const solscanUrl =
+      outcome.txSignature === null
+        ? null
+        : `https://solscan.io/tx/${outcome.txSignature}`;
+    if (outcome.status === "submitted") {
+      return textResult(
+        {
+          ...outcome,
+          ...amountField,
+          solscanUrl,
+          stillConfirming: true,
+          warning:
+            "the transaction was broadcast but had not confirmed before the " +
+            "poll timeout. Do NOT submit this deposit/withdrawal again — it " +
+            "may still confirm and moving the funds twice is not what the " +
+            "user asked for. Check get_subly_yield_budget in a minute, or " +
+            "the solscanUrl."
+        },
+        true
+      );
+    }
+    return textResult(
+      { ...outcome, ...amountField, solscanUrl },
+      outcome.status !== "confirmed"
+    );
+  };
+
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const vaultToolNames: string[] = [
+      BUDGET_TOOL_NAME,
+      DEPOSIT_TOOL_NAME,
+      WITHDRAW_TOOL_NAME
+    ];
+    if (vaultFlows !== null && vaultToolNames.includes(request.params.name)) {
+      // Registration + chain sync are idempotent, and any vault tool may be
+      // the wallet's first relayer interaction (best-effort: the flow itself
+      // reports wallet_not_registered if this fails).
+      try {
+        await ensureWalletOnboarded({ facilitatorBaseUrl, signer });
+      } catch {
+        // fall through to the flow's own error reporting
+      }
+
+      if (request.params.name === BUDGET_TOOL_NAME) {
+        try {
+          const budget = await vaultFlows.getBudget();
+          return textResult({
+            ...budget,
+            principalUsdc: formatRawUsdcAmount(
+              BigInt(budget.principalBasisRawUsdc)
+            ),
+            positionValueUsdc: formatRawUsdcAmount(
+              BigInt(budget.positionValueRawUsdc)
+            ),
+            spendableYieldUsdc: formatRawUsdcAmount(
+              BigInt(budget.spendableYieldRawUsdc)
+            )
+          });
+        } catch (error) {
+          return vaultFlowFailure(error);
+        }
+      }
+
+      const amountRawUsdc = parseRawAmount(
+        (request.params.arguments ?? {}).amountRawUsdc
+      );
+      if (amountRawUsdc === null) {
+        return textResult(
+          {
+            ok: false,
+            message:
+              "amountRawUsdc must be a positive integer raw USDC amount " +
+              "(6 decimals, e.g. \"1000000\" = 1 USDC)"
+          },
+          true
+        );
+      }
+      try {
+        if (request.params.name === DEPOSIT_TOOL_NAME) {
+          const outcome = await vaultFlows.deposit({ amountRawUsdc });
+          return vaultFlowOutcome(outcome, {
+            depositedUsdc: formatRawUsdcAmount(
+              BigInt(outcome.actualDepositRawUsdc ?? "0")
+            )
+          });
+        }
+        const outcome = await vaultFlows.withdraw({ amountRawUsdc });
+        return vaultFlowOutcome(outcome, {
+          withdrawnUsdc: formatRawUsdcAmount(
+            BigInt(outcome.actualWithdrawRawUsdc ?? "0")
+          )
+        });
+      } catch (error) {
+        return vaultFlowFailure(error);
+      }
+    }
+
     if (request.params.name !== TOOL_NAME) {
       return {
         content: [{ type: "text", text: `unknown tool: ${request.params.name}` }],

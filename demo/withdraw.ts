@@ -1,10 +1,11 @@
 /**
  * Demo withdraw CLI: moves USDC from the Subly vault back to the agent
  * wallet's USDC ATA through the Subly relayer prepare/sign/submit flow
- * (instant-only normal withdraw; the beta exit path).
+ * (VaultFlowClient; instant-only normal withdraw; the beta exit path).
  *
  * Flow: /v1/withdrawals/prepare -> structured-intent validation + local
- * signing -> /v1/withdrawals/submit (sponsor co-signs and broadcasts).
+ * signing -> /v1/withdrawals/submit (sponsor co-signs and broadcasts)
+ * -> terminal status (polling the reconciling GET endpoint).
  *
  * Usage:
  *   npm run demo:withdraw -- <amountRawUsdc>   (e.g. 1000000 = 1 USDC)
@@ -17,8 +18,7 @@
  *   SUBLY_RELAYER_URL           Subly relayer API; default https://api.demo.sublyfi.com
  */
 import { LocalKeypairAgentWalletSigner } from "../src/client/agent-wallet-signer.js";
-import { walletAuthHeaders } from "../src/client/wallet-auth-headers.js";
-import { fetchLookupTablesForTransaction } from "../src/client/lookup-tables.js";
+import { VaultFlowClient, VaultFlowClientError } from "../src/client/vault-flows.js";
 import { loadKeyPairSigner } from "../src/solana/keys.js";
 import { createRpc } from "../src/solana/rpc.js";
 import { fail, formatRawUsdc } from "./shared.js";
@@ -45,83 +45,48 @@ const signer = new LocalKeypairAgentWalletSigner(keyPairSigner);
 const rpc = createRpc(
   process.env.SOLANA_RPC_URL ?? "https://api.mainnet-beta.solana.com"
 );
-
-async function postJson(path: string, body: unknown): Promise<unknown> {
-  const url = `${relayerBaseUrl}${path}`;
-  const serialized = JSON.stringify(body);
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      ...(await walletAuthHeaders({
-        signer,
-        method: "POST",
-        url,
-        body: serialized
-      })),
-      "content-type": "application/json"
-    },
-    body: serialized
-  });
-  const text = await response.text();
-  if (response.status !== 200) {
-    fail(`[withdraw] ${path} failed with ${response.status}: ${text}`);
-  }
-  return JSON.parse(text);
-}
+const vaultFlows = new VaultFlowClient({
+  facilitatorBaseUrl: relayerBaseUrl,
+  signer,
+  rpc
+});
 
 console.log(`[withdraw] agent wallet: ${signer.walletAddress}`);
 console.log(`[withdraw] relayer:  ${relayerBaseUrl}`);
 console.log(
-  `\n[withdraw] step 1: prepare withdraw of ${formatRawUsdc(amountRawUsdc)} USDC`
+  `\n[withdraw] step 1: withdraw ${formatRawUsdc(amountRawUsdc)} USDC ` +
+    "(prepare -> validate intent + sign locally -> sponsor submits)"
 );
-const prepared = (await postJson("/v1/withdrawals/prepare", {
-  wallet: signer.walletAddress,
-  amountRawUsdc
-})) as {
-  withdrawalId: string;
-  serializedTransaction: string;
-  destinationUsdcAta: string;
-  signingIntent: Parameters<typeof signer.signWithdrawal>[0]["intent"];
-};
-console.log(`[withdraw] prepared (withdrawalId=${prepared.withdrawalId})`);
-console.log(`[withdraw] destination USDC ATA: ${prepared.destinationUsdcAta}`);
+let submitted;
+try {
+  submitted = await vaultFlows.withdraw({
+    amountRawUsdc: BigInt(amountRawUsdc)
+  });
+} catch (error) {
+  if (error instanceof VaultFlowClientError) {
+    fail(`[withdraw] ${error.step} failed: ${error.message}`);
+  }
+  throw error;
+}
 
-console.log(
-  "\n[withdraw] step 2: validate the signing intent against the transaction, sign locally"
-);
-const signed = await signer.signWithdrawal({
-  intent: prepared.signingIntent,
-  serializedTransaction: prepared.serializedTransaction,
-  lookupTables: await fetchLookupTablesForTransaction(
-    rpc,
-    prepared.serializedTransaction
-  )
-});
-console.log("[withdraw] agent signature attached");
-
-console.log("\n[withdraw] step 3: submit (sponsor co-signs and broadcasts)");
-const submitted = (await postJson("/v1/withdrawals/submit", {
-  withdrawalId: prepared.withdrawalId,
-  serializedTransaction: signed.serializedTransaction,
-  agentSignature: signed.agentSignature
-})) as {
-  status: string;
-  txSignature: string | null;
-  actualWithdrawRawUsdc: string | null;
-  actualSharesBurnedRaw: string | null;
-  errorCode: string | null;
-};
-
+console.log(`[withdraw] withdrawalId: ${submitted.withdrawalId}`);
 console.log(`[withdraw] status: ${submitted.status}`);
+console.log(`[withdraw] destination USDC ATA: ${submitted.destinationUsdcAta}`);
 if (submitted.txSignature !== null) {
   console.log(
     `[withdraw] transaction: https://solscan.io/tx/${submitted.txSignature}`
   );
 }
+if (submitted.status === "submitted") {
+  fail(
+    "[withdraw] broadcast but not yet confirmed — it may still land. Do NOT " +
+      `resubmit; check GET /v1/withdrawals/${submitted.withdrawalId} (or the tx link above) first`
+  );
+}
 if (submitted.status !== "confirmed") {
   fail(
     `[withdraw] not confirmed (errorCode=${submitted.errorCode}); ` +
-      `check GET /v1/withdrawals/${prepared.withdrawalId} and the relayer logs`
+      `check GET /v1/withdrawals/${submitted.withdrawalId} and the relayer logs`
   );
 }
 console.log(

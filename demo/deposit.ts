@@ -1,9 +1,10 @@
 /**
  * Demo deposit CLI: moves USDC from the agent wallet into the Subly vault
- * through the Subly relayer prepare/sign/submit flow.
+ * through the Subly relayer prepare/sign/submit flow (VaultFlowClient).
  *
  * Flow: /v1/deposits/prepare -> structured-intent validation + local signing
- * -> /v1/deposits/submit (sponsor co-signs and broadcasts) -> terminal status.
+ * -> /v1/deposits/submit (sponsor co-signs and broadcasts) -> terminal status
+ * (polling the reconciling GET endpoint while the tx confirms).
  *
  * Usage:
  *   npm run demo:deposit -- <amountRawUsdc>   (e.g. 60000000 = 60 USDC)
@@ -17,8 +18,7 @@
  */
 import { LocalKeypairAgentWalletSigner } from "../src/client/agent-wallet-signer.js";
 import { ensureWalletOnboarded } from "../src/client/onboarding.js";
-import { walletAuthHeaders } from "../src/client/wallet-auth-headers.js";
-import { fetchLookupTablesForTransaction } from "../src/client/lookup-tables.js";
+import { VaultFlowClient, VaultFlowClientError } from "../src/client/vault-flows.js";
 import { loadKeyPairSigner } from "../src/solana/keys.js";
 import { createRpc } from "../src/solana/rpc.js";
 import { fail, formatRawUsdc } from "./shared.js";
@@ -45,29 +45,11 @@ const signer = new LocalKeypairAgentWalletSigner(keyPairSigner);
 const rpc = createRpc(
   process.env.SOLANA_RPC_URL ?? "https://api.mainnet-beta.solana.com"
 );
-
-async function postJson(path: string, body: unknown): Promise<unknown> {
-  const url = `${relayerBaseUrl}${path}`;
-  const serialized = JSON.stringify(body);
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      ...(await walletAuthHeaders({
-        signer,
-        method: "POST",
-        url,
-        body: serialized
-      })),
-      "content-type": "application/json"
-    },
-    body: serialized
-  });
-  const text = await response.text();
-  if (response.status !== 200) {
-    fail(`[deposit] ${path} failed with ${response.status}: ${text}`);
-  }
-  return JSON.parse(text);
-}
+const vaultFlows = new VaultFlowClient({
+  facilitatorBaseUrl: relayerBaseUrl,
+  signer,
+  rpc
+});
 
 console.log(`[deposit] agent wallet: ${signer.walletAddress}`);
 console.log(`[deposit] relayer:  ${relayerBaseUrl}`);
@@ -76,54 +58,36 @@ await ensureWalletOnboarded({ facilitatorBaseUrl: relayerBaseUrl, signer });
 console.log("[deposit] wallet registered and synced");
 
 console.log(
-  `\n[deposit] step 1: prepare deposit of ${formatRawUsdc(amountRawUsdc)} USDC`
+  `\n[deposit] step 1: deposit ${formatRawUsdc(amountRawUsdc)} USDC ` +
+    "(prepare -> validate intent + sign locally -> sponsor submits)"
 );
-const prepared = (await postJson("/v1/deposits/prepare", {
-  wallet: signer.walletAddress,
-  amountRawUsdc
-})) as {
-  depositId: string;
-  serializedTransaction: string;
-  signingIntent: Parameters<typeof signer.signDeposit>[0]["intent"];
-};
-console.log(`[deposit] prepared (depositId=${prepared.depositId})`);
+let submitted;
+try {
+  submitted = await vaultFlows.deposit({ amountRawUsdc: BigInt(amountRawUsdc) });
+} catch (error) {
+  if (error instanceof VaultFlowClientError) {
+    fail(`[deposit] ${error.step} failed: ${error.message}`);
+  }
+  throw error;
+}
 
-console.log(
-  "\n[deposit] step 2: validate the signing intent against the transaction, sign locally"
-);
-const signed = await signer.signDeposit({
-  intent: prepared.signingIntent,
-  serializedTransaction: prepared.serializedTransaction,
-  lookupTables: await fetchLookupTablesForTransaction(
-    rpc,
-    prepared.serializedTransaction
-  )
-});
-console.log("[deposit] agent signature attached");
-
-console.log("\n[deposit] step 3: submit (sponsor co-signs and broadcasts)");
-const submitted = (await postJson("/v1/deposits/submit", {
-  depositId: prepared.depositId,
-  serializedTransaction: signed.serializedTransaction,
-  agentSignature: signed.agentSignature
-})) as {
-  status: string;
-  txSignature: string | null;
-  actualDepositRawUsdc: string | null;
-  sharesMintedRaw: string | null;
-  errorCode: string | null;
-};
-
+console.log(`[deposit] depositId: ${submitted.depositId}`);
 console.log(`[deposit] status: ${submitted.status}`);
 if (submitted.txSignature !== null) {
   console.log(
     `[deposit] transaction: https://solscan.io/tx/${submitted.txSignature}`
   );
 }
+if (submitted.status === "submitted") {
+  fail(
+    "[deposit] broadcast but not yet confirmed — it may still land. Do NOT " +
+      `resubmit; check GET /v1/deposits/${submitted.depositId} (or the tx link above) first`
+  );
+}
 if (submitted.status !== "confirmed") {
   fail(
     `[deposit] not confirmed (errorCode=${submitted.errorCode}); ` +
-      `check GET /v1/deposits/${prepared.depositId} and the relayer logs`
+      `check GET /v1/deposits/${submitted.depositId} and the relayer logs`
   );
 }
 console.log(

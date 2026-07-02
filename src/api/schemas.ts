@@ -55,7 +55,13 @@ export const submitDepositSchema = z.object({
 
 export const prepareWithdrawalSchema = z.object({
   wallet: solanaAddressString,
-  amountRawUsdc: positiveRawIntegerString
+  amountRawUsdc: positiveRawIntegerString,
+  /**
+   * "yield_realize" marks a withdrawal that funds an x402 payment; the server
+   * then refuses any amount the spendable yield cannot cover, so the deposited
+   * principal is protected server-side, not just by the client's precheck.
+   */
+  purpose: z.enum(["yield_realize"]).optional()
 });
 
 export const submitWithdrawalSchema = z.object({

@@ -1,9 +1,10 @@
-import { SUBLY_VAULT } from "../config/constants.js";
 import type { SolanaRpc } from "../solana/rpc.js";
 import type { AgentWalletSigner } from "./agent-wallet-signer.js";
-import { fetchLookupTablesForTransaction } from "./lookup-tables.js";
-import { walletAuthHeaders } from "./wallet-auth-headers.js";
 import type { YieldRealizer } from "./standard-x402-payer.js";
+import {
+  VaultFlowClient,
+  VaultFlowClientError
+} from "./vault-flows.js";
 
 /**
  * Product/distribution-form yield realizer. The sponsor keypair lives ONLY on
@@ -11,15 +12,26 @@ import type { YieldRealizer } from "./standard-x402-payer.js";
  * anyone who installs the client with just their agent key still gets gas
  * sponsorship, exactly like the existing beta.
  *
- * "Realize" reuses the deployed, mainnet-proven sponsored withdrawal flow:
- *   GET  /v1/wallets/:w/budget            (principal-protection guard)
- *   POST /v1/withdrawals/prepare          (server builds withdraw -> own ATA)
- *   signer.signWithdrawal(...)            (agent owner-signs locally)
- *   POST /v1/withdrawals/submit           (relayer sponsor co-signs + submits)
+ * "Realize" reuses the deployed, mainnet-proven sponsored withdrawal flow via
+ * the shared VaultFlowClient (one wire-protocol implementation for the demo
+ * CLIs, the MCP vault tools, and this payment path):
+ *   getBudget()   chain-sync + spendable-yield precheck (principal guard)
+ *   withdraw({ purpose: "yield_realize" })
+ *                 prepare -> agent owner-signs locally -> relayer sponsor
+ *                 co-signs + submits -> poll until terminal
  *
- * Principal is protected because we only ever realize an amount the server's
- * ledger reports as spendable YIELD; the deposited principal is never touched.
+ * Principal is protected twice: this client refuses to realize beyond the
+ * ledger's spendable YIELD, and the relayer itself refuses to prepare a
+ * yield_realize withdrawal the spendable yield cannot cover.
  */
+
+/**
+ * Client-side estimate of the relayer's realize-fee headroom
+ * (VaultFlowServiceConfig.realizeOverheadRawUsdc, default 0.0025 USDC). Keeps
+ * the precheck aligned with the server guard so a payment the server would
+ * refuse is not attempted; the server remains authoritative.
+ */
+const REALIZE_OVERHEAD_RAW_USDC = 2_500n;
 
 export class RelayerRealizeError extends Error {
   constructor(
@@ -54,43 +66,19 @@ export interface RelayerYieldRealizerConfig {
   ) => Promise<Record<string, readonly string[]>>;
 }
 
-interface PreparedWithdrawal {
-  withdrawalId: string;
-  serializedTransaction: string;
-  destinationUsdcAta: string;
-  signingIntent: Parameters<AgentWalletSigner["signWithdrawal"]>[0]["intent"];
-}
-
-interface SubmittedWithdrawal {
-  status: string;
-  txSignature: string | null;
-  actualWithdrawRawUsdc: string | null;
-}
-
 export class RelayerYieldRealizer implements YieldRealizer {
-  private readonly config: {
-    facilitatorBaseUrl: string;
-    usdcMint: string;
-  };
-  private readonly signer: AgentWalletSigner;
-  private readonly rpc: SolanaRpc;
-  private readonly fetchImpl: typeof fetch;
-  private readonly lookupTablesFor: (
-    serializedTransaction: string
-  ) => Promise<Record<string, readonly string[]>>;
+  private readonly vaultFlows: VaultFlowClient;
 
   constructor(config: RelayerYieldRealizerConfig) {
-    this.config = {
-      facilitatorBaseUrl: config.facilitatorBaseUrl.replace(/\/$/, ""),
-      usdcMint: config.usdcMint ?? SUBLY_VAULT.usdcMint
-    };
-    this.signer = config.signer;
-    this.rpc = config.rpc;
-    this.fetchImpl = config.fetchImpl ?? fetch;
-    this.lookupTablesFor =
-      config.lookupTablesFor ??
-      ((serializedTransaction) =>
-        fetchLookupTablesForTransaction(this.rpc, serializedTransaction));
+    this.vaultFlows = new VaultFlowClient({
+      facilitatorBaseUrl: config.facilitatorBaseUrl,
+      signer: config.signer,
+      rpc: config.rpc,
+      ...(config.fetchImpl === undefined ? {} : { fetchImpl: config.fetchImpl }),
+      ...(config.lookupTablesFor === undefined
+        ? {}
+        : { lookupTablesFor: config.lookupTablesFor })
+    });
   }
 
   async ensureUsdcAvailable(input: {
@@ -103,58 +91,42 @@ export class RelayerYieldRealizer implements YieldRealizer {
 
     await this.assertSpendableYield(shortfallRawUsdc);
 
-    const prepared = (await this.postJson("/v1/withdrawals/prepare", {
-      wallet: this.signer.walletAddress,
-      amountRawUsdc: shortfallRawUsdc.toString()
-    })) as PreparedWithdrawal;
-
-    const signed = await this.signer.signWithdrawal({
-      intent: prepared.signingIntent,
-      serializedTransaction: prepared.serializedTransaction,
-      lookupTables: await this.lookupTablesFor(prepared.serializedTransaction)
-    });
-
-    let settled = (await this.postJson("/v1/withdrawals/submit", {
-      withdrawalId: prepared.withdrawalId,
-      serializedTransaction: signed.serializedTransaction,
-      agentSignature: signed.agentSignature
-    })) as SubmittedWithdrawal;
-
-    // The relayer submits the sponsor-signed tx but may return before the tx
-    // confirms on-chain (status "submitted"). Poll the reconciling GET endpoint
-    // until it reaches a terminal state; each read looks the tx up on-chain and
-    // finalizes to "confirmed" once it lands (or a terminal failure if the
-    // blockhash expires without landing).
-    if (settled.status === "submitted") {
-      settled = await this.pollUntilSettled(prepared.withdrawalId);
+    let outcome;
+    try {
+      outcome = await this.vaultFlows.withdraw({
+        amountRawUsdc: shortfallRawUsdc,
+        // The relayer refuses to prepare this withdrawal beyond the spendable
+        // yield — the principal-protection guard the client cannot bypass.
+        purpose: "yield_realize"
+      });
+    } catch (error) {
+      throw this.mapWithdrawError(error);
     }
 
-    if (settled.status !== "confirmed" || settled.txSignature === null) {
+    if (outcome.status !== "confirmed" || outcome.txSignature === null) {
       throw new RelayerRealizeError(
         "realize_not_confirmed",
-        `yield realize withdrawal did not confirm (status=${settled.status})`,
-        settled
+        `yield realize withdrawal did not confirm (status=${outcome.status})`,
+        outcome
       );
     }
 
     return {
-      realizedRawUsdc: BigInt(settled.actualWithdrawRawUsdc ?? "0"),
-      txSignature: settled.txSignature
+      realizedRawUsdc: BigInt(outcome.actualWithdrawRawUsdc ?? "0"),
+      txSignature: outcome.txSignature
     };
   }
 
-  /** Refuses to realize more than the ledger's spendable yield (principal). */
+  /**
+   * Refuses to realize more than the ledger's spendable yield (principal).
+   * getBudget syncs the relayer's ledger from chain first (best-effort), so a
+   * long-running client sees yield as it accrues instead of a frozen view.
+   */
   private async assertSpendableYield(shortfallRawUsdc: bigint): Promise<void> {
-    const url = `${this.config.facilitatorBaseUrl}/v1/wallets/${this.signer.walletAddress}/budget`;
-    let response: Awaited<ReturnType<typeof fetch>>;
+    let spendable: bigint;
     try {
-      response = await this.fetchImpl(url, {
-        headers: await walletAuthHeaders({
-          signer: this.signer,
-          method: "GET",
-          url
-        })
-      });
+      const budget = await this.vaultFlows.getBudget();
+      spendable = BigInt(budget.spendableYieldRawUsdc);
     } catch (error) {
       throw new RelayerRealizeError(
         "budget_unavailable",
@@ -162,86 +134,62 @@ export class RelayerYieldRealizer implements YieldRealizer {
         error
       );
     }
-    if (response.status !== 200) {
-      throw new RelayerRealizeError(
-        "budget_unavailable",
-        `budget endpoint returned ${response.status}`
-      );
-    }
-    const body = (await response.json()) as {
-      budget?: { spendableYieldRawUsdc?: string };
-    };
-    const spendable = BigInt(body.budget?.spendableYieldRawUsdc ?? "0");
-    if (spendable < shortfallRawUsdc) {
+    // Mirror the server guard (gross withdraw + fee headroom); anything the
+    // server would refuse should fail here, before a prepare is attempted.
+    const requiredRawUsdc = shortfallRawUsdc + REALIZE_OVERHEAD_RAW_USDC;
+    if (spendable < requiredRawUsdc) {
       throw new RelayerRealizeError(
         "insufficient_yield",
-        `spendable yield ${spendable} cannot cover ${shortfallRawUsdc} raw USDC; ` +
+        `spendable yield ${spendable} cannot cover ${shortfallRawUsdc} raw USDC ` +
+          `plus the ${REALIZE_OVERHEAD_RAW_USDC} raw fee headroom; ` +
           "the principal is never spent — wait for more yield",
         { spendableYieldRawUsdc: spendable.toString() }
       );
     }
   }
 
-  /**
-   * Polls GET /v1/withdrawals/:id (which reconciles a submitted intent against
-   * the chain) until it leaves the "submitted" state or the timeout elapses.
-   */
-  private async pollUntilSettled(
-    withdrawalId: string,
-    { timeoutMs = 90_000, intervalMs = 2_500 } = {}
-  ): Promise<SubmittedWithdrawal> {
-    const deadline = Date.now() + timeoutMs;
-    let latest: SubmittedWithdrawal | null = null;
-    while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, intervalMs));
-      const url = `${this.config.facilitatorBaseUrl}/v1/withdrawals/${withdrawalId}`;
-      const response = await this.fetchImpl(url, {
-        headers: await walletAuthHeaders({
-          signer: this.signer,
-          method: "GET",
-          url
-        })
-      });
-      if (response.status !== 200) {
-        continue;
-      }
-      latest = (await response.json()) as SubmittedWithdrawal;
-      if (latest.status !== "submitted") {
-        return latest;
-      }
-    }
-    return (
-      latest ?? {
-        status: "submitted",
-        txSignature: null,
-        actualWithdrawRawUsdc: null
-      }
-    );
-  }
-
-  private async postJson(path: string, body: unknown): Promise<unknown> {
-    const url = `${this.config.facilitatorBaseUrl}${path}`;
-    const serialized = JSON.stringify(body);
-    const response = await this.fetchImpl(url, {
-      method: "POST",
-      headers: {
-        ...(await walletAuthHeaders({
-          signer: this.signer,
-          method: "POST",
-          url,
-          body: serialized
-        })),
-        "content-type": "application/json"
-      },
-      body: serialized
-    });
-    const text = await response.text();
-    if (response.status !== 200) {
-      throw new RelayerRealizeError(
-        path.endsWith("/submit") ? "submit_failed" : "prepare_failed",
-        `${path} failed with ${response.status}: ${text}`
+  private mapWithdrawError(error: unknown): RelayerRealizeError {
+    if (!(error instanceof VaultFlowClientError)) {
+      return new RelayerRealizeError(
+        "prepare_failed",
+        `yield realize failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        error
       );
     }
-    return JSON.parse(text);
+    // The relayer's own principal-protection guard: surface it under the
+    // same code as the client precheck so callers see one "wait for yield".
+    const serverCode = errorCodeFrom(error.detail);
+    if (
+      serverCode === "insufficient_yield" ||
+      serverCode === "post_state_principal_invariant_failed"
+    ) {
+      return new RelayerRealizeError(
+        "insufficient_yield",
+        "the relayer refused to realize beyond the spendable yield; " +
+          "the principal is never spent — wait for more yield",
+        error.detail
+      );
+    }
+    return new RelayerRealizeError(
+      error.step === "submit" ? "submit_failed" : "prepare_failed",
+      error.message,
+      error.detail
+    );
+  }
+}
+
+function errorCodeFrom(detail: unknown): string | null {
+  if (typeof detail !== "string") {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(detail) as {
+      error?: { code?: unknown };
+    };
+    return typeof parsed.error?.code === "string" ? parsed.error.code : null;
+  } catch {
+    return null;
   }
 }

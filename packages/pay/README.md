@@ -7,7 +7,10 @@ locally with your own Solana key; Subly never holds it.
 
 Ships one `pay` dispatcher bin with subcommands, all runnable with `npx` (no clone):
 
-- `pay mcp` — an MCP server (Claude Code, Cursor, any MCP client)
+- `pay mcp` — an MCP server (Claude Code, Cursor, any MCP client) exposing
+  the full lifecycle as tools: `deposit_to_subly_vault`,
+  `get_subly_yield_budget`, `fetch_with_subly_payment`,
+  `withdraw_from_subly_vault`
 - `pay fetch <url>` — one-shot: pay for a URL, print the receipt (used by the
   OpenClaw skill)
 - `pay deposit <amountRawUsdc>` / `pay withdraw <amountRawUsdc>` — vault
@@ -51,5 +54,8 @@ npx -y @subly_fi/pay fetch https://seller.example.com/api/premium
 
 Requests authenticate with a signature from your wallet key — there is no API
 token. `SUBLY_FACILITATOR_URL` is still accepted as a legacy fallback for
-`SUBLY_RELAYER_URL`. The cap and the relayer's yield-budget check both bound spending;
-the principal is never touched.
+`SUBLY_RELAYER_URL`. Spending is bounded twice: the client cap, and the
+relayer's server-side guard that refuses to realize anything beyond the
+spendable yield — the deposited principal is never touched by a payment.
+(A plain `pay withdraw` is the exit path and may of course move principal
+back to your wallet.)

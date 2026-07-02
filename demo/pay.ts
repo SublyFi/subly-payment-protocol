@@ -194,7 +194,7 @@ const service = new PaidFetchService({
 
 console.error(`[subly-pay] agent ${signer.walletAddress} -> ${facilitatorBaseUrl}`);
 try {
-  await ensureWalletOnboarded({ facilitatorBaseUrl, signer });
+  await ensureWalletOnboarded({ relayerBaseUrl: facilitatorBaseUrl, signer });
 } catch (error) {
   console.error(
     `[subly-pay] onboarding skipped: ${

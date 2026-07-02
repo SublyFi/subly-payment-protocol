@@ -52,8 +52,8 @@ plus the payment details. If it returns insufficient_yield, that is expected \
 export interface McpPaymentServerConfig {
   payer: StandardX402Payer;
   signer: AgentWalletSigner;
-  /** Subly relayer API base URL. Kept as facilitatorBaseUrl for env compatibility. */
-  facilitatorBaseUrl: string;
+  /** Subly relayer API base URL; `SUBLY_FACILITATOR_URL` remains a legacy env fallback. */
+  relayerBaseUrl: string;
   defaultMaxAmountRawUsdc: bigint;
   /**
    * Sponsored vault flows (deposit / withdraw / budget). When provided, the
@@ -67,7 +67,7 @@ export interface McpPaymentServerConfig {
 export async function runMcpPaymentServer(
   config: McpPaymentServerConfig
 ): Promise<void> {
-  const { payer, signer, facilitatorBaseUrl, defaultMaxAmountRawUsdc } = config;
+  const { payer, signer, relayerBaseUrl, defaultMaxAmountRawUsdc } = config;
   const vaultFlows = config.vaultFlows ?? null;
 
   const server = new Server(
@@ -310,7 +310,7 @@ export async function runMcpPaymentServer(
       // the wallet's first relayer interaction (best-effort: the flow itself
       // reports wallet_not_registered if this fails).
       try {
-        await ensureWalletOnboarded({ facilitatorBaseUrl, signer });
+        await ensureWalletOnboarded({ relayerBaseUrl, signer });
       } catch {
         // fall through to the flow's own error reporting
       }
@@ -471,7 +471,7 @@ export async function runMcpPaymentServer(
   // Self-serve onboarding: register + activate + chain-sync this wallet so the
   // realize relayer can serve budget reads and sponsored withdrawals.
   try {
-    await ensureWalletOnboarded({ facilitatorBaseUrl, signer });
+    await ensureWalletOnboarded({ relayerBaseUrl, signer });
     console.error("[subly-mcp] wallet registered and synced at the relayer");
   } catch (error) {
     console.error(
@@ -484,7 +484,7 @@ export async function runMcpPaymentServer(
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(
-    `[subly-mcp] ready: agent wallet ${signer.walletAddress}, relayer ${facilitatorBaseUrl}, ` +
+    `[subly-mcp] ready: agent wallet ${signer.walletAddress}, relayer ${relayerBaseUrl}, ` +
       `default cap ${formatRawUsdcAmount(defaultMaxAmountRawUsdc)} USDC`
   );
 }

@@ -53,6 +53,14 @@ export interface ServerOptions {
   /** Per-IP request rate (per minute) for non-health endpoints; 0 disables. */
   apiRatePerMinute?: number | undefined;
   trustProxy?: boolean | undefined;
+  /**
+   * Serves the RETIRED seller-side `subly-yield-exact` endpoints
+   * (/v1/x402/supported|verify|settle). The Subly relayer is a buyer-side
+   * vault/budget/yield-realize API — it is NOT an x402 facilitator (sellers
+   * choose their own, e.g. PayAI/CDP) — so these stay off unless explicitly
+   * re-enabled for legacy experiments (env SUBLY_ENABLE_LEGACY_X402=1).
+   */
+  enableLegacySellerApi?: boolean | undefined;
 }
 
 declare module "fastify" {
@@ -242,50 +250,55 @@ export function buildServer(
     ok: true
   }));
 
-  server.get("/v1/x402/supported", async () => ({
-    accepts: [
-      {
-        scheme: PAYMENT_SCHEME,
-        network: SOLANA_MAINNET_NETWORK,
-        asset: SUBLY_VAULT.usdcMint,
-        vault: SUBLY_VAULT.address,
-        shareMint: SUBLY_VAULT.shareMint,
-        maxTimeoutSeconds: 120
-      }
-    ]
-  }));
+  const enableLegacySellerApi =
+    options.enableLegacySellerApi ??
+    process.env.SUBLY_ENABLE_LEGACY_X402 === "1";
+  if (enableLegacySellerApi) {
+    server.get("/v1/x402/supported", async () => ({
+      accepts: [
+        {
+          scheme: PAYMENT_SCHEME,
+          network: SOLANA_MAINNET_NETWORK,
+          asset: SUBLY_VAULT.usdcMint,
+          vault: SUBLY_VAULT.address,
+          shareMint: SUBLY_VAULT.shareMint,
+          maxTimeoutSeconds: 120
+        }
+      ]
+    }));
 
-  server.post(
-    "/v1/x402/verify",
-    { preHandler: requireSellerAuth },
-    async (request) => {
-      const body = verifyPaymentPayloadSchema.parse(request.body);
-      return service.verifyPaymentPayload(body);
-    }
-  );
-
-  server.post(
-    "/v1/x402/settle",
-    { preHandler: requireSellerAuth },
-    async (request) => {
-      const body = verifyPaymentPayloadSchema.parse(request.body);
-      const startedAtMs = Date.now();
-      try {
-        const response = await service.settlePaymentPayload(body);
-        metrics.observeSettlementLatencyMs(Date.now() - startedAtMs);
-        metrics.increment(
-          isSuccessfulSettlement(response)
-            ? "settlement_settled"
-            : "settlement_not_settled"
-        );
-        return response;
-      } catch (error) {
-        metrics.observeSettlementLatencyMs(Date.now() - startedAtMs);
-        metrics.increment("settlement_error");
-        throw error;
+    server.post(
+      "/v1/x402/verify",
+      { preHandler: requireSellerAuth },
+      async (request) => {
+        const body = verifyPaymentPayloadSchema.parse(request.body);
+        return service.verifyPaymentPayload(body);
       }
-    }
-  );
+    );
+
+    server.post(
+      "/v1/x402/settle",
+      { preHandler: requireSellerAuth },
+      async (request) => {
+        const body = verifyPaymentPayloadSchema.parse(request.body);
+        const startedAtMs = Date.now();
+        try {
+          const response = await service.settlePaymentPayload(body);
+          metrics.observeSettlementLatencyMs(Date.now() - startedAtMs);
+          metrics.increment(
+            isSuccessfulSettlement(response)
+              ? "settlement_settled"
+              : "settlement_not_settled"
+          );
+          return response;
+        } catch (error) {
+          metrics.observeSettlementLatencyMs(Date.now() - startedAtMs);
+          metrics.increment("settlement_error");
+          throw error;
+        }
+      }
+    );
+  }
 
   // Self-serve: a wallet registers (and activates) itself by signing the
   // request with its own key — no operator allowlisting.

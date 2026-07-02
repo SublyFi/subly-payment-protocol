@@ -25,8 +25,11 @@ npm access get status @subly_fi/pay      # must print "public"
 #   npm access set status=public @subly_fi/pay
 
 # sanity check the published artifact from a clean dir (allow ~1-2 min for the
-# registry/CDN to serve a newly public package before this resolves):
-cd /tmp && npx -y @subly_fi/pay@latest fetch https://seller.demo.sublyfi.com/api/premium/alpha
+# registry/CDN to serve a newly public package before this resolves).
+# Resolving + printing usage proves the bin works without spending anything:
+cd /tmp && npx -y @subly_fi/pay@latest
+# optional paid check against a real standard-x402 seller (0.01 USDC):
+#   SUBLY_DEMO_AGENT_KEYPAIR_PATH=... npx -y @subly_fi/pay@latest fetch <x402-url>
 ```
 
 ## Notes

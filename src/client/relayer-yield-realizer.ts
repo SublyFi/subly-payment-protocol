@@ -50,8 +50,8 @@ export class RelayerRealizeError extends Error {
 }
 
 export interface RelayerYieldRealizerConfig {
-  /** Subly relayer API base URL. Kept as facilitatorBaseUrl for env compatibility. */
-  facilitatorBaseUrl: string;
+  /** Subly relayer API base URL; `SUBLY_FACILITATOR_URL` remains a legacy env fallback. */
+  relayerBaseUrl: string;
   signer: AgentWalletSigner;
   /** Used only to resolve lookup tables for structured-intent validation. */
   rpc: SolanaRpc;
@@ -71,7 +71,7 @@ export class RelayerYieldRealizer implements YieldRealizer {
 
   constructor(config: RelayerYieldRealizerConfig) {
     this.vaultFlows = new VaultFlowClient({
-      facilitatorBaseUrl: config.facilitatorBaseUrl,
+      relayerBaseUrl: config.relayerBaseUrl,
       signer: config.signer,
       rpc: config.rpc,
       ...(config.fetchImpl === undefined ? {} : { fetchImpl: config.fetchImpl }),

@@ -62,7 +62,7 @@ const signer = new LocalKeypairAgentWalletSigner(keyPairSigner);
 const rpc = createRpc(rpcUrl);
 
 const payer = createRelayerX402Payer({
-  facilitatorBaseUrl: relayerBaseUrl,
+  relayerBaseUrl,
   signer,
   rpc,
   x402Fetch: await createSvmX402Fetch({ agentSecretKey, rpcUrl }),
@@ -75,7 +75,7 @@ const body = process.env.SUBLY_PAY_BODY;
 
 console.error(`[pay] agent ${signer.walletAddress} -> ${url}`);
 try {
-  await ensureWalletOnboarded({ facilitatorBaseUrl: relayerBaseUrl, signer });
+  await ensureWalletOnboarded({ relayerBaseUrl, signer });
 } catch (error) {
   console.error(
     `[pay] onboarding skipped: ${

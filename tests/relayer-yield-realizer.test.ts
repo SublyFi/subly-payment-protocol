@@ -75,7 +75,7 @@ describe("RelayerYieldRealizer", () => {
     });
 
     const realizer = new RelayerYieldRealizer({
-      facilitatorBaseUrl: BASE,
+      relayerBaseUrl: BASE,
       signer: fakeSigner(),
       rpc: fakeRpc(0n), // empty ATA -> must realize
       fetchImpl: fetchImpl as unknown as typeof fetch,
@@ -130,7 +130,7 @@ describe("RelayerYieldRealizer", () => {
       throw new Error(`unexpected url ${u}`);
     });
     const realizer = new RelayerYieldRealizer({
-      facilitatorBaseUrl: BASE,
+      relayerBaseUrl: BASE,
       signer: fakeSigner(),
       rpc: fakeRpc(20_000n), // existing ATA funds are not yield provenance
       fetchImpl: fetchImpl as unknown as typeof fetch,
@@ -162,7 +162,7 @@ describe("RelayerYieldRealizer", () => {
       throw new Error("should not reach withdrawal endpoints");
     });
     const realizer = new RelayerYieldRealizer({
-      facilitatorBaseUrl: BASE,
+      relayerBaseUrl: BASE,
       signer: fakeSigner(),
       rpc: fakeRpc(0n),
       fetchImpl: fetchImpl as unknown as typeof fetch
@@ -188,7 +188,7 @@ describe("RelayerYieldRealizer", () => {
       throw new Error("should not reach withdrawal endpoints");
     });
     const realizer = new RelayerYieldRealizer({
-      facilitatorBaseUrl: BASE,
+      relayerBaseUrl: BASE,
       signer: fakeSigner(),
       rpc: fakeRpc(0n),
       fetchImpl: fetchImpl as unknown as typeof fetch
@@ -213,7 +213,7 @@ describe("RelayerYieldRealizer", () => {
       throw new Error("should not reach withdrawal endpoints");
     });
     const realizer = new RelayerYieldRealizer({
-      facilitatorBaseUrl: BASE,
+      relayerBaseUrl: BASE,
       signer: fakeSigner(),
       rpc: fakeRpc(0n),
       fetchImpl: fetchImpl as unknown as typeof fetch
@@ -249,7 +249,7 @@ describe("RelayerYieldRealizer", () => {
       throw new Error(`unexpected url ${u}`);
     });
     const realizer = new RelayerYieldRealizer({
-      facilitatorBaseUrl: BASE,
+      relayerBaseUrl: BASE,
       signer: fakeSigner(),
       rpc: fakeRpc(0n),
       fetchImpl: fetchImpl as unknown as typeof fetch
@@ -262,7 +262,7 @@ describe("RelayerYieldRealizer", () => {
 
   it("uses the vault USDC mint by default", () => {
     const realizer = new RelayerYieldRealizer({
-      facilitatorBaseUrl: BASE,
+      relayerBaseUrl: BASE,
       signer: fakeSigner(),
       rpc: fakeRpc(0n)
     });

@@ -49,7 +49,7 @@ const signer = new LocalKeypairAgentWalletSigner(keyPairSigner);
 const rpc = createRpc(rpcUrl);
 
 const payer = createRelayerX402Payer({
-  facilitatorBaseUrl: relayerBaseUrl,
+  relayerBaseUrl,
   signer,
   rpc,
   x402Fetch: await createSvmX402Fetch({ agentSecretKey, rpcUrl }),
@@ -60,10 +60,10 @@ const payer = createRelayerX402Payer({
 await runMcpPaymentServer({
   payer,
   signer,
-  facilitatorBaseUrl: relayerBaseUrl,
+  relayerBaseUrl,
   defaultMaxAmountRawUsdc,
   vaultFlows: new VaultFlowClient({
-    facilitatorBaseUrl: relayerBaseUrl,
+    relayerBaseUrl,
     signer,
     rpc
   })

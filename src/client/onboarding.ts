@@ -22,13 +22,13 @@ export class OnboardingError extends Error {
 }
 
 export async function ensureWalletOnboarded(params: {
-  /** Subly relayer API base URL. Kept as facilitatorBaseUrl for env compatibility. */
-  facilitatorBaseUrl: string;
+  /** Subly relayer API base URL; `SUBLY_FACILITATOR_URL` remains a legacy env fallback. */
+  relayerBaseUrl: string;
   signer: AgentWalletSigner;
   fetchImpl?: typeof fetch;
 }): Promise<void> {
   const fetchImpl = params.fetchImpl ?? fetch;
-  const baseUrl = params.facilitatorBaseUrl.replace(/\/$/, "");
+  const baseUrl = params.relayerBaseUrl.replace(/\/$/, "");
 
   const post = async (
     step: "register" | "sync",

@@ -46,7 +46,7 @@ const rpc = createRpc(
   process.env.SOLANA_RPC_URL ?? "https://api.mainnet-beta.solana.com"
 );
 const vaultFlows = new VaultFlowClient({
-  facilitatorBaseUrl: relayerBaseUrl,
+  relayerBaseUrl,
   signer,
   rpc
 });
@@ -54,7 +54,7 @@ const vaultFlows = new VaultFlowClient({
 console.log(`[deposit] agent wallet: ${signer.walletAddress}`);
 console.log(`[deposit] relayer:  ${relayerBaseUrl}`);
 console.log("\n[deposit] step 0: ensure the wallet is registered (self-serve)");
-await ensureWalletOnboarded({ facilitatorBaseUrl: relayerBaseUrl, signer });
+await ensureWalletOnboarded({ relayerBaseUrl, signer });
 console.log("[deposit] wallet registered and synced");
 
 console.log(

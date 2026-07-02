@@ -46,7 +46,7 @@ const rpc = createRpc(
   process.env.SOLANA_RPC_URL ?? "https://api.mainnet-beta.solana.com"
 );
 const vaultFlows = new VaultFlowClient({
-  facilitatorBaseUrl: relayerBaseUrl,
+  relayerBaseUrl,
   signer,
   rpc
 });

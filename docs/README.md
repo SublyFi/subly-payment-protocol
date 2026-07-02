@@ -35,4 +35,7 @@ Seller から見ると通常の x402 支払い。Buyer から見ると「元本�
 - `docs/technical-design.md`: 旧 `subly-yield-exact` の技術仕様
 - `docs/operations.md`: 旧 `subly-yield-exact` 運用メモ
 - `demo/README.md`: 現行デモ導線と legacy demo の境界
-- `deploy/README.md`: legacy deploy bundle の扱い
+
+なお `deploy/README.md` は現行 relayer のデプロイ手順(legacy ではない)。
+旧 Seller 向け `/v1/x402/*` エンドポイントはデフォルト無効になっており、
+`SUBLY_ENABLE_LEGACY_X402=1` を設定した場合のみ提供される。

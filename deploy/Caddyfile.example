@@ -1,17 +1,10 @@
-# LEGACY:旧 subly-yield-exact / hosted Seller proxy config.
-# Current standard-x402 mode does not deploy a Seller-facing Subly facilitator.
-# Copy to deploy/Caddyfile and replace the domains (DNS A records must point
-# at this host). Caddy provisions TLS certificates automatically.
+# Subly relayer proxy config. Copy to deploy/Caddyfile and replace the domain
+# (the DNS A record must point at this host). Caddy provisions TLS
+# certificates automatically.
 #
-# The seller already rate-limits challenge issuance per client IP (it sees
-# real IPs via X-Forwarded-For + SUBLY_DEMO_TRUST_PROXY). Proxy-level rate
-# limiting on top requires a custom Caddy build with the rate_limit module
-# (github.com/mholt/caddy-ratelimit) and is optional for the closed beta.
+# The relayer serves only the buyer-side API (wallet-signature authed vault
+# flows + budget); there is no seller-facing site in the current mode.
 
-facilitator.example.com {
-	reverse_proxy facilitator:3000
-}
-
-seller.example.com {
-	reverse_proxy seller:4021
+relayer.example.com {
+	reverse_proxy relayer:3000
 }

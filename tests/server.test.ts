@@ -3,7 +3,7 @@ import { buildServer } from "../src/api/server.js";
 import { SublyService } from "../src/domain/payment-service.js";
 
 describe("API server auth", () => {
-  it("keeps health and supported endpoints public", async () => {
+  it("keeps health public and hides the legacy seller API by default", async () => {
     const server = buildServer(new SublyService(), {
       sellerApiToken: null,
       adminApiToken: null
@@ -13,12 +13,36 @@ describe("API server auth", () => {
       method: "GET",
       url: "/healthz"
     });
+    // The relayer is a buyer-side API, not an x402 facilitator; the retired
+    // subly-yield-exact seller endpoints must not be served unless opted in.
+    const supported = await server.inject({
+      method: "GET",
+      url: "/v1/x402/supported"
+    });
+    const settle = await server.inject({
+      method: "POST",
+      url: "/v1/x402/settle",
+      payload: {}
+    });
+
+    expect(health.statusCode).toBe(200);
+    expect(supported.statusCode).toBe(404);
+    expect(settle.statusCode).toBe(404);
+    await server.close();
+  });
+
+  it("serves the legacy seller API only when explicitly enabled", async () => {
+    const server = buildServer(new SublyService(), {
+      sellerApiToken: null,
+      adminApiToken: null,
+      enableLegacySellerApi: true
+    });
+
     const supported = await server.inject({
       method: "GET",
       url: "/v1/x402/supported"
     });
 
-    expect(health.statusCode).toBe(200);
     expect(supported.statusCode).toBe(200);
     await server.close();
   });
@@ -161,7 +185,8 @@ describe("API server auth", () => {
   it("does not allow an admin token to call seller settlement endpoints", async () => {
     const server = buildServer(new SublyService(), {
       sellerApiToken: "seller-secret",
-      adminApiToken: "admin-secret"
+      adminApiToken: "admin-secret",
+      enableLegacySellerApi: true
     });
 
     const response = await server.inject({

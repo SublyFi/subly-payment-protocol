@@ -26,8 +26,8 @@ export class VaultFlowClientError extends Error {
 }
 
 export interface VaultFlowClientConfig {
-  /** Subly relayer API base URL. Kept as facilitatorBaseUrl for env compatibility. */
-  facilitatorBaseUrl: string;
+  /** Subly relayer API base URL; `SUBLY_FACILITATOR_URL` remains a legacy env fallback. */
+  relayerBaseUrl: string;
   signer: AgentWalletSigner;
   /** Used only to resolve lookup tables for structured-intent validation. */
   rpc: SolanaRpc;
@@ -90,7 +90,7 @@ export class VaultFlowClient {
   private readonly pollIntervalMs: number;
 
   constructor(config: VaultFlowClientConfig) {
-    this.baseUrl = config.facilitatorBaseUrl.replace(/\/$/, "");
+    this.baseUrl = config.relayerBaseUrl.replace(/\/$/, "");
     this.signer = config.signer;
     this.fetchImpl = config.fetchImpl ?? fetch;
     this.lookupTablesFor =

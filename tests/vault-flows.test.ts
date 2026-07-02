@@ -32,7 +32,7 @@ function jsonResponse(status: number, body: unknown): Response {
 
 function buildClient(fetchImpl: typeof fetch) {
   return new VaultFlowClient({
-    facilitatorBaseUrl: BASE,
+    relayerBaseUrl: BASE,
     signer: fakeSigner(),
     rpc: {} as SolanaRpc,
     fetchImpl,

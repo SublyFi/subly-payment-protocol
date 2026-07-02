@@ -28,8 +28,8 @@ import {
  * point shared by the CLI and the MCP server.
  */
 export interface StandardX402PayerFactoryConfig {
-  /** Subly relayer API base URL. Kept as facilitatorBaseUrl for env compatibility. */
-  facilitatorBaseUrl: string;
+  /** Subly relayer API base URL; `SUBLY_FACILITATOR_URL` remains a legacy env fallback. */
+  relayerBaseUrl: string;
   /** Structured-intent signer over the agent keypair (for realize withdrawals). */
   signer: AgentWalletSigner;
   /** Raw 64-byte agent secret key (for the x402 transfer signature). */
@@ -61,7 +61,7 @@ export function createStandardX402Payer(
   };
 
   return createRelayerX402Payer({
-    facilitatorBaseUrl: config.facilitatorBaseUrl,
+    relayerBaseUrl: config.relayerBaseUrl,
     signer: config.signer,
     rpc: config.rpc,
     x402Fetch,

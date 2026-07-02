@@ -1,17 +1,18 @@
-# LEGACY:旧 subly-yield-exact / hosted Seller closed-beta deployment.
-# 現在の主導線ではSeller向けSubly facilitatorは立てない。
-# Subly closed-beta deployment: facilitator + hosted seller + Postgres,
-# fronted by Caddy (automatic HTTPS). Run from the deploy/ directory:
+# Subly relayer deployment: the buyer-side vault/budget/yield-realize API
+# (sponsored fees) + Postgres ledger, fronted by Caddy (automatic HTTPS).
+# The relayer is NOT an x402 facilitator — sellers bring their own
+# (e.g. PayAI, Coinbase CDP); this service only prepares/co-signs sponsored
+# vault flows and enforces the yield-only budget. Run from deploy/:
 #
-#   1. cp facilitator.production.env.example facilitator.production.env  (fill in)
-#   2. cp seller.production.env.example seller.production.env            (fill in)
-#   3. cp Caddyfile.example Caddyfile                                    (set domains)
-#   4. mkdir -p secrets && put the sponsor keypair at secrets/sponsor.json
-#   5. echo "POSTGRES_PASSWORD=<strong-random>" > .env
-#   6. docker compose up -d --build
+#   1. cp relayer.production.env.example relayer.production.env  (fill in)
+#   2. cp Caddyfile.example Caddyfile                            (set domain)
+#   3. mkdir -p secrets && put the sponsor keypair at secrets/sponsor.json
+#   4. echo "POSTGRES_PASSWORD=<strong-random>" > .env
+#   5. docker compose up -d --build
 #
 # Secrets (env files, secrets/, Caddyfile) stay on the host; nothing is baked
-# into the image. See deploy/README.md for the full runbook.
+# into the image. The retired subly-yield-exact seller endpoints stay off
+# unless SUBLY_ENABLE_LEGACY_X402=1 is set in the relayer env.
 services:
   postgres:
     image: postgres:16-alpine
@@ -27,10 +28,10 @@ services:
       timeout: 5s
       retries: 5
 
-  facilitator:
+  relayer:
     build: ..
     restart: unless-stopped
-    env_file: facilitator.production.env
+    env_file: relayer.production.env
     environment:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/subly
       SUBLY_SPONSOR_KEYPAIR_PATH: /run/subly/sponsor.json
@@ -41,19 +42,6 @@ services:
         condition: service_healthy
     expose:
       - "3000"
-
-  seller:
-    build: ..
-    restart: unless-stopped
-    command: ["npx", "tsx", "demo/seller.ts"]
-    env_file: seller.production.env
-    environment:
-      SUBLY_FACILITATOR_URL: http://facilitator:3000
-      SUBLY_DEMO_TRUST_PROXY: "1"
-    depends_on:
-      - facilitator
-    expose:
-      - "4021"
 
   caddy:
     image: caddy:2
@@ -66,8 +54,7 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      - facilitator
-      - seller
+      - relayer
 
 volumes:
   pgdata:

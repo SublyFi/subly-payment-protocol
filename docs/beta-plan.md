@@ -97,21 +97,22 @@ docker-compose (Postgres/Caddy 込み) + production env テンプレ +
 
 ## Phase B: Buyer オンボーディングキット
 
-### MCP ラッパー (目玉) — 実装済み (`demo/mcp-server.ts`, 2026-06-12)
+### MCP ラッパー (目玉) — 実装済み (`@subly_fi/pay mcp`, 2026-07-02)
 
-`SublyX402Client` (`src/x402/client.ts`) を薄い MCP サーバーに包み、
-Claude Code / OpenClaw / Cursor 等の MCP クライアントから
-「有料 API のデータ取得 → 402 → yield で支払い → 結果 + レシート」を
-会話一発で見せられるようにする。
+公開パッケージ `@subly_fi/pay` の MCP サーバーで、Claude Code /
+OpenClaw / Cursor 等の MCP クライアントから「有料 API のデータ取得 →
+標準 x402 402 → Subly が buyer 側で yield を realize → 標準 x402 payment →
+結果」を会話一発で見せられるようにする。
 
-- ツールは最小 1 個: `fetch_with_subly_payment(url)` —
-  402 でなければそのまま返し、402 なら prepare → structured-intent
-  検証 → ローカル署名 → retry し、本文と `PAYMENT-RESPONSE` レシート
-  (Solscan リンク) を返す。
+- 中核ツールは `fetch_with_subly_payment(url)`。402 でなければそのまま返し、
+  402 なら relayer の `purpose: "yield_realize"` withdrawal で spendable
+  yield だけを USDC 化し、公式 `@x402/svm` client で標準 x402 payment を行う。
+  現在の対象は Solana USDC `exact` rail と facilitator `extra.feePayer` を
+  返す standard x402 Seller に限る。Seller 側 Subly SDK は不要。
 - 鍵は MCP サーバーの env で渡す (agent keypair / RPC URL /
-  facilitator URL)。**鍵はエージェントのコンテキストに出さない**。
+  relayer URL)。**鍵はエージェントのコンテキストに出さない**。
   API トークンは存在しない (ウォレット署名認証)。
-- 配布は npm 公開前は GitHub 参照で十分 (`npx` 起動)。
+- 配布は npm package の `npx -y @subly_fi/pay mcp` を正とする。
 - OpenClaw 向けには同じ CLI を `SKILL.md` 付きスキルとしても用意する
   (OpenClaw は MCP も使えるが、スキル形式の方がネイティブ)。
 

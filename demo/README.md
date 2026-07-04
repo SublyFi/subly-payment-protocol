@@ -1,15 +1,10 @@
 # Subly Demo Notes
 
-現在のデモ主導線は、既存 standard x402 Seller に対して Buyer 側から
-yield 支払いする flow である。
+現在のデモ主導線は、既存 standard x402 Seller のうち Solana USDC
+`exact` rail と facilitator `extra.feePayer` を出す API に対して、Buyer
+側から yield 支払いする flow である。
 
 推奨デモ:
-
-```bash
-npm run demo:pay-x402 -- <standard-x402-url> [maxAmountRawUsdc]
-```
-
-または公開パッケージ:
 
 ```bash
 npx -y @subly_fi/pay fetch <standard-x402-url> [maxAmountRawUsdc]
@@ -17,11 +12,13 @@ npx -y @subly_fi/pay fetch <standard-x402-url> [maxAmountRawUsdc]
 
 この flow では Seller は Subly を知らない。Seller から見ると通常の x402
 USDC payment であり、Subly は Buyer 側で spendable yield を確認し、必要分を
-realize してから標準 x402 payment を行う。realize は relayer 側でも
-`purpose: "yield_realize"` として spendable yield 超過を拒否する
+realize してから標準 x402 payment を行う。EVM only / Solana feePayer なしの
+challenge は支払い対象外で、yield を動かす前に拒否する。realize は relayer
+側でも `purpose: "yield_realize"` として spendable yield 超過を拒否する
 (元本保護はクライアント任せではない)。
 
-MCP サーバ (`demo/run-mcp.sh` / `npx -y @subly_fi/pay mcp`) は支払いに加えて
+MCP サーバ (`npx -y @subly_fi/pay mcp`、または env を読む薄いラッパー
+`demo/run-mcp.sh`) は支払いに加えて
 `deposit_to_subly_vault` / `withdraw_from_subly_vault` /
 `get_subly_yield_budget` ツールを公開しており、エージェントは MCP だけで
 入金 → 利回り確認 → 支払い → 出金のライフサイクルを完結できる

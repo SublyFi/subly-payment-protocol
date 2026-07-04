@@ -99,6 +99,52 @@ describe("selectPayableSolanaRequirement", () => {
     expect(selected.feePayer).toBe("2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4");
   });
 
+  it("skips Solana USDC requirements without feePayer when a payable one exists", () => {
+    const { solanaExactRequirements } = parseStandardChallenge({
+      x402Version: 2,
+      accepts: [
+        {
+          scheme: "exact",
+          network: SOLANA_MAINNET_NETWORK,
+          asset: SUBLY_VAULT.usdcMint,
+          amount: "10000",
+          payTo: "UnfundedSeller111111111111111111111111111111111"
+        },
+        {
+          scheme: "exact",
+          network: SOLANA_MAINNET_NETWORK,
+          asset: SUBLY_VAULT.usdcMint,
+          amount: "10000",
+          payTo: "J7ZvJEspvwP1oRxQZ7mYmNmT22NTm3GWq3t7HEbvPZYx",
+          extra: { feePayer: "2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4" }
+        }
+      ]
+    });
+
+    const selected = selectPayableSolanaRequirement(solanaExactRequirements);
+    expect(selected.payTo).toBe("J7ZvJEspvwP1oRxQZ7mYmNmT22NTm3GWq3t7HEbvPZYx");
+    expect(selected.feePayer).toBe("2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4");
+  });
+
+  it("throws when the Solana USDC requirement has no feePayer", () => {
+    const { solanaExactRequirements } = parseStandardChallenge({
+      x402Version: 2,
+      accepts: [
+        {
+          scheme: "exact",
+          network: SOLANA_MAINNET_NETWORK,
+          asset: SUBLY_VAULT.usdcMint,
+          amount: "10000",
+          payTo: "J7ZvJEspvwP1oRxQZ7mYmNmT22NTm3GWq3t7HEbvPZYx"
+        }
+      ]
+    });
+
+    expect(() =>
+      selectPayableSolanaRequirement(solanaExactRequirements)
+    ).toThrow(StandardX402ChallengeError);
+  });
+
   it("detects when a later challenge changes the checked requirement", () => {
     const { solanaExactRequirements } = parseStandardChallenge(
       nansenChallenge()

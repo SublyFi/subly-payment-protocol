@@ -68,7 +68,7 @@ export interface SelectedSolanaRequirement {
   requirement: StandardExactRequirement;
   amountRawUsdc: bigint;
   payTo: string;
-  feePayer: string | null;
+  feePayer: string;
 }
 
 export class StandardX402ChallengeError extends Error {
@@ -126,8 +126,9 @@ export function decodeStandardPaymentRequiredHeader(headerValue: string): {
 
 /**
  * Selects the single Solana `exact` requirement Subly can pay: mainnet USDC
- * (the vault's own mint) by default. Throws when the challenge offers no such
- * requirement so the caller never silently pays the wrong rail.
+ * (the vault's own mint) with facilitator fee sponsorship by default. Throws
+ * when the challenge offers no such requirement so the caller never silently
+ * pays the wrong rail or realizes yield before an unpayable SVM challenge.
  */
 export function selectPayableSolanaRequirement(
   requirements: StandardExactRequirement[],
@@ -136,15 +137,32 @@ export function selectPayableSolanaRequirement(
   const network = options?.network ?? SOLANA_MAINNET_NETWORK;
   const usdcMint = options?.usdcMint ?? SUBLY_VAULT.usdcMint;
 
-  const requirement =
-    requirements.find(
-      (candidate) =>
-        candidate.network === network && candidate.asset === usdcMint
-    ) ?? null;
-  if (requirement === null) {
+  const matchingRequirements = requirements.filter(
+    (candidate) => candidate.network === network && candidate.asset === usdcMint
+  );
+  if (matchingRequirements.length === 0) {
     throw new StandardX402ChallengeError(
       "no_payable_requirement",
       `The challenge has no Solana exact requirement on ${network} paying ${usdcMint}`
+    );
+  }
+  const requirement =
+    matchingRequirements.find(
+      (candidate) => candidate.extra?.feePayer !== undefined
+    ) ?? null;
+  if (requirement === null) {
+    throw new StandardX402ChallengeError(
+      "missing_svm_fee_payer",
+      "The Solana exact requirement does not include extra.feePayer, " +
+        "which the official @x402/svm client requires for gas sponsorship"
+    );
+  }
+  const feePayer = requirement.extra?.feePayer;
+  if (feePayer === undefined) {
+    throw new StandardX402ChallengeError(
+      "missing_svm_fee_payer",
+      "The Solana exact requirement does not include extra.feePayer, " +
+        "which the official @x402/svm client requires for gas sponsorship"
     );
   }
 
@@ -152,7 +170,7 @@ export function selectPayableSolanaRequirement(
     requirement,
     amountRawUsdc: BigInt(requirement.amount),
     payTo: requirement.payTo,
-    feePayer: requirement.extra?.feePayer ?? null
+    feePayer
   };
 }
 

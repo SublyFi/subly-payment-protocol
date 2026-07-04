@@ -10,10 +10,8 @@ import {
 /**
  * Composes the distribution-form standard-x402 payer from a Subly-relayer yield
  * realizer plus an INJECTED x402 payment fetch. This module deliberately does
- * NOT import any concrete x402 client library, so it can be bundled into the
- * published client on any @solana/kit version (the payment lib — PayAI's
- * x402-solana on kit v2, or the official @x402/svm on kit v5 — is supplied by
- * the caller as `x402Fetch`).
+ * NOT import any concrete x402 client library. The published package supplies
+ * the official @x402/svm payment fetch as `x402Fetch`.
  */
 export interface RelayerX402PayerConfig {
   /** Subly relayer API base URL; `SUBLY_FACILITATOR_URL` remains a legacy env fallback. */

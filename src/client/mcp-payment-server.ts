@@ -15,18 +15,18 @@ import { VaultFlowClientError, type VaultFlowClient } from "./vault-flows.js";
 
 /**
  * The Subly MCP payment server, decoupled from any concrete x402 payment
- * library: the caller injects a fully-built StandardX402Payer. Both the repo
- * demo (PayAI x402-solana, kit v2) and the published client (@x402/svm, kit v5)
- * reuse this exact tool surface + onboarding + stdio wiring.
+ * library: the caller injects a fully-built StandardX402Payer. The published
+ * client supplies a payer backed by the official @x402/svm implementation.
  */
 const TOOL_NAME = "fetch_with_subly_payment";
 const DEPOSIT_TOOL_NAME = "deposit_to_subly_vault";
 const WITHDRAW_TOOL_NAME = "withdraw_from_subly_vault";
 const BUDGET_TOOL_NAME = "get_subly_yield_budget";
 
-const SERVER_INSTRUCTIONS = `Subly lets an agent pay for ANY standard x402 \
-(HTTP 402) paid API from its wallet's Kamino vault YIELD — the deposited \
-principal is never spent, and the seller needs no Subly integration.
+const SERVER_INSTRUCTIONS = `Subly lets an agent pay standard x402 (HTTP 402) \
+paid APIs that offer a Solana USDC exact rail with facilitator feePayer support \
+from its wallet's Kamino vault YIELD — the deposited principal is never spent, \
+and the seller needs no Subly integration.
 
 One-time setup: the operator needs a Solana keypair for the agent wallet. \
 Subly does NOT create wallets; make one with \`solana-keygen new -o \
@@ -41,11 +41,11 @@ From there the agent can do everything with these tools:
 (minimum just over 1 USDC, e.g. 1010000 raw) so it starts earning yield.
 2. get_subly_yield_budget() shows the principal, position value, and the \
 spendable yield a payment can use right now.
-3. fetch_with_subly_payment(url) GETs or POSTs a paid resource from any \
-x402 seller (e.g. Nansen): it realizes just enough yield to the agent's \
-USDC ATA and pays the seller's standard x402 challenge, returning the body \
-plus the payment details. If it returns insufficient_yield, that is expected \
-— yield accrues over time; wait, do not loop.
+3. fetch_with_subly_payment(url) GETs or POSTs a paid resource from a compatible \
+x402 seller (e.g. Nansen): it realizes just enough yield to the agent's USDC \
+ATA and pays the seller's Solana USDC exact challenge, returning the body plus \
+the payment details. If it returns insufficient_yield, that is expected — yield \
+accrues over time; wait, do not loop.
 4. withdraw_from_subly_vault(amountRawUsdc) exits: moves vault funds \
 (principal included) back to the agent wallet's USDC account.`;
 
@@ -164,10 +164,10 @@ export async function runMcpPaymentServer(
         name: TOOL_NAME,
         description:
           "Fetch a URL (GET or POST), automatically paying a standard x402 " +
-          "(HTTP 402) challenge from any x402-compatible seller (Nansen, etc.) " +
-          "out of the agent wallet's Kamino vault yield. Subly realizes just " +
-          "enough yield to the agent's USDC ATA (sponsored) and pays the " +
-          "seller's Solana USDC `exact` challenge; the seller needs no Subly " +
+          "(HTTP 402) challenge from a seller that offers Solana USDC `exact` " +
+          "with `extra.feePayer` (Nansen, etc.) out of the agent wallet's " +
+          "Kamino vault yield. Subly realizes just enough yield to the agent's " +
+          "USDC ATA (sponsored) and pays the seller's challenge; the seller needs no Subly " +
           "integration. Returns the response body and, when a payment was " +
           "made, the payment details (amount, payee, realize tx). Challenges " +
           `above maxAmountRawUsdc (default ${defaultMaxAmountRawUsdc} raw = ${formatRawUsdcAmount(

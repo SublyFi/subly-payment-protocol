@@ -1,7 +1,8 @@
 /**
  * One-shot standard-x402 pay CLI for the published @subly_fi/pay package.
- * GET/POST any x402-compatible paid API, paying from the agent wallet's Kamino
- * vault yield via the Subly relayer. Payment uses the official @x402/svm client.
+ * GET/POST a compatible x402 paid API, paying from the agent wallet's Kamino
+ * vault yield via the Subly relayer. Payment uses the official @x402/svm client
+ * and currently requires a Solana USDC exact rail with facilitator feePayer.
  *
  * Usage:
  *   pay fetch <url> [maxAmountRawUsdc]

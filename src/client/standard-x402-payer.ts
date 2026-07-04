@@ -12,9 +12,9 @@ import {
 } from "../x402/standard-requirements.js";
 
 /**
- * Buyer-side payer for STANDARD x402 (v2) sellers — pays ANY x402-compatible
- * paid API (Nansen via PayAI, etc.) from Kamino vault yield, with no
- * Subly-specific integration on the seller side.
+ * Buyer-side payer for STANDARD x402 (v2) sellers — pays compatible Solana
+ * USDC `exact` APIs from Kamino vault yield, with no Subly-specific integration
+ * on the seller side.
  *
  * Flow per purchase:
  *   1. probe the URL unpaid -> read the 402 challenge

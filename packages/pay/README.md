@@ -5,6 +5,9 @@ Subly client for [x402](https://x402.org)-style HTTP payments funded by
 deposited USDC, and the principal is never spent. Non-custodial: it signs
 locally with your own Solana key; Subly never holds it.
 
+Current payments target standard x402 sellers that offer a Solana USDC `exact`
+rail with facilitator `extra.feePayer` support.
+
 Ships one `pay` dispatcher bin with subcommands, all runnable with `npx` (no clone):
 
 - `pay mcp` — an MCP server (Claude Code, Cursor, any MCP client) exposing

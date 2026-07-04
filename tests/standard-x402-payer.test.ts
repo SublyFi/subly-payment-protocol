@@ -165,6 +165,33 @@ describe("StandardX402Payer", () => {
     expect(x402Fetch).not.toHaveBeenCalled();
   });
 
+  it("refuses without realizing when the Solana requirement has no feePayer", async () => {
+    const realizer = okRealizer();
+    const x402Fetch = vi.fn<StandardX402FetchLike>(async () =>
+      resp({ status: 200 })
+    );
+    const missingFeePayer = challenge();
+    (missingFeePayer.accepts[1] as { extra?: unknown }).extra = {};
+    const payer = new StandardX402Payer({
+      realizer,
+      x402Fetch,
+      probeFetch: async () =>
+        resp({
+          status: 402,
+          headers: {
+            [PAYMENT_REQUIRED_HEADER]: encodeX402Header(missingFeePayer)
+          }
+        }),
+      defaultMaxAmountRawUsdc: 20_000n
+    });
+
+    await expect(payer.pay({ url: URL })).rejects.toMatchObject({
+      reason: "no_payable_requirement"
+    });
+    expect(realizer.ensureUsdcAvailable).not.toHaveBeenCalled();
+    expect(x402Fetch).not.toHaveBeenCalled();
+  });
+
   it("passes through a non-402 response without paying", async () => {
     const realizer = okRealizer();
     const probeFetch: FetchLike = async () =>

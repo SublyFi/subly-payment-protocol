@@ -27,6 +27,8 @@ import type { SpendingMandateService } from "../domain/spending-mandate-service.
 import {
   approvalDecisionSchema,
   chainSyncWalletPositionSchema,
+  completeSetupSessionSchema,
+  createSetupSessionSchema,
   liquidityPolicySchema,
   ownerSignedActionSchema,
   prepareDepositSchema,
@@ -41,6 +43,11 @@ import {
   syncWalletPositionSchema,
   verifyPaymentPayloadSchema
 } from "./schemas.js";
+import {
+  approvePageHtml,
+  revokePageHtml,
+  setupPageHtml
+} from "./owner-pages.js";
 
 export interface SponsorMonitoring {
   sponsorAddress: string;
@@ -728,6 +735,97 @@ export function buildServer(
       assertOwnWallet(request, body.wallet);
       return requireVaultFlows().reportPayment(body);
     }
+  );
+
+  // --------------------------------------------------------- setup sessions
+  //
+  // The AGENT creates a session under wallet-auth (its signature pins the
+  // chat-agreed policy + initial deposit) and pastes the returned capability
+  // URL into chat. The session endpoints themselves are public: the URL is
+  // the authorization, the human's device has no wallet-auth key, and the
+  // completion is authorized by the owner signature INSIDE the document.
+
+  server.post<{
+    Params: { wallet: string };
+  }>(
+    "/v1/wallets/:wallet/setup-sessions",
+    { preHandler: requireWalletOrAdminAuth },
+    async (request) => {
+      assertOwnWallet(request, request.params.wallet);
+      const body = createSetupSessionSchema.parse(request.body ?? {});
+      return requireMandates().createSetupSession({
+        wallet: request.params.wallet,
+        vault: SUBLY_VAULT.address,
+        ...(body.policy === undefined ? {} : { policy: body.policy }),
+        ...(body.enforcementMode === undefined
+          ? {}
+          : { enforcementMode: body.enforcementMode }),
+        ...(body.mandateTtlDays === undefined
+          ? {}
+          : { mandateTtlMs: body.mandateTtlDays * 24 * 60 * 60 * 1000 }),
+        ...(body.initialDepositRawUsdc === undefined
+          ? {}
+          : { initialDepositRawUsdc: body.initialDepositRawUsdc }),
+        agentAuth: {
+          wallet: headerValue(request, WALLET_AUTH_WALLET_HEADER) ?? null,
+          signedAt: headerValue(request, WALLET_AUTH_SIGNED_AT_HEADER) ?? null,
+          signature: headerValue(request, WALLET_AUTH_SIGNATURE_HEADER) ?? null,
+          admin: request.authedAsAdmin === true
+        }
+      });
+    }
+  );
+
+  server.get<{
+    Params: { sessionId: string };
+  }>("/v1/setup-sessions/:sessionId", async (request) =>
+    requireMandates().getSetupSession(request.params.sessionId)
+  );
+
+  server.post<{
+    Params: { sessionId: string };
+  }>("/v1/setup-sessions/:sessionId/complete", async (request) => {
+    const body = completeSetupSessionSchema.parse(request.body);
+    return requireMandates().completeSetupSession({
+      sessionId: request.params.sessionId,
+      document: body.document
+    });
+  });
+
+  // Public capability reads backing the owner pages: the approval id / the
+  // wallet address in the link is the authorization to see the summary.
+  server.get<{
+    Params: { approvalId: string };
+  }>("/v1/approvals/:approvalId", async (request) =>
+    requireMandates().getApprovalView(request.params.approvalId)
+  );
+
+  server.get<{
+    Params: { wallet: string };
+  }>("/v1/wallets/:wallet/mandate/summary", async (request) =>
+    requireMandates().getMandateSummary(request.params.wallet)
+  );
+
+  // ------------------------------------------------------------ owner pages
+  //
+  // Self-contained HTML (no external assets) served by the relayer itself.
+  // The pages read their ids from the URL path and talk to the same-origin
+  // /v1 API; signing happens on the owner's device (passkey or Phantom).
+
+  const servePage = (reply: FastifyReply, html: string) =>
+    reply
+      .header("content-type", "text/html; charset=utf-8")
+      .header("cache-control", "no-store")
+      .send(html);
+
+  server.get("/setup/:sessionId", async (_request, reply) =>
+    servePage(reply, setupPageHtml())
+  );
+  server.get("/approve/:approvalId", async (_request, reply) =>
+    servePage(reply, approvePageHtml())
+  );
+  server.get("/revoke/:wallet", async (_request, reply) =>
+    servePage(reply, revokePageHtml())
   );
 
   return server;

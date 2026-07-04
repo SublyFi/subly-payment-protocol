@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { canonicalJson } from "../lib/canonical-json.js";
 import { rawUnitsToString } from "../lib/raw-units.js";
 import {
   badRequest,
@@ -10,38 +11,48 @@ import {
 import type { Ledger } from "./ledger.js";
 import type {
   PaymentBindingWire,
+  SetupSession,
   SpendingApproval,
   SpendingMandateEventType,
-  SpendingMandateRecord,
-  WithdrawalIntent
+  SpendingMandateRecord
 } from "./models.js";
 import {
   approvalSigningMessage,
   assertFreshSignedAt,
   bindingHashOf,
   DEFAULT_RELAYER_POLICY,
+  defaultMandatePolicyWire,
   mandateSigningMessage,
   parseMandatePolicy,
   recoveryCancelSigningMessage,
   revokeSigningMessage,
   validateMandateDocument,
-  verifyEd25519Message,
+  verifyOwnerMessageSignature,
   type ApprovalBinding,
   type MandateEnforcementLevel,
+  type MandateEnforcementMode,
   type MandatePolicy,
+  type MandatePolicyWire,
   type SpendingMandateDocument
 } from "./spending-mandate.js";
+import type { WebAuthnOwnerConfig } from "./webauthn-owner.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const ROLLING_MONTH_MS = 30 * DAY_MS;
 const APPROVAL_TTL_MS = 15 * 60 * 1000;
 const RECOVERY_GRACE_MS = 72 * 60 * 60 * 1000;
+const SETUP_SESSION_TTL_MS = 10 * 60 * 1000;
+const DEFAULT_MANDATE_TTL_MS = 365 * DAY_MS;
 
 export interface SpendingMandateServiceConfig {
   /** SUBLY_MANDATE_ENFORCEMENT staged rollout: off | warn (default) | on. */
   enforcementLevel: MandateEnforcementLevel;
   /** Base for human approve links pasted into chat; approvalId is appended. */
   approveUrlBase: string;
+  /** Base for owner setup links pasted into chat; sessionId is appended. */
+  setupUrlBase: string;
+  /** Relying party + accepted origins for passkey (WebAuthn) owners. */
+  webauthn: WebAuthnOwnerConfig;
   /** Violation sink for warn mode (defaults to console.warn). */
   onWarn?: ((message: string, detail: unknown) => void) | undefined;
   /** Injectable clock for tests. */
@@ -50,7 +61,12 @@ export interface SpendingMandateServiceConfig {
 
 const DEFAULT_CONFIG: SpendingMandateServiceConfig = {
   enforcementLevel: "warn",
-  approveUrlBase: "https://app.subly.fi/approve/"
+  approveUrlBase: "https://app.subly.fi/approve/",
+  setupUrlBase: "https://app.subly.fi/setup/",
+  webauthn: {
+    rpId: "app.subly.fi",
+    origins: ["https://app.subly.fi"]
+  }
 };
 
 /** How a wallet's effective policy was resolved for one authorization. */
@@ -74,6 +90,8 @@ export interface RealizeAuthorization {
 export interface DepositAuthorization {
   policySource: string;
   mandateHash: string | null;
+  policyDecision: string;
+  approvalId: string | null;
 }
 
 /**
@@ -108,6 +126,14 @@ export class SpendingMandateService {
     wallet: string;
     vault: string;
     document: SpendingMandateDocument;
+    /**
+     * "setup_session" replaces the agentWalletSignature check with the
+     * session's wallet-auth provenance (completeSetupSession enforces the
+     * document matches the session prefill before getting here).
+     */
+    agentCosign?: "document" | "setup_session";
+    /** Extra audit context merged into the registration event. */
+    provenance?: unknown;
   }) {
     const nowMs = this.now();
     const { document } = input;
@@ -115,7 +141,9 @@ export class SpendingMandateService {
       document,
       wallet: input.wallet,
       vault: input.vault,
-      nowMs
+      nowMs,
+      webauthn: this.config.webauthn,
+      agentCosign: input.agentCosign ?? "document"
     });
 
     return this.ledger.withWalletVaultLock(input.wallet, input.vault, async () => {
@@ -144,7 +172,10 @@ export class SpendingMandateService {
           publicKey: document.ownerCredential.publicKey,
           ...(document.ownerCredential.credentialId === undefined
             ? {}
-            : { credentialId: document.ownerCredential.credentialId })
+            : { credentialId: document.ownerCredential.credentialId }),
+          ...(document.ownerCredential.algorithm === undefined
+            ? {}
+            : { algorithm: document.ownerCredential.algorithm })
         },
         enforcementMode: document.enforcementMode,
         issuedAtMs: document.issuedAtMs,
@@ -159,7 +190,9 @@ export class SpendingMandateService {
         input.wallet,
         isFirstRegistration ? "registered" : "replaced",
         validated.mandateHash,
-        document
+        input.provenance === undefined
+          ? document
+          : { document, provenance: input.provenance }
       );
 
       // The mandate's owner signature + agent co-sign double as the approval
@@ -469,6 +502,276 @@ export class SpendingMandateService {
     });
   }
 
+  // ---------------------------------------------------------- setup sessions
+
+  /**
+   * Creates the owner-onboarding capability link the agent pastes into chat
+   * (wallet-auth on the route = the agent key signs the exact prefill).
+   * Values agreed in chat are pinned here; the page is confirm-only.
+   */
+  async createSetupSession(input: {
+    wallet: string;
+    vault: string;
+    policy?:
+      | { [K in keyof MandatePolicyWire]?: MandatePolicyWire[K] | undefined }
+      | undefined;
+    enforcementMode?: MandateEnforcementMode | undefined;
+    mandateTtlMs?: number | undefined;
+    initialDepositRawUsdc?: string | undefined;
+    /** Wallet-auth headers of the creating request (audit provenance). */
+    agentAuth?: unknown;
+  }) {
+    const nowMs = this.now();
+    const overrides = Object.fromEntries(
+      Object.entries(input.policy ?? {}).filter(([, value]) => value !== undefined)
+    );
+    const policyWire: MandatePolicyWire = {
+      ...defaultMandatePolicyWire(),
+      ...overrides
+    };
+    // Same validation a mandate registration would apply (3-band invariant).
+    const policy = parseMandatePolicy(policyWire);
+
+    const initialDepositRawUsdc = input.initialDepositRawUsdc ?? null;
+    if (initialDepositRawUsdc !== null) {
+      const amount = BigInt(initialDepositRawUsdc);
+      if (
+        policy.dailyDepositCapRawUsdc !== null &&
+        amount > policy.dailyDepositCapRawUsdc
+      ) {
+        // The daily deposit cap is absolute — an initial deposit above it
+        // could never execute, so refuse at link creation, not at Face ID.
+        throw badRequest(
+          "initial_deposit_exceeds_daily_cap",
+          "initialDeposit cannot exceed dailyDepositCapRawUsdc",
+          {
+            initialDepositRawUsdc,
+            dailyDepositCapRawUsdc: policy.dailyDepositCapRawUsdc.toString()
+          }
+        );
+      }
+    }
+
+    const session: SetupSession = {
+      sessionId: `st_${randomUUID().replaceAll("-", "")}`,
+      wallet: input.wallet,
+      vault: input.vault,
+      policyWire,
+      enforcementMode: input.enforcementMode ?? "subly",
+      mandateExpiresAtMs: nowMs + (input.mandateTtlMs ?? DEFAULT_MANDATE_TTL_MS),
+      initialDepositRawUsdc,
+      status: "pending",
+      createdAtMs: nowMs,
+      expiresAtMs: nowMs + SETUP_SESSION_TTL_MS,
+      completedAtMs: null,
+      mandateHash: null,
+      initialDepositApprovalId: null,
+      agentAuth: input.agentAuth ?? null
+    };
+    await this.ledger.saveSetupSession(session);
+
+    return {
+      sessionId: session.sessionId,
+      setupUrl: appendToUrlBase(this.config.setupUrlBase, session.sessionId),
+      expiresAtMs: session.expiresAtMs,
+      wallet: session.wallet,
+      vault: session.vault,
+      policy: policyWire,
+      enforcementMode: session.enforcementMode,
+      mandateExpiresAtMs: session.mandateExpiresAtMs,
+      initialDepositRawUsdc
+    };
+  }
+
+  /**
+   * Public view for the setup page AND the agent's completion poll. The URL
+   * is a capability: reloading before completion is fine, and after
+   * completion only the outcome summary (incl. the initial-deposit approval)
+   * is returned — never the signable prefill again.
+   */
+  async getSetupSession(sessionId: string) {
+    const session = await this.ledger.getSetupSession(sessionId);
+    if (session === null) {
+      throw notFound("setup_session_not_found", "Setup session does not exist");
+    }
+    const nowMs = this.now();
+
+    if (session.status === "completed") {
+      let initialDepositApproval: {
+        approvalId: string;
+        expiresAtMs: number;
+        status: string;
+      } | null = null;
+      if (session.initialDepositApprovalId !== null) {
+        const approval = await this.ledger.getSpendingApproval(
+          session.initialDepositApprovalId
+        );
+        if (approval !== null) {
+          const viewed = expiredView(approval, nowMs);
+          initialDepositApproval = {
+            approvalId: viewed.approvalId,
+            expiresAtMs: viewed.expiresAtMs,
+            status: viewed.status
+          };
+        }
+      }
+      return {
+        sessionId: session.sessionId,
+        status: "completed" as const,
+        wallet: session.wallet,
+        mandateHash: session.mandateHash,
+        completedAtMs: session.completedAtMs,
+        initialDepositApproval
+      };
+    }
+
+    if (session.expiresAtMs <= nowMs) {
+      return {
+        sessionId: session.sessionId,
+        status: "expired" as const,
+        wallet: session.wallet
+      };
+    }
+
+    // A live/revoked mandate can only be replaced by its CURRENT owner
+    // credential; the page uses this to explain (and disable the passkey
+    // path) BEFORE the human signs anything that would be refused.
+    const existing = await this.ledger.getSpendingMandate(session.wallet);
+    return {
+      sessionId: session.sessionId,
+      status: "pending" as const,
+      wallet: session.wallet,
+      vault: session.vault,
+      policy: session.policyWire as MandatePolicyWire,
+      enforcementMode: session.enforcementMode,
+      mandateExpiresAtMs: session.mandateExpiresAtMs,
+      initialDepositRawUsdc: session.initialDepositRawUsdc,
+      expiresAtMs: session.expiresAtMs,
+      webauthn: { rpId: this.config.webauthn.rpId },
+      existingMandate:
+        existing === null
+          ? null
+          : {
+              status: this.effectiveStatus(existing, nowMs),
+              ownerAuth: existing.ownerAuth
+            }
+    };
+  }
+
+  /**
+   * Owner submits the signed mandate from the setup page. Single-use: the
+   * first successful completion wins the session. The document must equal
+   * the session prefill (confirm-only) because the session's wallet-auth is
+   * what stands in for the agent mandate co-sign.
+   */
+  async completeSetupSession(input: {
+    sessionId: string;
+    document: SpendingMandateDocument;
+  }) {
+    // Keyed lock so two racing completes cannot both pass the pending check;
+    // the generic seller-request lock doubles as a namespaced mutex here.
+    return this.ledger.withSellerRequestLock(
+      "setup_session",
+      input.sessionId,
+      async () => {
+        const session = await this.ledger.getSetupSession(input.sessionId);
+        if (session === null) {
+          throw notFound("setup_session_not_found", "Setup session does not exist");
+        }
+        const nowMs = this.now();
+        if (session.status === "completed") {
+          throw conflict(
+            "setup_session_used",
+            "this setup link was already completed; ask the agent for a new one"
+          );
+        }
+        if (session.expiresAtMs <= nowMs) {
+          throw conflict(
+            "setup_session_expired",
+            "this setup link has expired (10 min TTL); ask the agent for a new one"
+          );
+        }
+
+        this.assertDocumentMatchesSession(input.document, session);
+
+        const registered = await this.registerMandate({
+          wallet: session.wallet,
+          vault: session.vault,
+          document: input.document,
+          agentCosign: "setup_session",
+          provenance: {
+            via: "setup_session",
+            sessionId: session.sessionId,
+            agentAuth: session.agentAuth
+          }
+        });
+
+        await this.ledger.saveSetupSession({
+          ...session,
+          status: "completed",
+          completedAtMs: nowMs,
+          mandateHash: registered.mandateHash,
+          initialDepositApprovalId:
+            registered.initialDepositApproval?.approvalId ?? null
+        });
+
+        return {
+          sessionId: session.sessionId,
+          wallet: session.wallet,
+          mandateHash: registered.mandateHash,
+          status: registered.status,
+          expiresAtMs: registered.expiresAtMs,
+          initialDepositApproval: registered.initialDepositApproval
+        };
+      }
+    );
+  }
+
+  /** Public capability view for the approve page (link = authorization to see). */
+  async getApprovalView(approvalId: string) {
+    const approval = await this.ledger.getSpendingApproval(approvalId);
+    if (approval === null) {
+      throw notFound("approval_not_found", "Approval does not exist");
+    }
+    const record = await this.ledger.getSpendingMandate(approval.wallet);
+    const viewed = expiredView(approval, this.now());
+    return {
+      approvalId: viewed.approvalId,
+      wallet: viewed.wallet,
+      binding: viewed.bindingJson,
+      bindingHash: viewed.bindingHash,
+      mandateHash: viewed.mandateHash,
+      status: viewed.status,
+      requestedAtMs: viewed.requestedAtMs,
+      expiresAtMs: viewed.expiresAtMs,
+      decidedAtMs: viewed.decidedAtMs,
+      owner:
+        record === null
+          ? null
+          : {
+              ownerAuth: record.ownerAuth,
+              credentialId: record.ownerCredential.credentialId ?? null
+            }
+    };
+  }
+
+  /**
+   * Public summary for the revoke (kill switch) page: just enough to build
+   * and sign the revoke message. No policy contents are exposed.
+   */
+  async getMandateSummary(wallet: string) {
+    const record = await this.requireMandate(wallet);
+    return {
+      wallet: record.wallet,
+      mandateHash: record.mandateHash,
+      status: this.effectiveStatus(record, this.now()),
+      ownerAuth: record.ownerAuth,
+      credentialId: record.ownerCredential.credentialId ?? null,
+      expiresAtMs: record.expiresAtMs,
+      recoveryAtMs: record.recoveryAtMs
+    };
+  }
+
   // ------------------------------------------------------------ enforcement
 
   /**
@@ -644,15 +947,28 @@ export class SpendingMandateService {
     return decided();
   }
 
-  /** Daily-deposit-cap gate (Phase 1; depositPolicy approval lands with the
-   *  web approve page in Phase 2). Revoked mandates block deposits too. */
+  /**
+   * Deposit gate: kill switch, rolling daily deposit cap (an absolute
+   * ceiling — approval never lifts it), and the depositPolicy owner-approval
+   * requirement. Principal enters DeFi risk only after a human Face ID:
+   * with no registered owner there is nobody who could approve, so deposits
+   * are refused outright (`mandate_required_for_deposit`) and setup becomes
+   * the de-facto prerequisite. The first deposit rides the approval issued
+   * with the mandate's initialDeposit.
+   */
   async authorizeDeposit(input: {
     wallet: string;
     vault: string;
     amountRawUsdc: bigint;
+    approvalId: string | null;
   }): Promise<DepositAuthorization> {
     if (this.config.enforcementLevel === "off") {
-      return { policySource: "default", mandateHash: null };
+      return {
+        policySource: "default",
+        mandateHash: null,
+        policyDecision: "unenforced",
+        approvalId: null
+      };
     }
 
     const nowMs = this.now();
@@ -665,6 +981,15 @@ export class SpendingMandateService {
       );
     }
 
+    let warnedCode: string | null = null;
+    const decided = (): DepositAuthorization => ({
+      policySource: effective.policySource,
+      mandateHash: effective.mandate?.mandateHash ?? null,
+      policyDecision:
+        warnedCode === null ? "auto_within_policy" : `warned:${warnedCode}`,
+      approvalId: null
+    });
+
     if (effective.policy.dailyDepositCapRawUsdc !== null) {
       const deposited = await this.confirmedDepositSum(
         input.wallet,
@@ -672,7 +997,7 @@ export class SpendingMandateService {
         nowMs - DAY_MS
       );
       if (deposited + input.amountRawUsdc > effective.policy.dailyDepositCapRawUsdc) {
-        this.violation(
+        warnedCode ??= this.violation(
           conflict(
             "daily_deposit_cap_exceeded",
             "the rolling 24h deposit cap is exhausted; it is an absolute ceiling",
@@ -687,10 +1012,130 @@ export class SpendingMandateService {
       }
     }
 
-    return {
+    if (effective.policy.depositPolicy === "owner_approval_required") {
+      if (!effective.ownerAvailable) {
+        warnedCode ??= this.violation(
+          conflict(
+            "mandate_required_for_deposit",
+            "deposits move principal into DeFi risk and require owner (Face ID) " +
+              "approval; register a spending mandate first — its initialDeposit " +
+              "covers the first deposit with the same single approval",
+            { amountRawUsdc: input.amountRawUsdc.toString() }
+          )
+        );
+        return decided();
+      }
+      if (this.config.enforcementLevel === "on") {
+        const approval = await this.requireOperationApproval({
+          wallet: input.wallet,
+          vault: input.vault,
+          mandateHash: effective.mandate!.mandateHash,
+          binding: {
+            kind: "deposit",
+            amountRawUsdc: input.amountRawUsdc.toString()
+          },
+          requiredCode: "deposit_approval_required",
+          requiredMessage:
+            "deposits require the owner's approval (Face ID); after the " +
+            "owner approves (approveUrl), retry the same deposit with the approvalId",
+          approvalId: input.approvalId,
+          nowMs
+        });
+        return {
+          ...decided(),
+          policyDecision: `owner_approved:${approval.approvalId}`,
+          approvalId: approval.approvalId
+        };
+      }
+      warnedCode ??= "deposit_approval_required";
+      this.warn("deposit_approval_required would fire for this deposit", {
+        wallet: input.wallet,
+        amountRawUsdc: input.amountRawUsdc.toString()
+      });
+    }
+
+    return decided();
+  }
+
+  /**
+   * Normal-withdrawal gate (NOT yield_realize — that runs authorizeRealize).
+   * Withdrawals exit DeFi risk back to the agent's own wallet, so they are
+   * agent-allowed by default; a mandate's `withdrawalPolicy:
+   * "owner_approval_required"` opts into the same escalation as deposits
+   * (binding `{kind: "withdrawal", amountRawUsdc}`). The kill switch blocks
+   * withdrawals too — once the owner distrusts the agent key, letting it
+   * pull the principal out would defeat the revocation; the same owner can
+   * re-register to unblock.
+   */
+  async authorizeWithdrawal(input: {
+    wallet: string;
+    vault: string;
+    amountRawUsdc: bigint;
+    approvalId: string | null;
+  }): Promise<DepositAuthorization> {
+    if (this.config.enforcementLevel === "off") {
+      return {
+        policySource: "default",
+        mandateHash: null,
+        policyDecision: "unenforced",
+        approvalId: null
+      };
+    }
+
+    const nowMs = this.now();
+    const effective = await this.resolvePolicy(input.wallet, nowMs);
+    // Kill switch — enforced even in "warn" (see authorizeRealize).
+    if (effective.revoked) {
+      throw conflict(
+        "mandate_revoked",
+        "the spending mandate was revoked by the owner; withdrawals are blocked " +
+          "until the same owner registers a new mandate"
+      );
+    }
+
+    let warnedCode: string | null = null;
+    const decided = (): DepositAuthorization => ({
       policySource: effective.policySource,
-      mandateHash: effective.mandate?.mandateHash ?? null
-    };
+      mandateHash: effective.mandate?.mandateHash ?? null,
+      policyDecision:
+        warnedCode === null ? "auto_within_policy" : `warned:${warnedCode}`,
+      approvalId: null
+    });
+
+    // Only a mandate can set this (the relayer default is agent_allowed),
+    // so an owner credential to approve with always exists here.
+    if (effective.policy.withdrawalPolicy === "owner_approval_required") {
+      if (this.config.enforcementLevel === "on") {
+        const approval = await this.requireOperationApproval({
+          wallet: input.wallet,
+          vault: input.vault,
+          mandateHash: effective.mandate!.mandateHash,
+          binding: {
+            kind: "withdrawal",
+            amountRawUsdc: input.amountRawUsdc.toString()
+          },
+          requiredCode: "withdrawal_approval_required",
+          requiredMessage:
+            "this mandate requires the owner's approval for withdrawals; " +
+            "after the owner approves (approveUrl), retry the same withdrawal " +
+            "with the approvalId",
+          approvalId: input.approvalId,
+          nowMs
+        });
+        return {
+          ...decided(),
+          policyDecision: `owner_approved:${approval.approvalId}`,
+          approvalId: approval.approvalId
+        };
+      }
+      warnedCode = "withdrawal_approval_required";
+      this.warn("withdrawal_approval_required would fire for this withdrawal", {
+        wallet: input.wallet,
+        amountRawUsdc: input.amountRawUsdc.toString()
+      });
+    }
+
+    return decided();
   }
 
   // ----------------------------------------------------------- spending log
@@ -736,14 +1181,44 @@ export class SpendingMandateService {
     approvalId: string | null;
     nowMs: number;
   }): Promise<SpendingApproval> {
-    const binding: ApprovalBinding = {
-      kind: "payment",
-      payTo: input.payment.payTo,
-      amountRawUsdc: input.payment.amountRawUsdc,
-      resourceUrlHash: input.payment.resourceUrlHash,
-      method: input.payment.method
-    };
-    const bindingHash = bindingHashOf(binding);
+    return this.requireOperationApproval({
+      wallet: input.wallet,
+      vault: input.vault,
+      mandateHash: input.mandateHash,
+      binding: {
+        kind: "payment",
+        payTo: input.payment.payTo,
+        amountRawUsdc: input.payment.amountRawUsdc,
+        resourceUrlHash: input.payment.resourceUrlHash,
+        method: input.payment.method
+      },
+      requiredCode: "approval_required",
+      requiredMessage:
+        "this payment exceeds the owner's approval threshold; after the " +
+        "owner approves (approveUrl), retry the same call with the approvalId",
+      approvalId: input.approvalId,
+      nowMs: input.nowMs
+    });
+  }
+
+  /**
+   * Shared escalation for payment and deposit bindings: a provided approval
+   * is honored when approved + binding-bound + unexpired + not already
+   * driving an in-flight intent; otherwise a pending approval is surfaced
+   * (or reused) and the operation is refused with `requiredCode`. Nothing
+   * has been prepared at that point, so the same call retries safely.
+   */
+  private async requireOperationApproval(input: {
+    wallet: string;
+    vault: string;
+    mandateHash: string;
+    binding: ApprovalBinding;
+    requiredCode: string;
+    requiredMessage: string;
+    approvalId: string | null;
+    nowMs: number;
+  }): Promise<SpendingApproval> {
+    const bindingHash = bindingHashOf(input.binding);
 
     if (input.approvalId !== null) {
       const provided = await this.ledger.getSpendingApproval(input.approvalId);
@@ -756,6 +1231,7 @@ export class SpendingMandateService {
             current.approvalId,
             input.wallet,
             input.vault,
+            input.binding.kind,
             input.nowMs
           ))
         ) {
@@ -764,9 +1240,6 @@ export class SpendingMandateService {
       }
     }
 
-    // Invalid/missing approval: surface (or reuse) a pending approval and
-    // refuse. Nothing has been realized, so the same call can be retried
-    // with the approvalId once the owner has signed.
     const pending = await this.findReusablePending(input.wallet, bindingHash, input.nowMs);
     const approval =
       pending ??
@@ -774,7 +1247,7 @@ export class SpendingMandateService {
         approvalId: newApprovalId(),
         wallet: input.wallet,
         bindingHash,
-        bindingJson: binding,
+        bindingJson: input.binding,
         mandateHash: input.mandateHash,
         status: "pending",
         decisionJson: null,
@@ -785,32 +1258,71 @@ export class SpendingMandateService {
         consumedByWithdrawalId: null
       }));
 
-    throw conflict(
-      "approval_required",
-      `この支払いは承認閾値を超えています。owner の承認後、同じ呼び出しを approvalId 付きで再試行してください。`,
-      {
-        approvalId: approval.approvalId,
-        expiresAtMs: approval.expiresAtMs,
-        approveUrl: this.approveUrl(approval.approvalId),
-        approveCommand: `subly-pay approve ${approval.approvalId}`
-      }
-    );
+    throw conflict(input.requiredCode, input.requiredMessage, {
+      approvalId: approval.approvalId,
+      expiresAtMs: approval.expiresAtMs,
+      approveUrl: this.approveUrl(approval.approvalId),
+      approveCommand: `subly-pay approve ${approval.approvalId}`
+    });
   }
 
   private approveUrl(approvalId: string): string {
-    const base = this.config.approveUrlBase;
-    return base.endsWith("/") ? `${base}${approvalId}` : `${base}/${approvalId}`;
+    return appendToUrlBase(this.config.approveUrlBase, approvalId);
   }
 
-  /** One in-flight realize per approval: binding-bound + TTL + this. */
+  /**
+   * Confirm-only guard: the mandate the owner signed must carry exactly the
+   * values the agent key pinned when creating the session. Only issuedAtMs
+   * (signing time) and the owner credential are the page's to choose.
+   */
+  private assertDocumentMatchesSession(
+    document: SpendingMandateDocument,
+    session: SetupSession
+  ): void {
+    const sessionPolicy = session.policyWire as MandatePolicyWire;
+    const mismatches: string[] = [];
+    if (document.agentWallet !== session.wallet) {
+      mismatches.push("agentWallet");
+    }
+    if (document.vault !== session.vault) {
+      mismatches.push("vault");
+    }
+    if (document.enforcementMode !== session.enforcementMode) {
+      mismatches.push("enforcementMode");
+    }
+    if (document.expiresAtMs !== session.mandateExpiresAtMs) {
+      mismatches.push("expiresAtMs");
+    }
+    if (canonicalJson(document.policy) !== canonicalJson(sessionPolicy)) {
+      mismatches.push("policy");
+    }
+    const documentInitial = document.initialDeposit?.amountRawUsdc ?? null;
+    if (documentInitial !== session.initialDepositRawUsdc) {
+      mismatches.push("initialDeposit");
+    }
+    if (mismatches.length > 0) {
+      throw badRequest(
+        "setup_session_mismatch",
+        "the submitted mandate does not match the session prefill; setup is " +
+          "confirm-only — agree on new values in chat and create a new link",
+        { mismatches }
+      );
+    }
+  }
+
+  /** One in-flight realize/deposit per approval: binding-bound + TTL + this. */
   private async approvalInFlight(
     approvalId: string,
     wallet: string,
     vault: string,
+    kind: ApprovalBinding["kind"],
     nowMs: number
   ): Promise<boolean> {
-    const withdrawals = await this.ledger.listWithdrawalsForPosition(wallet, vault);
-    return withdrawals.some(
+    const intents =
+      kind === "deposit"
+        ? await this.ledger.listDepositsForPosition(wallet, vault)
+        : await this.ledger.listWithdrawalsForPosition(wallet, vault);
+    return intents.some(
       (intent) =>
         intent.approvalId === approvalId &&
         (intent.status === "submitted" ||
@@ -1000,10 +1512,12 @@ export class SpendingMandateService {
     // the human out from under the delegation.
     if (
       document.currentOwnerSignature === undefined ||
-      !verifyEd25519Message({
+      !verifyOwnerMessageSignature({
+        ownerAuth: existing.ownerAuth,
+        credential: existing.ownerCredential,
         message: mandateSigningMessage(newMandateHash),
-        signatureBase58: document.currentOwnerSignature,
-        publicKeyBase58: existing.ownerCredential.publicKey
+        signature: document.currentOwnerSignature,
+        webauthn: this.config.webauthn
       })
     ) {
       throw forbidden(
@@ -1017,17 +1531,13 @@ export class SpendingMandateService {
     record: SpendingMandateRecord,
     input: { message: string; signature: string; code: string }
   ): void {
-    if (record.ownerAuth !== "ed25519") {
-      throw badRequest(
-        "owner_auth_unsupported",
-        "passkey owner verification is not yet supported"
-      );
-    }
     if (
-      !verifyEd25519Message({
+      !verifyOwnerMessageSignature({
+        ownerAuth: record.ownerAuth,
+        credential: record.ownerCredential,
         message: input.message,
-        signatureBase58: input.signature,
-        publicKeyBase58: record.ownerCredential.publicKey
+        signature: input.signature,
+        webauthn: this.config.webauthn
       })
     ) {
       throw forbidden(
@@ -1096,12 +1606,16 @@ function newApprovalId(): string {
   return `apr_${randomUUID().replaceAll("-", "")}`;
 }
 
+function appendToUrlBase(base: string, id: string): string {
+  return base.endsWith("/") ? `${base}${id}` : `${base}/${id}`;
+}
+
 function terminalMs(intent: { terminalAt: string | null }): number {
   const parsed = intent.terminalAt === null ? NaN : new Date(intent.terminalAt).getTime();
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function intentExpired(intent: WithdrawalIntent, nowMs: number): boolean {
+function intentExpired(intent: { expiresAt: string }, nowMs: number): boolean {
   const expiresAtMs = new Date(intent.expiresAt).getTime();
   return !Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs;
 }

@@ -6,9 +6,15 @@ import { revokeSigningMessage } from "../src/domain/spending-mandate.js";
 import {
   AGENT_PUB,
   buildDocument,
+  createTestPasskey,
   OWNER,
   sign
 } from "./helpers/mandate-fixtures.js";
+import {
+  mandateHashOf,
+  mandateSigningMessage,
+  type SpendingMandatePayload
+} from "../src/domain/spending-mandate.js";
 
 const ADMIN = "admin-secret";
 
@@ -165,6 +171,144 @@ describe("mandate API", () => {
     });
     expect(response.statusCode).toBe(404);
     expect(response.json().error.code).toBe("mandate_not_found");
+    await server.close();
+  });
+});
+
+describe("setup-session API and owner pages", () => {
+  it("runs the whole web onboarding over HTTP: authed create, public confirm-only complete", async () => {
+    const { server } = buildMandateServer();
+    const passkey = createTestPasskey();
+
+    // Creating the link is an AGENT action: unauthenticated calls bounce.
+    const unauthed = await server.inject({
+      method: "POST",
+      url: `/v1/wallets/${AGENT_PUB}/setup-sessions`,
+      payload: { initialDepositRawUsdc: "500000000" }
+    });
+    expect(unauthed.statusCode).toBe(401);
+
+    const created = await server.inject({
+      method: "POST",
+      url: `/v1/wallets/${AGENT_PUB}/setup-sessions`,
+      headers: adminHeaders,
+      payload: { initialDepositRawUsdc: "500000000" }
+    });
+    expect(created.statusCode).toBe(200);
+    const session = created.json() as {
+      sessionId: string;
+      setupUrl: string;
+    };
+    expect(session.setupUrl).toContain(session.sessionId);
+
+    // The capability URL itself is the read authorization (owner's phone).
+    const view = await server.inject({
+      method: "GET",
+      url: `/v1/setup-sessions/${session.sessionId}`
+    });
+    expect(view.statusCode).toBe(200);
+    const pending = view.json() as {
+      status: string;
+      wallet: string;
+      vault: string;
+      policy: SpendingMandatePayload["policy"];
+      enforcementMode: "subly" | "wallet_infra";
+      mandateExpiresAtMs: number;
+      initialDepositRawUsdc: string;
+      webauthn: { rpId: string };
+    };
+    expect(pending.status).toBe("pending");
+    expect(pending.webauthn.rpId).toBe("app.subly.fi");
+
+    // Sign exactly what the page signs (no agent co-sign in the document).
+    const payload: SpendingMandatePayload = {
+      version: 1,
+      ownerAuth: "passkey",
+      ownerCredential: passkey.credential,
+      enforcementMode: pending.enforcementMode,
+      agentWallet: pending.wallet,
+      vault: pending.vault,
+      issuedAtMs: Date.now(),
+      expiresAtMs: pending.mandateExpiresAtMs,
+      policy: pending.policy,
+      initialDeposit: { amountRawUsdc: pending.initialDepositRawUsdc }
+    };
+    const message = mandateSigningMessage(mandateHashOf(payload));
+    const completed = await server.inject({
+      method: "POST",
+      url: `/v1/setup-sessions/${session.sessionId}/complete`,
+      payload: {
+        document: { ...payload, ownerSignature: passkey.signAssertion(message) }
+      }
+    });
+    expect(completed.statusCode).toBe(200);
+    const outcome = completed.json() as {
+      status: string;
+      mandateHash: string;
+      initialDepositApproval: { approvalId: string } | null;
+    };
+    expect(outcome.status).toBe("active");
+    expect(outcome.initialDepositApproval).not.toBeNull();
+
+    // The agent's poll sees the completion and the pre-approved deposit.
+    const after = await server.inject({
+      method: "GET",
+      url: `/v1/setup-sessions/${session.sessionId}`
+    });
+    expect(after.json()).toMatchObject({
+      status: "completed",
+      mandateHash: outcome.mandateHash
+    });
+
+    // Single-use.
+    const again = await server.inject({
+      method: "POST",
+      url: `/v1/setup-sessions/${session.sessionId}/complete`,
+      payload: {
+        document: { ...payload, ownerSignature: passkey.signAssertion(message) }
+      }
+    });
+    expect(again.statusCode).toBe(409);
+    expect(again.json().error.code).toBe("setup_session_used");
+
+    // Public revoke-page summary exposes only signing essentials.
+    const summary = await server.inject({
+      method: "GET",
+      url: `/v1/wallets/${AGENT_PUB}/mandate/summary`
+    });
+    expect(summary.statusCode).toBe(200);
+    expect(summary.json()).toMatchObject({
+      mandateHash: outcome.mandateHash,
+      ownerAuth: "passkey",
+      credentialId: passkey.credential.credentialId
+    });
+    expect(summary.json().mandate).toBeUndefined();
+    await server.close();
+  });
+
+  it("serves the approval capability view and the owner pages", async () => {
+    const { server } = buildMandateServer();
+
+    const missing = await server.inject({
+      method: "GET",
+      url: "/v1/approvals/apr_nonexistent"
+    });
+    expect(missing.statusCode).toBe(404);
+
+    for (const path of [
+      "/setup/st_test",
+      "/approve/apr_test",
+      `/revoke/${AGENT_PUB}`
+    ]) {
+      const page = await server.inject({ method: "GET", url: path });
+      expect(page.statusCode).toBe(200);
+      expect(page.headers["content-type"]).toContain("text/html");
+      expect(page.body).toContain("<!doctype html>");
+      // Self-contained: nothing loads from external hosts, and the CSP
+      // forbids external scripts/exfil even if markup ever slipped through.
+      expect(page.body).not.toMatch(/src="http|href="http/);
+      expect(page.body).toContain("Content-Security-Policy");
+    }
     await server.close();
   });
 });

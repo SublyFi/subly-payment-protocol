@@ -11,9 +11,14 @@ rail with facilitator `extra.feePayer` support.
 Ships one `pay` dispatcher bin with subcommands, all runnable with `npx` (no clone):
 
 - `pay mcp` — an MCP server (Claude Code, Cursor, any MCP client) exposing
-  the full lifecycle as tools: `deposit_to_subly_vault`,
+  the full lifecycle as tools: `create_subly_setup_link` /
+  `check_subly_setup` (owner onboarding: the human approves the spending
+  mandate + first deposit with one Face ID), `deposit_to_subly_vault`,
   `get_subly_yield_budget`, `fetch_with_subly_payment`,
-  `withdraw_from_subly_vault`
+  `withdraw_from_subly_vault`. Payments above the owner's approval
+  threshold, deposits, and (when the mandate opts in) withdrawals return an
+  `approveUrl` to paste into chat; retry with the `approvalId` once the
+  human approved.
 - `pay fetch <url>` — one-shot: pay for a URL, print the receipt (used by the
   OpenClaw skill)
 - `pay deposit <amountRawUsdc>` / `pay withdraw <amountRawUsdc>` — vault

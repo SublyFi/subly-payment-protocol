@@ -182,15 +182,44 @@ function buildMandateService(
   env: NodeJS.ProcessEnv,
   logger?: FastifyBaseLogger
 ): SpendingMandateService {
+  const approveUrlBase =
+    env.SUBLY_APPROVE_URL_BASE ?? "https://app.subly.fi/approve/";
+  const setupUrlBase = env.SUBLY_SETUP_URL_BASE ?? "https://app.subly.fi/setup/";
+  // Passkey assertions verify against the host serving the owner pages. By
+  // default both are derived from the page URL bases; override for split
+  // deployments (SUBLY_WEBAUTHN_RP_ID / SUBLY_WEBAUTHN_ORIGINS, comma-sep).
+  const derivedOrigins = [
+    ...new Set(
+      [setupUrlBase, approveUrlBase].flatMap((base) => {
+        try {
+          return [new URL(base).origin];
+        } catch {
+          return [];
+        }
+      })
+    )
+  ];
+  const rpId =
+    env.SUBLY_WEBAUTHN_RP_ID ??
+    (derivedOrigins.length > 0 ? new URL(derivedOrigins[0]!).hostname : "app.subly.fi");
+  const origins =
+    env.SUBLY_WEBAUTHN_ORIGINS === undefined
+      ? derivedOrigins.length > 0
+        ? derivedOrigins
+        : ["https://app.subly.fi"]
+      : env.SUBLY_WEBAUTHN_ORIGINS.split(",")
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0);
+
   return new SpendingMandateService({
     ledger,
     config: {
       enforcementLevel: parseMandateEnforcementLevel(
         env.SUBLY_MANDATE_ENFORCEMENT
       ),
-      ...(env.SUBLY_APPROVE_URL_BASE === undefined
-        ? {}
-        : { approveUrlBase: env.SUBLY_APPROVE_URL_BASE }),
+      approveUrlBase,
+      setupUrlBase,
+      webauthn: { rpId, origins },
       ...(logger === undefined
         ? {}
         : {

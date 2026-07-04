@@ -43,6 +43,107 @@ function buildClient(fetchImpl: typeof fetch) {
 }
 
 describe("VaultFlowClient", () => {
+  it("auto-resolves an approved deposit approval (initialDeposit) and retries", async () => {
+    const prepareBodies: unknown[] = [];
+    const fetchImpl = vi.fn(
+      async (url: string | URL | Request, init?: RequestInit) => {
+        const u = String(url);
+        if (u.endsWith("/v1/deposits/prepare")) {
+          const body =
+            typeof init?.body === "string" ? JSON.parse(init.body) : {};
+          prepareBodies.push(body);
+          if (body.approvalId === undefined) {
+            return jsonResponse(409, {
+              success: false,
+              error: {
+                code: "deposit_approval_required",
+                message: "owner approval required",
+                details: {
+                  approvalId: "apr_pending",
+                  approveUrl: "https://app.subly.fi/approve/apr_pending"
+                }
+              }
+            });
+          }
+          return jsonResponse(200, {
+            depositId: "dep_2",
+            serializedTransaction: "preparedTxB64",
+            signingIntent: { wallet: WALLET }
+          });
+        }
+        if (u.includes("/approvals")) {
+          return jsonResponse(200, {
+            approvals: [
+              {
+                approvalId: "apr_initial",
+                wallet: WALLET,
+                binding: { kind: "deposit", amountRawUsdc: "500000000" },
+                bindingHash: "hash",
+                status: "approved",
+                requestedAtMs: 1,
+                expiresAtMs: 2
+              }
+            ]
+          });
+        }
+        if (u.endsWith("/v1/deposits/submit")) {
+          return jsonResponse(200, {
+            status: "confirmed",
+            txSignature: "depositSig2",
+            actualDepositRawUsdc: "500000000",
+            sharesMintedRaw: "999",
+            errorCode: null
+          });
+        }
+        throw new Error(`unexpected url ${u}`);
+      }
+    );
+
+    const outcome = await buildClient(
+      fetchImpl as unknown as typeof fetch
+    ).deposit({ amountRawUsdc: 500_000_000n });
+    expect(outcome.status).toBe("confirmed");
+    expect(prepareBodies).toEqual([
+      { wallet: WALLET, amountRawUsdc: "500000000" },
+      { wallet: WALLET, amountRawUsdc: "500000000", approvalId: "apr_initial" }
+    ]);
+  });
+
+  it("surfaces deposit_approval_required with the approve link when nothing matches", async () => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.endsWith("/v1/deposits/prepare")) {
+        return jsonResponse(409, {
+          success: false,
+          error: {
+            code: "deposit_approval_required",
+            message: "owner approval required",
+            details: {
+              approvalId: "apr_pending",
+              approveUrl: "https://app.subly.fi/approve/apr_pending",
+              expiresAtMs: 99
+            }
+          }
+        });
+      }
+      if (u.includes("/approvals")) {
+        return jsonResponse(200, { approvals: [] });
+      }
+      throw new Error(`unexpected url ${u}`);
+    });
+
+    const error = await buildClient(fetchImpl as unknown as typeof fetch)
+      .deposit({ amountRawUsdc: 500_000_000n })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(VaultFlowClientError);
+    expect((error as VaultFlowClientError).code).toBe(
+      "deposit_approval_required"
+    );
+    expect((error as VaultFlowClientError).errorDetails).toMatchObject({
+      approveUrl: "https://app.subly.fi/approve/apr_pending"
+    });
+  });
+
   it("runs the sponsored deposit flow end to end", async () => {
     const calls: string[] = [];
     const fetchImpl = vi.fn(async (url: string | URL | Request) => {

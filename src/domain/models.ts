@@ -76,6 +76,13 @@ export interface DepositIntent {
   wallet: string;
   vault: string;
   amountRawUsdc: bigint;
+  /** Policy that authorized this deposit: "default" or "mandate:<hash>". */
+  policySource: string | null;
+  mandateHash: string | null;
+  /** "auto_within_policy" | "owner_approved:<approvalId>" | "warned:<code>" | "unenforced". */
+  policyDecision: string | null;
+  /** Owner approval that authorized this deposit (depositPolicy escalation). */
+  approvalId: string | null;
   preparedMessageHash: string;
   recentBlockhash: string | null;
   lastValidBlockHeight: number | null;
@@ -184,7 +191,12 @@ export interface SpendingMandateRecord {
   documentJson: unknown;
   mandateHash: string;
   ownerAuth: "ed25519" | "passkey";
-  ownerCredential: { publicKey: string; credentialId?: string | undefined };
+  ownerCredential: {
+    publicKey: string;
+    credentialId?: string | undefined;
+    /** COSE algorithm id; present only for passkey owners. */
+    algorithm?: number | undefined;
+  };
   enforcementMode: "subly" | "wallet_infra";
   issuedAtMs: number;
   expiresAtMs: number;
@@ -237,6 +249,35 @@ export interface SpendingApproval {
   decidedAtMs: number | null;
   consumedAtMs: number | null;
   consumedByWithdrawalId: string | null;
+}
+
+/**
+ * Owner-onboarding setup session (docs/spending-mandate-design.md, Phase 2):
+ * the agent creates it under wallet-auth with the chat-agreed policy and
+ * initial deposit, pastes the capability URL into chat, and the human
+ * completes it once on their own device. Values are confirm-only: complete
+ * must submit a mandate matching this prefill exactly, because the session's
+ * wallet-auth signature is what stands in for the agent mandate co-sign.
+ */
+export interface SetupSession {
+  sessionId: string;
+  wallet: string;
+  vault: string;
+  /** Prefilled policy in wire form (raw USDC strings). */
+  policyWire: unknown;
+  enforcementMode: "subly" | "wallet_infra";
+  /** expiresAtMs the completed mandate must carry. */
+  mandateExpiresAtMs: number;
+  initialDepositRawUsdc: string | null;
+  status: "pending" | "completed";
+  createdAtMs: number;
+  /** Session (link) TTL — 10 minutes. */
+  expiresAtMs: number;
+  completedAtMs: number | null;
+  mandateHash: string | null;
+  initialDepositApprovalId: string | null;
+  /** Wallet-auth provenance of the agent request that created the session. */
+  agentAuth: unknown;
 }
 
 export interface SellerLiquidityPolicy {

@@ -119,7 +119,12 @@ export class VaultFlowService {
     this.mandates = params.mandates ?? null;
   }
 
-  async prepareDeposit(input: { wallet: string; amountRawUsdc: string }) {
+  async prepareDeposit(input: {
+    wallet: string;
+    amountRawUsdc: string;
+    /** Owner approval for depositPolicy "owner_approval_required". */
+    approvalId?: string | undefined;
+  }) {
     const wallet = requireAddress(input.wallet, "wallet");
     const amountRawUsdc = parsePositiveRawUnits(
       input.amountRawUsdc,
@@ -132,10 +137,22 @@ export class VaultFlowService {
       await this.expireStaleFlows(wallet, vault);
       await this.assertNoPendingFlow(wallet, vault);
 
-      // Spending-mandate layer: rolling daily deposit cap (and kill switch)
-      // before any transaction is built.
+      // Spending-mandate layer: kill switch, rolling daily deposit cap, and
+      // the depositPolicy owner-approval gate — before any transaction is
+      // built, and the outcome is stamped on the intent for the audit log.
+      let mandateAuthorization = {
+        policySource: null as string | null,
+        mandateHash: null as string | null,
+        policyDecision: null as string | null,
+        approvalId: null as string | null
+      };
       if (this.mandates !== null) {
-        await this.mandates.authorizeDeposit({ wallet, vault, amountRawUsdc });
+        mandateAuthorization = await this.mandates.authorizeDeposit({
+          wallet,
+          vault,
+          amountRawUsdc,
+          approvalId: input.approvalId ?? null
+        });
       }
 
       const context = await this.adapter.loadContext();
@@ -207,6 +224,10 @@ export class VaultFlowService {
         wallet,
         vault,
         amountRawUsdc,
+        policySource: mandateAuthorization.policySource,
+        mandateHash: mandateAuthorization.mandateHash,
+        policyDecision: mandateAuthorization.policyDecision,
+        approvalId: mandateAuthorization.approvalId,
         preparedMessageHash: built.messageHash,
         recentBlockhash: context.blockhash,
         lastValidBlockHeight: Number(context.lastValidBlockHeight),
@@ -393,6 +414,15 @@ export class VaultFlowService {
           vault,
           amountRawUsdc,
           payment: input.payment ?? null,
+          approvalId: input.approvalId ?? null
+        });
+      } else if (this.mandates !== null) {
+        // Normal exit withdrawals: agent-allowed by default, but the kill
+        // switch and an opt-in withdrawalPolicy escalation apply.
+        mandateAuthorization = await this.mandates.authorizeWithdrawal({
+          wallet,
+          vault,
+          amountRawUsdc,
           approvalId: input.approvalId ?? null
         });
       }
@@ -859,7 +889,7 @@ export class VaultFlowService {
         slot: refreshed.observedSlot
       });
 
-      return this.ledger.saveDeposit({
+      const confirmed = await this.ledger.saveDeposit({
         ...latest,
         status: "confirmed",
         actualDepositRawUsdc,
@@ -867,6 +897,18 @@ export class VaultFlowService {
         principalBasisAfterRawUsdc: basisAfter,
         terminalAt: new Date().toISOString()
       });
+
+      // Deposit approvals are single-use, consumed only when the deposit
+      // lands on-chain (mirrors the realize path: failures may re-prepare
+      // within the approval TTL).
+      if (this.mandates !== null && confirmed.approvalId !== null) {
+        await this.mandates.consumeApproval(
+          confirmed.approvalId,
+          confirmed.depositId
+        );
+      }
+
+      return confirmed;
     });
   }
 
@@ -1382,6 +1424,10 @@ export function serializeDepositIntent(intent: DepositIntent) {
     wallet: intent.wallet,
     vault: intent.vault,
     amountRawUsdc: rawUnitsToString(intent.amountRawUsdc),
+    policySource: intent.policySource,
+    mandateHash: intent.mandateHash,
+    policyDecision: intent.policyDecision,
+    approvalId: intent.approvalId,
     preparedMessageHash: intent.preparedMessageHash,
     recentBlockhash: intent.recentBlockhash,
     lastValidBlockHeight: intent.lastValidBlockHeight,

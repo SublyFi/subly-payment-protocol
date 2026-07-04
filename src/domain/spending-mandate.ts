@@ -20,6 +20,11 @@ import nacl from "tweetnacl";
 import { canonicalJsonHash } from "../lib/canonical-json.js";
 import { parsePositiveRawUnits, parseRawUnits } from "../lib/raw-units.js";
 import { badRequest } from "./errors.js";
+import {
+  SUPPORTED_COSE_ALGORITHMS,
+  verifyWebAuthnOwnerAssertion,
+  type WebAuthnOwnerConfig
+} from "./webauthn-owner.js";
 
 export type OwnerAuth = "ed25519" | "passkey";
 export type MandateEnforcementMode = "subly" | "wallet_infra";
@@ -85,10 +90,12 @@ export const DEFAULT_RELAYER_POLICY: MandatePolicy = {
 };
 
 export interface MandateOwnerCredential {
-  /** base58 ed25519 pubkey, or base64url COSE key for passkey owners. */
+  /** base58 ed25519 pubkey, or base64url SPKI DER for passkey owners. */
   publicKey: string;
   /** WebAuthn credential id; present only for ownerAuth "passkey". */
   credentialId?: string | undefined;
+  /** COSE algorithm id of the passkey credential (-7 ES256 / -8 EdDSA / -257 RS256). */
+  algorithm?: number | undefined;
 }
 
 /** The signed payload — everything except the signatures themselves. */
@@ -106,10 +113,17 @@ export interface SpendingMandatePayload {
 }
 
 export interface SpendingMandateDocument extends SpendingMandatePayload {
-  /** Owner credential's signature over the mandate message. */
+  /**
+   * Owner credential's signature over the mandate message: base58 ed25519,
+   * or base64url(JSON WebAuthn assertion) for passkey owners.
+   */
   ownerSignature: string;
-  /** Agent wallet key's signature over the same mandate message (co-sign). */
-  agentWalletSignature: string;
+  /**
+   * Agent wallet key's signature over the same mandate message (co-sign).
+   * Absent only on the setup-session path, where the wallet-auth'd session
+   * creation stands in for it (see validateMandateDocument).
+   */
+  agentWalletSignature?: string | undefined;
   /**
    * Required only when replacing a mandate with a DIFFERENT owner credential
    * (credential rotation): the currently registered owner's signature over
@@ -142,7 +156,10 @@ export function mandatePayloadOf(
       publicKey: document.ownerCredential.publicKey,
       ...(document.ownerCredential.credentialId === undefined
         ? {}
-        : { credentialId: document.ownerCredential.credentialId })
+        : { credentialId: document.ownerCredential.credentialId }),
+      ...(document.ownerCredential.algorithm === undefined
+        ? {}
+        : { algorithm: document.ownerCredential.algorithm })
     },
     enforcementMode: document.enforcementMode,
     agentWallet: document.agentWallet,
@@ -228,6 +245,59 @@ export function verifyEd25519Message(input: {
     signature,
     publicKey
   );
+}
+
+/**
+ * One owner-signature check for both credential kinds: ed25519 detached
+ * message signatures and WebAuthn passkey assertions (which carry
+ * sha256(message) as their challenge). Used for every owner-signed action —
+ * mandate registration, replacement (currentOwnerSignature), revocation,
+ * recovery cancellation, and approval decisions.
+ */
+export function verifyOwnerMessageSignature(input: {
+  ownerAuth: OwnerAuth;
+  credential: MandateOwnerCredential;
+  message: string;
+  signature: string;
+  webauthn: WebAuthnOwnerConfig;
+}): boolean {
+  if (input.ownerAuth === "passkey") {
+    return verifyWebAuthnOwnerAssertion({
+      message: input.message,
+      signature: input.signature,
+      credential: input.credential,
+      config: input.webauthn
+    });
+  }
+  return verifyEd25519Message({
+    message: input.message,
+    signatureBase58: input.signature,
+    publicKeyBase58: input.credential.publicKey
+  });
+}
+
+/** DEFAULT_RELAYER_POLICY in wire form (setup-session prefill). */
+export function defaultMandatePolicyWire(): MandatePolicyWire {
+  const p = DEFAULT_RELAYER_POLICY;
+  return {
+    perPaymentCapRawUsdc: p.perPaymentCapRawUsdc.toString(),
+    dailyApiSpendCapRawUsdc:
+      p.dailyApiSpendCapRawUsdc === null ? null : p.dailyApiSpendCapRawUsdc.toString(),
+    monthlyApiSpendCapRawUsdc:
+      p.monthlyApiSpendCapRawUsdc === null
+        ? null
+        : p.monthlyApiSpendCapRawUsdc.toString(),
+    dailyDepositCapRawUsdc:
+      p.dailyDepositCapRawUsdc === null ? null : p.dailyDepositCapRawUsdc.toString(),
+    approvalThresholdRawUsdc:
+      p.approvalThresholdRawUsdc === null
+        ? null
+        : p.approvalThresholdRawUsdc.toString(),
+    allowedPayToAddresses:
+      p.allowedPayToAddresses === null ? null : [...p.allowedPayToAddresses],
+    depositPolicy: p.depositPolicy,
+    withdrawalPolicy: p.withdrawalPolicy
+  };
 }
 
 export function parseMandatePolicy(wire: MandatePolicyWire): MandatePolicy {
@@ -316,12 +386,20 @@ export interface ValidatedMandate {
  * Structural + cryptographic validation of a submitted mandate document.
  * Replace-time rules (issuedAtMs monotonicity, owner rotation) need the
  * existing record and live in the service.
+ *
+ * `agentCosign: "setup_session"` skips the agentWalletSignature check: the
+ * owner credential is created ON the setup page, so the agent cannot have
+ * pre-signed the mandate hash. There the agent's consent is the wallet-auth
+ * signature over the setup-session request that pinned these exact values,
+ * and the service enforces document == session prefill before calling this.
  */
 export function validateMandateDocument(input: {
   document: SpendingMandateDocument;
   wallet: string;
   vault: string;
   nowMs: number;
+  webauthn: WebAuthnOwnerConfig;
+  agentCosign?: "document" | "setup_session" | undefined;
 }): ValidatedMandate {
   const { document, wallet, vault, nowMs } = input;
 
@@ -338,13 +416,17 @@ export function validateMandateDocument(input: {
     );
   }
   if (document.ownerAuth === "passkey") {
-    // WebAuthn assertion verification ships with the web setup/approve pages
-    // (Phase 2); accepting a passkey mandate without verifying it would be a
-    // silent authorization hole, so it is refused outright until then.
-    throw badRequest(
-      "owner_auth_unsupported",
-      'ownerAuth "passkey" is not yet supported; use "ed25519" (Solana wallet message signing)'
-    );
+    if (
+      document.ownerCredential.credentialId === undefined ||
+      document.ownerCredential.algorithm === undefined ||
+      !SUPPORTED_COSE_ALGORITHMS.includes(document.ownerCredential.algorithm)
+    ) {
+      throw badRequest(
+        "invalid_owner_credential",
+        "passkey owners must provide ownerCredential.credentialId and a " +
+          "supported COSE algorithm (-7 ES256, -8 EdDSA, -257 RS256)"
+      );
+    }
   }
   if (
     !Number.isSafeInteger(document.issuedAtMs) ||
@@ -375,28 +457,33 @@ export function validateMandateDocument(input: {
   const message = mandateSigningMessage(mandateHash);
 
   if (
-    !verifyEd25519Message({
+    !verifyOwnerMessageSignature({
+      ownerAuth: document.ownerAuth,
+      credential: document.ownerCredential,
       message,
-      signatureBase58: document.ownerSignature,
-      publicKeyBase58: document.ownerCredential.publicKey
+      signature: document.ownerSignature,
+      webauthn: input.webauthn
     })
   ) {
     throw badRequest(
       "owner_signature_invalid",
-      "ownerSignature does not verify against ownerCredential.publicKey for this mandate"
+      "ownerSignature does not verify against ownerCredential for this mandate"
     );
   }
-  if (
-    !verifyEd25519Message({
-      message,
-      signatureBase58: document.agentWalletSignature,
-      publicKeyBase58: document.agentWallet
-    })
-  ) {
-    throw badRequest(
-      "agent_cosign_invalid",
-      "agentWalletSignature does not verify against the agent wallet key for this mandate"
-    );
+  if (input.agentCosign !== "setup_session") {
+    if (
+      document.agentWalletSignature === undefined ||
+      !verifyEd25519Message({
+        message,
+        signatureBase58: document.agentWalletSignature,
+        publicKeyBase58: document.agentWallet
+      })
+    ) {
+      throw badRequest(
+        "agent_cosign_invalid",
+        "agentWalletSignature does not verify against the agent wallet key for this mandate"
+      );
+    }
   }
 
   return { payload, policy, mandateHash };

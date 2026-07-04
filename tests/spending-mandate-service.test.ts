@@ -114,6 +114,10 @@ async function saveConfirmedDeposit(
     wallet: AGENT_PUB,
     vault: VAULT,
     amountRawUsdc: input.amountRawUsdc,
+    policySource: null,
+    mandateHash: null,
+    policyDecision: null,
+    approvalId: null,
     preparedMessageHash: "hash",
     recentBlockhash: null,
     lastValidBlockHeight: null,
@@ -273,7 +277,8 @@ describe("kill switch and recovery", () => {
       service.authorizeDeposit({
         wallet: AGENT_PUB,
         vault: VAULT,
-        amountRawUsdc: 1_000_000n
+        amountRawUsdc: 1_000_000n,
+        approvalId: null
       }),
       "mandate_revoked"
     );
@@ -767,8 +772,33 @@ describe("realize enforcement — mandate with approvals", () => {
 });
 
 describe("deposit enforcement", () => {
+  async function approveDeposit(
+    service: SpendingMandateService,
+    approvalId: string,
+    bindingHash: string,
+    signedAtMs: number
+  ) {
+    await service.decideApproval({
+      approvalId,
+      decision: "approve",
+      signedAtMs,
+      signature: sign(
+        approvalSigningMessage({
+          approvalId,
+          decision: "approve",
+          bindingHash,
+          signedAtMs
+        }),
+        OWNER.secretKey
+      )
+    });
+  }
+
   it("enforces the rolling 24h deposit cap as an absolute ceiling", async () => {
     const { service, ledger } = buildService();
+    await registerDefaultMandate(service, {
+      policy: { depositPolicy: "agent_allowed" }
+    });
     await saveConfirmedDeposit(ledger, {
       id: "d1",
       amountRawUsdc: 2_999_000_000n,
@@ -778,17 +808,252 @@ describe("deposit enforcement", () => {
     const ok = await service.authorizeDeposit({
       wallet: AGENT_PUB,
       vault: VAULT,
-      amountRawUsdc: 1_000_000n
+      amountRawUsdc: 1_000_000n,
+      approvalId: null
     });
-    expect(ok.policySource).toBe("default");
+    expect(ok.policyDecision).toBe("auto_within_policy");
 
     await expectCode(
       service.authorizeDeposit({
         wallet: AGENT_PUB,
         vault: VAULT,
-        amountRawUsdc: 1_000_001n
+        amountRawUsdc: 1_000_001n,
+        approvalId: null
       }),
       "daily_deposit_cap_exceeded"
+    );
+  });
+
+  it("refuses deposits for wallets with no registered owner", async () => {
+    const { service } = buildService();
+    await expectCode(
+      service.authorizeDeposit({
+        wallet: AGENT_PUB,
+        vault: VAULT,
+        amountRawUsdc: 1_000_000n,
+        approvalId: null
+      }),
+      "mandate_required_for_deposit"
+    );
+  });
+
+  it("escalates every deposit to the owner and honors the approval once", async () => {
+    const { service } = buildService();
+    await registerDefaultMandate(service);
+
+    const required = await expectCode(
+      service.authorizeDeposit({
+        wallet: AGENT_PUB,
+        vault: VAULT,
+        amountRawUsdc: 5_000_000n,
+        approvalId: null
+      }),
+      "deposit_approval_required"
+    );
+    const details = required.details as { approvalId: string; approveUrl: string };
+    expect(details.approveUrl).toContain(details.approvalId);
+
+    const pending = (await service.listApprovals(AGENT_PUB, "pending"))[0]!;
+    expect(pending.binding).toEqual({
+      kind: "deposit",
+      amountRawUsdc: "5000000"
+    });
+    await approveDeposit(service, details.approvalId, pending.bindingHash, NOW_MS + 3);
+
+    const authorized = await service.authorizeDeposit({
+      wallet: AGENT_PUB,
+      vault: VAULT,
+      amountRawUsdc: 5_000_000n,
+      approvalId: details.approvalId
+    });
+    expect(authorized.policyDecision).toBe(`owner_approved:${details.approvalId}`);
+    expect(authorized.approvalId).toBe(details.approvalId);
+
+    // Approvals bind to the exact amount: a different deposit needs a new one.
+    await expectCode(
+      service.authorizeDeposit({
+        wallet: AGENT_PUB,
+        vault: VAULT,
+        amountRawUsdc: 6_000_000n,
+        approvalId: details.approvalId
+      }),
+      "deposit_approval_required"
+    );
+
+    // Consumed (deposit confirmed) approvals cannot be replayed.
+    await service.consumeApproval(details.approvalId, "dep_confirmed_1");
+    await expectCode(
+      service.authorizeDeposit({
+        wallet: AGENT_PUB,
+        vault: VAULT,
+        amountRawUsdc: 5_000_000n,
+        approvalId: details.approvalId
+      }),
+      "deposit_approval_required"
+    );
+  });
+
+  it("the mandate initialDeposit approval authorizes the first deposit without extra Face ID", async () => {
+    const { service } = buildService();
+    const { result } = await registerDefaultMandate(service, {
+      payload: { initialDeposit: { amountRawUsdc: "500000000" } }
+    });
+    const approvalId = result.initialDepositApproval!.approvalId;
+
+    const authorized = await service.authorizeDeposit({
+      wallet: AGENT_PUB,
+      vault: VAULT,
+      amountRawUsdc: 500_000_000n,
+      approvalId
+    });
+    expect(authorized.policyDecision).toBe(`owner_approved:${approvalId}`);
+  });
+
+  it("warn mode stamps deposit violations without blocking", async () => {
+    const warnings: Array<{ message: string; detail: unknown }> = [];
+    const { service } = buildService({ level: "warn", warnings });
+
+    const unregistered = await service.authorizeDeposit({
+      wallet: AGENT_PUB,
+      vault: VAULT,
+      amountRawUsdc: 1_000_000n,
+      approvalId: null
+    });
+    expect(unregistered.policyDecision).toBe(
+      "warned:mandate_required_for_deposit"
+    );
+
+    await registerDefaultMandate(service);
+    const registered = await service.authorizeDeposit({
+      wallet: AGENT_PUB,
+      vault: VAULT,
+      amountRawUsdc: 1_000_000n,
+      approvalId: null
+    });
+    expect(registered.policyDecision).toBe("warned:deposit_approval_required");
+    expect(warnings.length).toBeGreaterThan(0);
+  });
+});
+
+describe("withdrawal enforcement", () => {
+  it("is agent-allowed by default — exit stays open with and without a mandate", async () => {
+    const { service } = buildService();
+    const unregistered = await service.authorizeWithdrawal({
+      wallet: AGENT_PUB,
+      vault: VAULT,
+      amountRawUsdc: 5_000_000n,
+      approvalId: null
+    });
+    expect(unregistered.policyDecision).toBe("auto_within_policy");
+    expect(unregistered.policySource).toBe("default");
+
+    await registerDefaultMandate(service);
+    const registered = await service.authorizeWithdrawal({
+      wallet: AGENT_PUB,
+      vault: VAULT,
+      amountRawUsdc: 5_000_000n,
+      approvalId: null
+    });
+    expect(registered.policyDecision).toBe("auto_within_policy");
+  });
+
+  it("withdrawalPolicy owner_approval_required rides the same escalation", async () => {
+    const { service } = buildService();
+    await registerDefaultMandate(service, {
+      policy: { withdrawalPolicy: "owner_approval_required" }
+    });
+
+    const required = await expectCode(
+      service.authorizeWithdrawal({
+        wallet: AGENT_PUB,
+        vault: VAULT,
+        amountRawUsdc: 7_000_000n,
+        approvalId: null
+      }),
+      "withdrawal_approval_required"
+    );
+    const details = required.details as { approvalId: string; approveUrl: string };
+    expect(details.approveUrl).toContain(details.approvalId);
+
+    const pending = (await service.listApprovals(AGENT_PUB, "pending"))[0]!;
+    expect(pending.binding).toEqual({
+      kind: "withdrawal",
+      amountRawUsdc: "7000000"
+    });
+    const signedAtMs = NOW_MS + 3;
+    await service.decideApproval({
+      approvalId: details.approvalId,
+      decision: "approve",
+      signedAtMs,
+      signature: sign(
+        approvalSigningMessage({
+          approvalId: details.approvalId,
+          decision: "approve",
+          bindingHash: pending.bindingHash,
+          signedAtMs
+        }),
+        OWNER.secretKey
+      )
+    });
+
+    const authorized = await service.authorizeWithdrawal({
+      wallet: AGENT_PUB,
+      vault: VAULT,
+      amountRawUsdc: 7_000_000n,
+      approvalId: details.approvalId
+    });
+    expect(authorized.policyDecision).toBe(
+      `owner_approved:${details.approvalId}`
+    );
+
+    // Bound to the exact amount — a different withdrawal escalates anew.
+    await expectCode(
+      service.authorizeWithdrawal({
+        wallet: AGENT_PUB,
+        vault: VAULT,
+        amountRawUsdc: 8_000_000n,
+        approvalId: details.approvalId
+      }),
+      "withdrawal_approval_required"
+    );
+  });
+
+  it("warn mode stamps instead of blocking; the kill switch blocks anyway", async () => {
+    const warnings: Array<{ message: string; detail: unknown }> = [];
+    const { service } = buildService({ level: "warn", warnings });
+    const { result } = await registerDefaultMandate(service, {
+      policy: { withdrawalPolicy: "owner_approval_required" }
+    });
+
+    const warned = await service.authorizeWithdrawal({
+      wallet: AGENT_PUB,
+      vault: VAULT,
+      amountRawUsdc: 1_000_000n,
+      approvalId: null
+    });
+    expect(warned.policyDecision).toBe("warned:withdrawal_approval_required");
+    expect(warnings.length).toBeGreaterThan(0);
+
+    // Once revoked, even the exit path closes (the agent key can no longer
+    // pull the principal out from under the human) — in warn mode too.
+    const signedAtMs = NOW_MS + 5;
+    await service.revokeMandate({
+      wallet: AGENT_PUB,
+      mandateHash: result.mandateHash,
+      signedAtMs,
+      signature: sign(
+        revokeSigningMessage(result.mandateHash, signedAtMs),
+        OWNER.secretKey
+      )
+    });
+    await expectCode(
+      service.authorizeWithdrawal({
+        wallet: AGENT_PUB,
+        vault: VAULT,
+        amountRawUsdc: 1_000_000n,
+        approvalId: null
+      }),
+      "mandate_revoked"
     );
   });
 });
@@ -851,7 +1116,8 @@ describe("enforcement levels", () => {
       service.authorizeDeposit({
         wallet: AGENT_PUB,
         vault: VAULT,
-        amountRawUsdc: 1_000_000n
+        amountRawUsdc: 1_000_000n,
+        approvalId: null
       }),
       "mandate_revoked"
     );

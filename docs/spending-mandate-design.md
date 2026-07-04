@@ -860,3 +860,101 @@ mandate・approvals・spending-log・payments/report API / Postgres schema
 - warn モードでは pending approval を作らない (block しないため)。
   binding 無しの旧クライアントも warn ログのみで通す — `on` へ上げるのは
   クライアント (MCP / pay CLI) が binding を送るようになってから。
+
+## Implementation Notes — Phase 2 (2026-07-04 実装)
+
+実装済み (チャット native な owner 体験): setup-session API
+(`POST /v1/wallets/:wallet/setup-sessions` は agent wallet-auth、
+`GET /v1/setup-sessions/:id` と `POST .../complete` は公開 capability URL) /
+owner web ページ 3 枚を relayer 自身が配信 (`/setup/:sessionId`,
+`/approve/:approvalId`, `/revoke/:wallet` — 外部アセットなしの自己完結
+HTML、passkey がデフォルトで Phantom message sign が代替) / passkey
+(WebAuthn) 検証 (`src/domain/webauthn-owner.ts`) / depositPolicy 強制
+(`deposit_approval_required` / `mandate_required_for_deposit`) / payer・MCP
+の `approval_required` 系 UX + approvalId 再試行 / `POST /v1/payments/report`
+のクライアント呼び出し (X-PAYMENT-RESPONSE 由来、best-effort)。
+テスト: `tests/setup-session.test.ts`, `tests/mandate-api.test.ts`
+(setup-session API 節), `tests/spending-mandate*.test.ts` (passkey /
+deposit 節), `tests/standard-x402-payer.test.ts`, `tests/vault-flows.test.ts`。
+
+設計からの差分・精密化:
+
+- **passkey 検証は自前実装で依存追加なし**。ownerCredential は COSE 鍵
+  ではなく `AuthenticatorAttestationResponse.getPublicKey()` の SPKI DER
+  (base64url) + `algorithm` (COSE alg id: -7 ES256 / -8 EdDSA / -257 RS256)。
+  attestation は検証しない (attestation "none" 前提。信頼アンカーは
+  ed25519 経路と同じ「登録済み credential による assertion」であり、
+  デバイス出自証明は要件でない)。assertion の署名対象は WebAuthn 標準の
+  `authenticatorData || sha256(clientDataJSON)`、challenge は
+  `base64url(sha256(署名対象 message))` で文書に暗号学的に拘束される。
+  clientData の type/origin、authenticatorData の rpIdHash と UP+UV flag を
+  検証する。署名 counter は追跡しない (synced passkey では 0 固定が普通で、
+  クローン検知はこの信頼モデルの範囲外)。passkey の owner 署名はすべて
+  `base64url(JSON {credentialId, authenticatorData, clientDataJSON,
+  signature})` として既存の signature フィールドに載る (schema 上限 8KB)。
+- **setup-session の agent co-sign 代替**: ownerCredential はページ上で
+  作られるため agent は事前に mandate hash へ署名できない。session 作成
+  (policy / initialDeposit / TTL を body に含む) が agent wallet-auth 署名
+  で行われることを co-sign の代替とし、complete は session prefill との
+  完全一致 (`setup_session_mismatch`) を強制する (ページが選べるのは
+  issuedAtMs と ownerCredential のみ)。document 上の
+  `agentWalletSignature` は setup-session 経路でのみ省略可。session の
+  wallet-auth ヘッダは監査 provenance として mandate event に記録する。
+- **web ページは relayer が配信**する (app.subly.fi は不要)。rpId /
+  origin は `SUBLY_WEBAUTHN_RP_ID` / `SUBLY_WEBAUTHN_ORIGINS` で明示指定、
+  未指定なら `SUBLY_SETUP_URL_BASE` / `SUBLY_APPROVE_URL_BASE` の URL から
+  導出。**passkey は rpId に紐づくため、本番ではページを配信するドメイン
+  (例 api.demo.sublyfi.com) に URL base を合わせること**。
+- 承認ページ用の公開 read: `GET /v1/approvals/:approvalId` (capability =
+  URL 自体) と `GET /v1/wallets/:wallet/mandate/summary` (revoke ページ用、
+  mandateHash / status / ownerAuth / credentialId のみでポリシー内容は
+  出さない)。
+- deposit 承認は payment 承認と同一の state machine / TTL / single-use /
+  in-flight 規則 (`requireOperationApproval` に一般化)。DepositIntent にも
+  policySource / mandateHash / policyDecision / approvalId を刻印し、
+  consume は deposit confirmed 時。enforcement level の意味は Phase 1 と
+  同一 (on で強制、warn は `warned:<code>` 刻印のみ、kill switch は warn
+  でも block)。
+- クライアント: `VaultFlowClient.deposit` は approvalId 未指定で
+  `deposit_approval_required` を受けたとき、approved 済み deposit approval
+  (同額 binding — initialDeposit がこの形) を自動解決して 1 回だけ再試行
+  する。「Face ID 1 回で mandate + 初回 deposit」がエージェント側の追加
+  操作なしに成立する。MCP は `create_subly_setup_link` /
+  `check_subly_setup` ツールを追加し、`approval_required` /
+  `deposit_approval_required` / `mandate_required_for_deposit` は isError
+  ではなく構造化レスポンス (approveUrl / approvalId / 再試行手順) で返す。
+- payments/report のクライアント実装: 標準 x402 の settle レスポンス
+  ヘッダ `X-PAYMENT-RESPONSE` (base64 JSON) から payment tx signature を
+  読み、realizer 経由で best-effort report-back する (失敗は支払い結果に
+  影響させない)。
+
+### セルフレビュー修正 (2026-07-04、Phase 2 実装直後)
+
+- **withdrawalPolicy の強制を実装** (本文どおり binding
+  `{ kind: "withdrawal", amountRawUsdc }` で deposit と同一 escalation)。
+  通常 withdraw の prepare は `authorizeWithdrawal` を通り、default は
+  agent_allowed のまま、mandate が `owner_approval_required` を opt-in
+  したときのみ `withdrawal_approval_required` (409 + approveUrl)。
+  **kill switch (revoked) は withdraw も block する** — owner が agent 鍵を
+  信用しなくなった後に元本を agent ATA へ引き出せると revoke が無意味に
+  なるため。同 owner の再登録で解除できる。revoke ページの文言も
+  payments / deposits / withdrawals に更新。
+- **owner ページの表示ハードニング**: 動的値は全て `esc()` で HTML
+  エスケープ (`binding.method` は agent 由来のため必須)、CSP meta
+  (`default-src 'none'; script-src/style-src 'unsafe-inline';
+  connect-src 'self'`) を全ページに付与、`paymentBindingSchema.method` は
+  英字のみ (`^[A-Za-z]{1,16}$`) に制限。
+- **setup ページは署名対象 policy の全項目を表示** (monthly cap /
+  allowedPayToAddresses / withdrawalPolicy を追加、null cap は
+  "No limit" と明示)。
+- **既存 mandate がある wallet の setup link**: pending view に
+  `existingMandate {status, ownerAuth}` を含め、ページは Face ID の前に
+  「新 passkey では置換不可 (rotation は現 owner のみ)」を説明して
+  passkey ボタンを無効化する (owner が passkey の場合は両ボタン非表示)。
+  server 側の拒否 (`owner_rotation_requires_current_owner`) は従来どおり。
+- ページ内 inline JS の crypto ヘルパー (canonicalJson / WebAuthn
+  challenge / base58 / esc) は tests/owner-pages.test.ts が実行して
+  サーバ実装とのバイト一致を検証する (base58 の空入力挙動を bs58 に一致
+  させる修正込み)。
+- MCP の setup 系ツールは chain sync (RPC) を走らせない (check_subly_setup
+  はポーリングされるため)。relayer のエラーメッセージは英語に統一。

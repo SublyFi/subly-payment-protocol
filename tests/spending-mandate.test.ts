@@ -13,11 +13,14 @@ import {
 import {
   AGENT_PUB,
   buildDocument,
+  buildPasskeyDocument,
+  createTestPasskey,
   defaultPolicyWire,
   NOW_MS,
   OWNER,
   OWNER_PUB,
-  sign
+  sign,
+  TEST_WEBAUTHN
 } from "./helpers/mandate-fixtures.js";
 
 describe("canonical json", () => {
@@ -59,7 +62,8 @@ describe("mandate document validation", () => {
       document,
       wallet: AGENT_PUB,
       vault: SUBLY_VAULT.address,
-      nowMs: NOW_MS
+      nowMs: NOW_MS,
+        webauthn: TEST_WEBAUTHN
     });
     expect(validated.mandateHash).toBe(mandateHashOf(mandatePayloadOf(document)));
     expect(validated.policy.perPaymentCapRawUsdc).toBe(10_000_000n);
@@ -79,7 +83,8 @@ describe("mandate document validation", () => {
         document: tampered,
         wallet: AGENT_PUB,
         vault: SUBLY_VAULT.address,
-        nowMs: NOW_MS
+        nowMs: NOW_MS,
+        webauthn: TEST_WEBAUTHN
       })
     ).toThrowError(/ownerSignature/);
   });
@@ -92,21 +97,89 @@ describe("mandate document validation", () => {
         document: badCosign,
         wallet: AGENT_PUB,
         vault: SUBLY_VAULT.address,
-        nowMs: NOW_MS
+        nowMs: NOW_MS,
+        webauthn: TEST_WEBAUTHN
       })
     ).toThrowError(/agentWalletSignature/);
   });
 
-  it("rejects passkey owners until Phase 2 ships verification", () => {
-    const document = buildDocument({ payload: { ownerAuth: "passkey" } });
+  it("accepts a passkey mandate whose assertion binds to the mandate message", () => {
+    const passkey = createTestPasskey();
+    const document = buildPasskeyDocument(passkey);
+    const validated = validateMandateDocument({
+      document,
+      wallet: AGENT_PUB,
+      vault: SUBLY_VAULT.address,
+      nowMs: NOW_MS,
+      webauthn: TEST_WEBAUTHN
+    });
+    expect(validated.mandateHash).toBe(mandateHashOf(mandatePayloadOf(document)));
+  });
+
+  it("rejects passkey assertions with a wrong origin, rpId, challenge, or missing UV", () => {
+    const passkey = createTestPasskey();
+    const base = buildPasskeyDocument(passkey);
+    const message = mandateSigningMessage(mandateHashOf(mandatePayloadOf(base)));
+    const cases = [
+      passkey.signAssertion(message, { origin: "https://evil.example" }),
+      passkey.signAssertion(message, { rpId: "evil.example" }),
+      passkey.signAssertion(message, { challenge: "AAAA" }),
+      passkey.signAssertion(message, { flags: 0x01 }), // UP without UV
+      passkey.signAssertion(message, { type: "webauthn.create" }),
+      passkey.signAssertion("subly-mandate:v1:" + "00".repeat(32))
+    ];
+    for (const ownerSignature of cases) {
+      expect(() =>
+        validateMandateDocument({
+          document: { ...base, ownerSignature },
+          wallet: AGENT_PUB,
+          vault: SUBLY_VAULT.address,
+          nowMs: NOW_MS,
+          webauthn: TEST_WEBAUTHN
+        })
+      ).toThrowError(/ownerSignature/);
+    }
+  });
+
+  it("rejects passkey credentials without credentialId or a supported algorithm", () => {
+    const passkey = createTestPasskey();
+    const missingId = buildPasskeyDocument(passkey, {
+      payload: {
+        ownerCredential: { publicKey: passkey.credential.publicKey, algorithm: -7 }
+      }
+    });
+    expect(() =>
+      validateMandateDocument({
+        document: missingId,
+        wallet: AGENT_PUB,
+        vault: SUBLY_VAULT.address,
+        nowMs: NOW_MS,
+        webauthn: TEST_WEBAUTHN
+      })
+    ).toThrowError(/credentialId|algorithm/);
+  });
+
+  it("skips the agent co-sign only on the setup-session path", () => {
+    const passkey = createTestPasskey();
+    const document = buildPasskeyDocument(passkey, { omitAgentCosign: true });
     expect(() =>
       validateMandateDocument({
         document,
         wallet: AGENT_PUB,
         vault: SUBLY_VAULT.address,
-        nowMs: NOW_MS
+        nowMs: NOW_MS,
+        webauthn: TEST_WEBAUTHN
       })
-    ).toThrowError(/passkey/);
+    ).toThrowError(/agentWalletSignature/);
+    const validated = validateMandateDocument({
+      document,
+      wallet: AGENT_PUB,
+      vault: SUBLY_VAULT.address,
+      nowMs: NOW_MS,
+      webauthn: TEST_WEBAUTHN,
+      agentCosign: "setup_session"
+    });
+    expect(validated.mandateHash).toBe(mandateHashOf(mandatePayloadOf(document)));
   });
 
   it("rejects wrong wallet, wrong vault, and expired documents", () => {
@@ -116,7 +189,8 @@ describe("mandate document validation", () => {
         document,
         wallet: OWNER_PUB,
         vault: SUBLY_VAULT.address,
-        nowMs: NOW_MS
+        nowMs: NOW_MS,
+        webauthn: TEST_WEBAUTHN
       })
     ).toThrowError(/agentWallet/);
     expect(() =>
@@ -124,7 +198,8 @@ describe("mandate document validation", () => {
         document,
         wallet: AGENT_PUB,
         vault: AGENT_PUB,
-        nowMs: NOW_MS
+        nowMs: NOW_MS,
+        webauthn: TEST_WEBAUTHN
       })
     ).toThrowError(/vault/);
     expect(() =>
@@ -132,7 +207,8 @@ describe("mandate document validation", () => {
         document,
         wallet: AGENT_PUB,
         vault: SUBLY_VAULT.address,
-        nowMs: document.expiresAtMs + 1
+        nowMs: document.expiresAtMs + 1,
+        webauthn: TEST_WEBAUTHN
       })
     ).toThrowError(/expiresAtMs/);
   });

@@ -10,6 +10,7 @@ import type {
   WalletPosition,
   WithdrawalIntent
 } from "../src/domain/models.js";
+import { buildDocument } from "./helpers/mandate-fixtures.js";
 import { deriveAssociatedTokenAddress } from "../src/lib/associated-token-account.js";
 import { SpendingMandateService } from "../src/domain/spending-mandate-service.js";
 import { VaultFlowService } from "../src/domain/vault-flow-service.js";
@@ -331,7 +332,7 @@ describe("VaultFlowService spending-mandate integration", () => {
       ledger,
       config: { enforcementLevel: level, onWarn: () => undefined }
     });
-    return buildService({ ledger, mandates });
+    return { ...buildService({ ledger, mandates }), mandates };
   }
 
   it("stamps the mandate decision and binding on a realize intent", async () => {
@@ -378,7 +379,7 @@ describe("VaultFlowService spending-mandate integration", () => {
     expect(prepared.policyDecision).toBe("warned:payment_binding_required");
   });
 
-  it("leaves plain exit withdrawals outside the mandate payment gate", async () => {
+  it("keeps plain exit withdrawals agent-allowed but stamps the decision", async () => {
     const { service, ledger } = withMandates("on");
     await registerPosition(ledger);
 
@@ -387,12 +388,40 @@ describe("VaultFlowService spending-mandate integration", () => {
       amountRawUsdc: "2000000"
     });
     expect(prepared.purpose).toBe("normal");
-    expect(prepared.policyDecision).toBeNull();
+    // Outside the PAYMENT gate (no binding required), but the withdrawal
+    // gate still ran and recorded its verdict for the audit log.
+    expect(prepared.policyDecision).toBe("auto_within_policy");
+    expect(prepared.policySource).toBe("default");
+  });
+
+  it("escalates exit withdrawals when the mandate opts into withdrawal approval", async () => {
+    const { service, ledger, mandates } = withMandates("on");
+    await registerPosition(ledger);
+    await mandates.registerMandate({
+      wallet: WALLET,
+      vault: SUBLY_VAULT.address,
+      document: buildDocument({
+        agentKeys: WALLET_KEYS,
+        policy: { withdrawalPolicy: "owner_approval_required" }
+      })
+    });
+
+    await expect(
+      service.prepareWithdrawal({ wallet: WALLET, amountRawUsdc: "2000000" })
+    ).rejects.toMatchObject({ code: "withdrawal_approval_required" });
   });
 
   it("enforces the daily deposit cap at prepare time", async () => {
-    const { service, ledger } = withMandates("on");
+    const { service, ledger, mandates } = withMandates("on");
     await registerPosition(ledger);
+    await mandates.registerMandate({
+      wallet: WALLET,
+      vault: SUBLY_VAULT.address,
+      document: buildDocument({
+        agentKeys: WALLET_KEYS,
+        policy: { depositPolicy: "agent_allowed" }
+      })
+    });
 
     await expect(
       service.prepareDeposit({
@@ -406,6 +435,42 @@ describe("VaultFlowService spending-mandate integration", () => {
       amountRawUsdc: "1000010"
     });
     expect(withinCap.status).toBe("prepared");
+    expect(withinCap.policyDecision).toBe("auto_within_policy");
+  });
+
+  it("refuses deposits without a mandate and honors the initialDeposit approval", async () => {
+    const { service, ledger, mandates } = withMandates("on");
+    await registerPosition(ledger);
+
+    // No registered owner -> nobody can approve -> setup is a prerequisite.
+    await expect(
+      service.prepareDeposit({ wallet: WALLET, amountRawUsdc: "1000010" })
+    ).rejects.toMatchObject({ code: "mandate_required_for_deposit" });
+
+    const registered = await mandates.registerMandate({
+      wallet: WALLET,
+      vault: SUBLY_VAULT.address,
+      document: buildDocument({
+        agentKeys: WALLET_KEYS,
+        payload: { initialDeposit: { amountRawUsdc: "1000010" } }
+      })
+    });
+    const approvalId = registered.initialDepositApproval!.approvalId;
+
+    // Default depositPolicy requires an owner approval per deposit.
+    await expect(
+      service.prepareDeposit({ wallet: WALLET, amountRawUsdc: "1000010" })
+    ).rejects.toMatchObject({ code: "deposit_approval_required" });
+
+    // The mandate's single Face ID pre-approved the first deposit.
+    const prepared = await service.prepareDeposit({
+      wallet: WALLET,
+      amountRawUsdc: "1000010",
+      approvalId
+    });
+    expect(prepared.status).toBe("prepared");
+    expect(prepared.policyDecision).toBe(`owner_approved:${approvalId}`);
+    expect(prepared.approvalId).toBe(approvalId);
   });
 });
 

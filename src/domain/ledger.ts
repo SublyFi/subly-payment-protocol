@@ -3,6 +3,7 @@ import type {
   PaymentIntent,
   PaymentStatus,
   SellerLiquidityPolicy,
+  SetupSession,
   SpendingApproval,
   SpendingMandateEvent,
   SpendingMandateRecord,
@@ -80,6 +81,8 @@ export interface Ledger {
   listSpendingApprovalsForWallet(
     wallet: string
   ): Awaitable<SpendingApproval[]>;
+  getSetupSession(sessionId: string): Awaitable<SetupSession | null>;
+  saveSetupSession(session: SetupSession): Awaitable<SetupSession>;
 }
 
 export class InMemoryLedger implements Ledger {
@@ -92,6 +95,7 @@ export class InMemoryLedger implements Ledger {
   private readonly spendingMandates = new Map<string, SpendingMandateRecord>();
   private readonly spendingMandateEvents: SpendingMandateEvent[] = [];
   private readonly spendingApprovals = new Map<string, SpendingApproval>();
+  private readonly setupSessions = new Map<string, SetupSession>();
   private readonly lockTails = new Map<string, Promise<void>>();
 
   async withWalletVaultLock<T>(
@@ -282,6 +286,16 @@ export class InMemoryLedger implements Ledger {
       .filter((approval) => approval.wallet === wallet)
       .sort((a, b) => b.requestedAtMs - a.requestedAtMs)
       .map((approval) => structuredClone(approval));
+  }
+
+  getSetupSession(sessionId: string): SetupSession | null {
+    const session = this.setupSessions.get(sessionId) ?? null;
+    return session === null ? null : structuredClone(session);
+  }
+
+  saveSetupSession(session: SetupSession): SetupSession {
+    this.setupSessions.set(session.sessionId, structuredClone(session));
+    return structuredClone(session);
   }
 }
 

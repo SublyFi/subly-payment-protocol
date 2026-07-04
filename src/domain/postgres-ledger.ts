@@ -7,6 +7,7 @@ import type {
   PaymentStatus,
   ProvenancedRawValue,
   SellerLiquidityPolicy,
+  SetupSession,
   SpendingApproval,
   SpendingMandateEvent,
   SpendingMandateRecord,
@@ -471,6 +472,35 @@ export class PostgresLedger implements Ledger {
     return result.rows.map((row) => row.data as SpendingApproval);
   }
 
+  async getSetupSession(sessionId: string): Promise<SetupSession | null> {
+    await this.ensureSchema();
+    const result = await this.query(
+      "select data from setup_sessions where session_id = $1",
+      [sessionId]
+    );
+
+    return result.rows[0]?.data === undefined
+      ? null
+      : (result.rows[0].data as SetupSession);
+  }
+
+  async saveSetupSession(session: SetupSession): Promise<SetupSession> {
+    await this.ensureSchema();
+    const saved = await this.query(
+      `insert into setup_sessions (session_id, wallet, status, data, updated_at)
+       values ($1, $2, $3, $4::jsonb, now())
+       on conflict (session_id)
+       do update set
+         status = excluded.status,
+         data = excluded.data,
+         updated_at = now()
+       returning data`,
+      [session.sessionId, session.wallet, session.status, JSON.stringify(session)]
+    );
+
+    return saved.rows[0].data as SetupSession;
+  }
+
   async close(): Promise<void> {
     await this.pool.end();
   }
@@ -641,6 +671,19 @@ create table if not exists payment_approvals (
 
 create index if not exists payment_approvals_wallet_idx
   on payment_approvals (wallet, status);
+
+-- Owner-onboarding setup sessions (single-use capability links, TTL 10 min).
+create table if not exists setup_sessions (
+  session_id text primary key,
+  wallet text not null,
+  status text not null,
+  data jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists setup_sessions_wallet_idx
+  on setup_sessions (wallet, created_at);
 `;
 
 function dehydrate<T>(value: T): unknown {
@@ -708,6 +751,11 @@ function hydrateDepositIntent(data: Record<string, unknown>): DepositIntent {
         ? null
         : BigInt(String(data[field]));
   }
+  // Rows written before the spending-mandate layer carry none of these.
+  next.policySource = (data.policySource as string | undefined) ?? null;
+  next.mandateHash = (data.mandateHash as string | undefined) ?? null;
+  next.policyDecision = (data.policyDecision as string | undefined) ?? null;
+  next.approvalId = (data.approvalId as string | undefined) ?? null;
   return next;
 }
 

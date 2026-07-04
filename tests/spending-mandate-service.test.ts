@@ -362,6 +362,48 @@ describe("kill switch and recovery", () => {
     });
     expect(afterElapsed.policySource).toBe("default");
   });
+
+  it("mandate expiry still applies while a recovery-revoke is pending", async () => {
+    const { service, advance } = buildService();
+    const { result } = await registerDefaultMandate(service, {
+      payload: { expiresAtMs: NOW_MS + 60 * 60 * 1000 } // 1h mandate
+    });
+
+    await service.scheduleRecoveryRevoke(AGENT_PUB);
+    // Past the mandate expiry but well inside the 72h recovery grace.
+    advance(60 * 60 * 1000 + 1);
+
+    const auth = await service.authorizeRealize({
+      wallet: AGENT_PUB,
+      vault: VAULT,
+      amountRawUsdc: 58_000n,
+      payment: binding("58000"),
+      approvalId: null
+    });
+    expect(auth.policySource).toBe("default");
+    expect(auth.mandateHash).toBeNull();
+
+    // Neither side can act on the expired mandate: no new dead-man switch...
+    await expectCode(
+      service.scheduleRecoveryRevoke(AGENT_PUB),
+      "mandate_expired"
+    );
+
+    // ...and the expired owner credential cannot veto its way back to "active".
+    const signedAtMs = NOW_MS + 60 * 60 * 1000 + 2;
+    await expectCode(
+      service.cancelRecoveryRevoke({
+        wallet: AGENT_PUB,
+        mandateHash: result.mandateHash,
+        signedAtMs,
+        signature: sign(
+          recoveryCancelSigningMessage(result.mandateHash, signedAtMs),
+          OWNER.secretKey
+        )
+      }),
+      "mandate_expired"
+    );
+  });
 });
 
 describe("realize enforcement — default policy (no mandate)", () => {
@@ -752,7 +794,7 @@ describe("deposit enforcement", () => {
 });
 
 describe("enforcement levels", () => {
-  it("warn mode logs violations without blocking", async () => {
+  it("warn mode logs violations without blocking and stamps the first code", async () => {
     const warnings: Array<{ message: string; detail: unknown }> = [];
     const { service } = buildService({ level: "warn", warnings });
 
@@ -763,8 +805,56 @@ describe("enforcement levels", () => {
       payment: null,
       approvalId: null
     });
-    expect(auth.policyDecision).toBe("auto_within_policy");
+    // The audit stamp must not claim the payment was within policy.
+    expect(auth.policyDecision).toBe("warned:payment_binding_required");
     expect(warnings.length).toBeGreaterThan(0);
+  });
+
+  it("warn mode still stamps a clean payment as auto_within_policy", async () => {
+    const { service } = buildService({ level: "warn" });
+    const auth = await service.authorizeRealize({
+      wallet: AGENT_PUB,
+      vault: VAULT,
+      amountRawUsdc: 58_000n,
+      payment: binding("58000"),
+      approvalId: null
+    });
+    expect(auth.policyDecision).toBe("auto_within_policy");
+  });
+
+  it("warn mode still enforces the kill switch", async () => {
+    const { service } = buildService({ level: "warn" });
+    const { result } = await registerDefaultMandate(service);
+
+    const signedAtMs = NOW_MS + 1;
+    await service.revokeMandate({
+      wallet: AGENT_PUB,
+      mandateHash: result.mandateHash,
+      signedAtMs,
+      signature: sign(
+        revokeSigningMessage(result.mandateHash, signedAtMs),
+        OWNER.secretKey
+      )
+    });
+
+    await expectCode(
+      service.authorizeRealize({
+        wallet: AGENT_PUB,
+        vault: VAULT,
+        amountRawUsdc: 58_000n,
+        payment: binding("58000"),
+        approvalId: null
+      }),
+      "mandate_revoked"
+    );
+    await expectCode(
+      service.authorizeDeposit({
+        wallet: AGENT_PUB,
+        vault: VAULT,
+        amountRawUsdc: 1_000_000n
+      }),
+      "mandate_revoked"
+    );
   });
 
   it("off mode skips evaluation entirely", async () => {

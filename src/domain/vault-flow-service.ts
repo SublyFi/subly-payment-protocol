@@ -668,6 +668,19 @@ export class VaultFlowService {
         "the realize withdrawal has not confirmed"
       );
     }
+    // A realize maps to exactly one payment tx: once reported, the record is
+    // immutable except for re-verification of the SAME signature. Anything
+    // else could swap a verified audit row for an unverifiable one.
+    if (
+      intent.paymentTxSignature !== null &&
+      intent.paymentTxSignature !== input.paymentTxSignature
+    ) {
+      throw conflict(
+        "payment_already_reported",
+        "a different payment tx signature is already recorded for this realize",
+        { paymentTxSignature: intent.paymentTxSignature }
+      );
+    }
 
     let verification: "verified_onchain" | "reported" = "reported";
     if (intent.paymentBinding !== null) {
@@ -701,10 +714,24 @@ export class VaultFlowService {
             "Withdrawal intent does not exist"
           );
         }
+        if (
+          latest.paymentTxSignature !== null &&
+          latest.paymentTxSignature !== input.paymentTxSignature
+        ) {
+          throw conflict(
+            "payment_already_reported",
+            "a different payment tx signature is already recorded for this realize",
+            { paymentTxSignature: latest.paymentTxSignature }
+          );
+        }
         return this.ledger.saveWithdrawal({
           ...latest,
           paymentTxSignature: input.paymentTxSignature,
-          paymentVerification: verification
+          // Re-reports may upgrade reported → verified_onchain, never downgrade.
+          paymentVerification:
+            latest.paymentVerification === "verified_onchain"
+              ? "verified_onchain"
+              : verification
         });
       }
     );

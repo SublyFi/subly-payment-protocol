@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { rawUnitsToString } from "../lib/raw-units.js";
-import { badRequest, conflict, forbidden, notFound } from "./errors.js";
+import {
+  badRequest,
+  conflict,
+  forbidden,
+  notFound,
+  type SublyError
+} from "./errors.js";
 import type { Ledger } from "./ledger.js";
 import type {
   PaymentBindingWire,
@@ -271,6 +277,14 @@ export class SpendingMandateService {
     if (record.status === "revoked") {
       throw conflict("mandate_revoked", "the mandate is already revoked");
     }
+    if (this.effectiveStatus(record, nowMs) === "expired") {
+      // An expired mandate already behaves like "unregistered": the agent
+      // key can simply register a fresh one, no dead-man switch needed.
+      throw conflict(
+        "mandate_expired",
+        "the mandate has expired; register a new mandate instead"
+      );
+    }
     if (record.status === "recovery_pending" && record.recoveryAtMs !== null) {
       return {
         wallet,
@@ -307,6 +321,12 @@ export class SpendingMandateService {
   }) {
     const nowMs = this.now();
     const record = await this.requireMandate(input.wallet);
+    if (this.effectiveStatus(record, nowMs) === "expired") {
+      throw conflict(
+        "mandate_expired",
+        "the mandate has expired; there is nothing to restore"
+      );
+    }
     if (record.status !== "recovery_pending" || record.recoveryAtMs === null) {
       throw conflict(
         "recovery_not_pending",
@@ -353,67 +373,80 @@ export class SpendingMandateService {
     signedAtMs: number;
     signature: string;
   }) {
-    const nowMs = this.now();
-    const approval = await this.ledger.getSpendingApproval(input.approvalId);
-    if (approval === null) {
+    const located = await this.ledger.getSpendingApproval(input.approvalId);
+    if (located === null) {
       throw notFound("approval_not_found", "Approval does not exist");
     }
-    const current = await this.expireIfStale(approval, nowMs);
-    if (current.status === "expired") {
-      throw conflict("approval_expired", "the approval TTL has elapsed; retry the operation to get a new one");
-    }
-    if (current.status !== "pending") {
-      throw conflict(
-        "approval_already_decided",
-        `the approval is already ${current.status}`
-      );
-    }
+    const lockVault = (await this.requireMandate(located.wallet)).vault;
 
-    // Decisions are verified against the CURRENT owner credential, not the
-    // one that existed when the approval was created.
-    const record = await this.requireMandate(current.wallet);
-    if (this.effectiveStatus(record, nowMs) !== "active" &&
-        this.effectiveStatus(record, nowMs) !== "recovery_pending") {
-      throw conflict(
-        "mandate_not_active",
-        "approvals require an active mandate owner"
-      );
-    }
-    assertFreshSignedAt(input.signedAtMs, nowMs);
-    this.assertOwnerSignature(record, {
-      message: approvalSigningMessage({
-        approvalId: input.approvalId,
-        decision: input.decision,
-        bindingHash: current.bindingHash,
-        signedAtMs: input.signedAtMs
-      }),
-      signature: input.signature,
-      code: "approval_signature_invalid"
-    });
-
-    const decided: SpendingApproval = {
-      ...current,
-      status: input.decision === "approve" ? "approved" : "denied",
-      decidedAtMs: nowMs,
-      decisionJson: {
-        decision: input.decision,
-        signedAtMs: input.signedAtMs,
-        signature: input.signature,
-        mandateHash: record.mandateHash
+    // Same wallet-vault lock as prepareWithdrawal: decisions must not
+    // interleave with the prepare-side approval reads and expiry writes.
+    return this.ledger.withWalletVaultLock(located.wallet, lockVault, async () => {
+      const nowMs = this.now();
+      // Re-read under the lock: a concurrent replace/revoke may have changed
+      // the owner credential the decision must verify against.
+      const record = await this.requireMandate(located.wallet);
+      const approval = await this.ledger.getSpendingApproval(input.approvalId);
+      if (approval === null) {
+        throw notFound("approval_not_found", "Approval does not exist");
       }
-    };
-    await this.ledger.saveSpendingApproval(decided);
+      const current = await this.expireIfStale(approval, nowMs);
+      if (current.status === "expired") {
+        throw conflict("approval_expired", "the approval TTL has elapsed; retry the operation to get a new one");
+      }
+      if (current.status !== "pending") {
+        throw conflict(
+          "approval_already_decided",
+          `the approval is already ${current.status}`
+        );
+      }
 
-    return serializeApproval(decided);
+      // Decisions are verified against the CURRENT owner credential, not the
+      // one that existed when the approval was created.
+      const status = this.effectiveStatus(record, nowMs);
+      if (status !== "active" && status !== "recovery_pending") {
+        throw conflict(
+          "mandate_not_active",
+          "approvals require an active mandate owner"
+        );
+      }
+      assertFreshSignedAt(input.signedAtMs, nowMs);
+      this.assertOwnerSignature(record, {
+        message: approvalSigningMessage({
+          approvalId: input.approvalId,
+          decision: input.decision,
+          bindingHash: current.bindingHash,
+          signedAtMs: input.signedAtMs
+        }),
+        signature: input.signature,
+        code: "approval_signature_invalid"
+      });
+
+      const decided: SpendingApproval = {
+        ...current,
+        status: input.decision === "approve" ? "approved" : "denied",
+        decidedAtMs: nowMs,
+        decisionJson: {
+          decision: input.decision,
+          signedAtMs: input.signedAtMs,
+          signature: input.signature,
+          mandateHash: record.mandateHash
+        }
+      };
+      await this.ledger.saveSpendingApproval(decided);
+
+      return serializeApproval(decided);
+    });
   }
 
   async listApprovals(wallet: string, status?: string) {
     const nowMs = this.now();
     const approvals = await this.ledger.listSpendingApprovalsForWallet(wallet);
-    const current = await Promise.all(
-      approvals.map((approval) => this.expireIfStale(approval, nowMs))
-    );
-    return current
+    // Read-only expiry view: GETs never write. Persistent expiry happens on
+    // the state-transition paths (decideApproval / requirePaymentApproval),
+    // which run under the wallet-vault lock.
+    return approvals
+      .map((approval) => expiredView(approval, nowMs))
       .filter((approval) => status === undefined || approval.status === status)
       .map(serializeApproval);
   }
@@ -461,24 +494,32 @@ export class SpendingMandateService {
 
     const nowMs = this.now();
     const effective = await this.resolvePolicy(input.wallet, nowMs);
-    const base: RealizeAuthorization = {
+
+    // 1. Kill switch: enforced even in "warn" mode. Warn exists so legacy
+    //    binding-less clients keep working during rollout; a revocation only
+    //    exists after an explicit owner action on a registered mandate, so
+    //    honoring it can never break a client that predates the layer.
+    if (effective.revoked) {
+      throw conflict(
+        "mandate_revoked",
+        "the spending mandate was revoked by the owner; all payments are blocked"
+      );
+    }
+
+    // In warn mode the FIRST violation code is stamped on the intent, so the
+    // spending log never shows a policy-violating payment as clean.
+    let warnedCode: string | null = null;
+    const decided = (): RealizeAuthorization => ({
       policySource: effective.policySource,
       mandateHash: effective.mandate?.mandateHash ?? null,
-      policyDecision: "auto_within_policy",
+      policyDecision:
+        warnedCode === null ? "auto_within_policy" : `warned:${warnedCode}`,
       approvalId: null
-    };
-
-    // 1. Kill switch: an explicitly revoked mandate blocks all payments.
-    if (effective.revoked) {
-      this.violation(
-        conflict("mandate_revoked", "the spending mandate was revoked by the owner; all payments are blocked")
-      );
-      return base;
-    }
+    });
 
     const payment = input.payment;
     if (payment === null) {
-      this.violation(
+      warnedCode ??= this.violation(
         badRequest(
           "payment_binding_required",
           "yield_realize withdrawals must declare the payment they fund " +
@@ -486,7 +527,7 @@ export class SpendingMandateService {
         )
       );
     } else if (BigInt(payment.amountRawUsdc) !== input.amountRawUsdc) {
-      this.violation(
+      warnedCode ??= this.violation(
         badRequest(
           "payment_binding_mismatch",
           "payment.amountRawUsdc must equal the realize amountRawUsdc"
@@ -503,7 +544,7 @@ export class SpendingMandateService {
       policy.allowedPayToAddresses !== null &&
       !policy.allowedPayToAddresses.includes(payment.payTo)
     ) {
-      this.violation(
+      warnedCode ??= this.violation(
         conflict("payee_not_allowed", "payTo is not in the mandate's allowed payee list", {
           payTo: payment.payTo
         })
@@ -512,7 +553,7 @@ export class SpendingMandateService {
 
     // 3. Absolute per-payment cap — approval never lifts it.
     if (amount > policy.perPaymentCapRawUsdc) {
-      this.violation(
+      warnedCode ??= this.violation(
         conflict(
           "per_payment_cap_exceeded",
           "the payment exceeds the absolute per-payment cap",
@@ -522,7 +563,7 @@ export class SpendingMandateService {
           }
         )
       );
-      return base;
+      return decided();
     }
 
     // 4. Rolling daily/monthly spend windows (confirmed realizes count,
@@ -530,7 +571,7 @@ export class SpendingMandateService {
     if (policy.dailyApiSpendCapRawUsdc !== null) {
       const spent = await this.confirmedRealizeSum(input.wallet, input.vault, nowMs - DAY_MS);
       if (spent + amount > policy.dailyApiSpendCapRawUsdc) {
-        this.violation(
+        warnedCode ??= this.violation(
           conflict("daily_cap_exceeded", "the rolling 24h API spend cap is exhausted", {
             spentRawUsdc: spent.toString(),
             amountRawUsdc: amount.toString(),
@@ -546,7 +587,7 @@ export class SpendingMandateService {
         nowMs - ROLLING_MONTH_MS
       );
       if (spent + amount > policy.monthlyApiSpendCapRawUsdc) {
-        this.violation(
+        warnedCode ??= this.violation(
           conflict("monthly_cap_exceeded", "the rolling 30d API spend cap is exhausted", {
             spentRawUsdc: spent.toString(),
             amountRawUsdc: amount.toString(),
@@ -563,7 +604,7 @@ export class SpendingMandateService {
       amount > policy.approvalThresholdRawUsdc
     ) {
       if (!effective.ownerAvailable) {
-        this.violation(
+        warnedCode ??= this.violation(
           conflict(
             "mandate_required_for_larger_payments",
             "payments above the default approval threshold require a registered " +
@@ -574,7 +615,7 @@ export class SpendingMandateService {
             }
           )
         );
-        return base;
+        return decided();
       }
       if (payment !== null && this.config.enforcementLevel === "on") {
         const approval = await this.requirePaymentApproval({
@@ -586,12 +627,13 @@ export class SpendingMandateService {
           nowMs
         });
         return {
-          ...base,
+          ...decided(),
           policyDecision: `owner_approved:${approval.approvalId}`,
           approvalId: approval.approvalId
         };
       }
       if (this.config.enforcementLevel === "warn") {
+        warnedCode ??= "approval_required";
         this.warn("approval_required would fire for this payment", {
           wallet: input.wallet,
           amountRawUsdc: amount.toString()
@@ -599,7 +641,7 @@ export class SpendingMandateService {
       }
     }
 
-    return base;
+    return decided();
   }
 
   /** Daily-deposit-cap gate (Phase 1; depositPolicy approval lands with the
@@ -615,9 +657,11 @@ export class SpendingMandateService {
 
     const nowMs = this.now();
     const effective = await this.resolvePolicy(input.wallet, nowMs);
+    // Kill switch — enforced even in "warn" (see authorizeRealize).
     if (effective.revoked) {
-      this.violation(
-        conflict("mandate_revoked", "the spending mandate was revoked by the owner; deposits are blocked")
+      throw conflict(
+        "mandate_revoked",
+        "the spending mandate was revoked by the owner; deposits are blocked"
       );
     }
 
@@ -672,7 +716,9 @@ export class SpendingMandateService {
         realizeTxSignature: intent.txSignature,
         paymentTxSignature: intent.paymentTxSignature,
         paymentVerification: intent.paymentVerification ?? "unreported",
-        decision: intent.policyDecision ?? "auto_within_policy",
+        // null = the mandate layer was not active when this intent ran;
+        // never present that as a clean policy pass.
+        decision: intent.policyDecision ?? "unenforced",
         mandateHash: intent.mandateHash,
         policySource: intent.policySource ?? "default"
       }));
@@ -706,7 +752,12 @@ export class SpendingMandateService {
         if (
           current.status === "approved" &&
           current.bindingHash === bindingHash &&
-          !(await this.approvalInFlight(current.approvalId, input.wallet, input.vault))
+          !(await this.approvalInFlight(
+            current.approvalId,
+            input.wallet,
+            input.vault,
+            input.nowMs
+          ))
         ) {
           return current;
         }
@@ -740,24 +791,30 @@ export class SpendingMandateService {
       {
         approvalId: approval.approvalId,
         expiresAtMs: approval.expiresAtMs,
-        approveUrl: `${this.config.approveUrlBase}${approval.approvalId}`,
+        approveUrl: this.approveUrl(approval.approvalId),
         approveCommand: `subly-pay approve ${approval.approvalId}`
       }
     );
+  }
+
+  private approveUrl(approvalId: string): string {
+    const base = this.config.approveUrlBase;
+    return base.endsWith("/") ? `${base}${approvalId}` : `${base}/${approvalId}`;
   }
 
   /** One in-flight realize per approval: binding-bound + TTL + this. */
   private async approvalInFlight(
     approvalId: string,
     wallet: string,
-    vault: string
+    vault: string,
+    nowMs: number
   ): Promise<boolean> {
     const withdrawals = await this.ledger.listWithdrawalsForPosition(wallet, vault);
     return withdrawals.some(
       (intent) =>
         intent.approvalId === approvalId &&
         (intent.status === "submitted" ||
-          (intent.status === "prepared" && !intentExpired(intent)))
+          (intent.status === "prepared" && !intentExpired(intent, nowMs)))
     );
   }
 
@@ -802,15 +859,14 @@ export class SpendingMandateService {
     });
   }
 
+  /** Persist lazy expiry; call only under the wallet-vault lock. */
   private async expireIfStale(
     approval: SpendingApproval,
     nowMs: number
   ): Promise<SpendingApproval> {
-    if (
-      (approval.status === "pending" || approval.status === "approved") &&
-      approval.expiresAtMs <= nowMs
-    ) {
-      return this.ledger.saveSpendingApproval({ ...approval, status: "expired" });
+    const viewed = expiredView(approval, nowMs);
+    if (viewed !== approval) {
+      return this.ledger.saveSpendingApproval(viewed);
     }
     return approval;
   }
@@ -868,12 +924,17 @@ export class SpendingMandateService {
     if (record.status === "revoked") {
       return "revoked";
     }
+    // Mandate expiry applies in every non-revoked state — a recovery-pending
+    // mandate must not outlive its own expiresAtMs.
+    if (record.expiresAtMs <= nowMs) {
+      return "expired";
+    }
     if (record.status === "recovery_pending") {
       return record.recoveryAtMs !== null && record.recoveryAtMs <= nowMs
         ? "recovery_elapsed"
         : "recovery_pending";
     }
-    return record.expiresAtMs <= nowMs ? "expired" : "active";
+    return "active";
   }
 
   private async confirmedRealizeSum(
@@ -1003,15 +1064,20 @@ export class SpendingMandateService {
     });
   }
 
-  /** In "on" mode a violation blocks; in "warn" mode it is only logged. */
-  private violation(error: Error & { code?: string; details?: unknown }): void {
+  /**
+   * In "on" mode a violation blocks; in "warn" mode it is only logged and the
+   * code is returned so callers can stamp it on the audit record instead of
+   * recording the operation as clean.
+   */
+  private violation(error: SublyError): string {
     if (this.config.enforcementLevel === "on") {
       throw error;
     }
     this.warn(`mandate violation (not enforced): ${error.message}`, {
-      code: (error as { code?: string }).code,
-      details: (error as { details?: unknown }).details
+      code: error.code,
+      details: error.details
     });
+    return error.code;
   }
 
   private warn(message: string, detail: unknown): void {
@@ -1035,9 +1101,23 @@ function terminalMs(intent: { terminalAt: string | null }): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function intentExpired(intent: WithdrawalIntent): boolean {
+function intentExpired(intent: WithdrawalIntent, nowMs: number): boolean {
   const expiresAtMs = new Date(intent.expiresAt).getTime();
-  return !Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now();
+  return !Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs;
+}
+
+/** Pure TTL view of an approval; returns the same object when unexpired. */
+function expiredView(
+  approval: SpendingApproval,
+  nowMs: number
+): SpendingApproval {
+  if (
+    (approval.status === "pending" || approval.status === "approved") &&
+    approval.expiresAtMs <= nowMs
+  ) {
+    return { ...approval, status: "expired" };
+  }
+  return approval;
 }
 
 export function serializeApproval(approval: SpendingApproval) {

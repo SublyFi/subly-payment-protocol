@@ -832,13 +832,28 @@ mandate・approvals・spending-log・payments/report API / Postgres schema
 - **recovery-cancel の署名 message** を
   `subly-mandate-recovery-cancel:v1:{mandateHash}:{signedAtMs}` と規定。
 - intent 上の記録フィールド名は `policyDecision`
-  (`auto_within_policy` | `owner_approved:apr_...` | `unenforced`)、
-  `policySource` (`default` | `mandate:<hash>`)。level=off で prepare した
-  realize は `unenforced` と記録し監査上区別する。
+  (`auto_within_policy` | `owner_approved:apr_...` | `warned:<code>` |
+  `unenforced`)、`policySource` (`default` | `mandate:<hash>`)。level=off で
+  prepare した realize は `unenforced` と記録し監査上区別する。warn モードで
+  違反があった realize は最初の違反コードを `warned:<code>` として記録し、
+  spending log 上でも「ポリシー的にはクリーンでなかった」ことが残る。
+- **Kill switch は warn モードでも強制する**: `mandate_revoked` は
+  warn / on の両方で realize・deposit を block する (off のみ全無効)。
+  revoke は mandate 登録済み wallet への明示的 owner 操作としてしか
+  存在し得ないため、binding 未対応の旧クライアントを壊すことはない。
+- mandate の expiresAtMs は recovery_pending 中も適用される (expired が
+  優先)。expired mandate への recovery-revoke / recovery-cancel は
+  `mandate_expired` で拒否 (expired = 未登録相当なので再登録が正)。
 - `POST /v1/payments/report` は `{ wallet, withdrawalId,
   paymentTxSignature }` を取り、binding の payTo ATA への TransferChecked
   相当の残高 delta ≥ amount を best-effort 検証して
-  `verified_onchain | reported` を記録する。
+  `verified_onchain | reported` を記録する。report は 1 realize = 1 tx:
+  異なる signature での上書きは `payment_already_reported` で拒否、同一
+  signature の再 report は冪等 (検証は reported → verified_onchain への
+  昇格のみ、降格しない)。
+- approval の遅延 expiry の永続化は状態遷移パス (decision / prepare 時の
+  参照) のみで行い、GET (listApprovals) は読み取り専用の導出ビューを返す。
+  approval decision は prepare と同じ wallet-vault lock 内で処理する。
 - 窓集計は Phase 1 では position 単位の intent 一覧を ledger から読み
   メモリで合計する (既存フローの読み方と同型)。行数が問題になったら
   設計どおり SQL rolling window + index に移す。

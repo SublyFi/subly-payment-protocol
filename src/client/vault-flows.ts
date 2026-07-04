@@ -147,6 +147,18 @@ export class VaultFlowClient {
   async withdraw(input: {
     amountRawUsdc: bigint;
     purpose?: "yield_realize";
+    /**
+     * The x402 payment a yield_realize funds; the relayer's spending-mandate
+     * layer checks caps/payee against it and records it in the audit log.
+     */
+    payment?: {
+      payTo: string;
+      amountRawUsdc: string;
+      resourceUrlHash: string;
+      method: string;
+    };
+    /** Owner approval id for payments above the mandate threshold. */
+    approvalId?: string;
   }): Promise<VaultWithdrawalOutcome> {
     const prepared = (await this.postJson(
       "prepare",
@@ -154,7 +166,11 @@ export class VaultFlowClient {
       {
         wallet: this.signer.walletAddress,
         amountRawUsdc: input.amountRawUsdc.toString(),
-        ...(input.purpose === undefined ? {} : { purpose: input.purpose })
+        ...(input.purpose === undefined ? {} : { purpose: input.purpose }),
+        ...(input.payment === undefined ? {} : { payment: input.payment }),
+        ...(input.approvalId === undefined
+          ? {}
+          : { approvalId: input.approvalId })
       }
     )) as PreparedWithdrawal;
 

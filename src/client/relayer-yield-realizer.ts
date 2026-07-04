@@ -83,6 +83,12 @@ export class RelayerYieldRealizer implements YieldRealizer {
 
   async ensureUsdcAvailable(input: {
     amountRawUsdc: bigint;
+    payment?: {
+      payTo: string;
+      amountRawUsdc: string;
+      resourceUrlHash: string;
+      method: string;
+    };
   }): Promise<{ realizedRawUsdc: bigint; txSignature: string | null }> {
     // Always realize the full payment amount from the yield ledger. The agent's
     // ATA may contain manual top-ups or unrelated USDC, so raw ATA balance is
@@ -97,7 +103,10 @@ export class RelayerYieldRealizer implements YieldRealizer {
         amountRawUsdc: shortfallRawUsdc,
         // The relayer refuses to prepare this withdrawal beyond the spendable
         // yield — the principal-protection guard the client cannot bypass.
-        purpose: "yield_realize"
+        purpose: "yield_realize",
+        // Declares what is being paid so the relayer's spending-mandate layer
+        // can enforce caps/payee and keep the mandate → payment audit chain.
+        ...(input.payment === undefined ? {} : { payment: input.payment })
       });
     } catch (error) {
       throw this.mapWithdrawError(error);

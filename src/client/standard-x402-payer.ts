@@ -1,4 +1,5 @@
 import { SOLANA_MAINNET_NETWORK, SUBLY_VAULT } from "../config/constants.js";
+import { sha256HexOf } from "../lib/canonical-json.js";
 import {
   PAYMENT_REQUIRED_HEADER,
   requestBodyHashFor
@@ -29,9 +30,24 @@ import {
  * never ride in the same transaction.
  */
 
+/**
+ * The x402 payment a realize funds, declared to the relayer so server-side
+ * spending caps and the audit log key off "what was paid", not just an
+ * amount (docs/spending-mandate-design.md).
+ */
+export interface RealizePaymentBinding {
+  payTo: string;
+  amountRawUsdc: string;
+  resourceUrlHash: string;
+  method: string;
+}
+
 /** Ensures the agent USDC ATA can cover a payment, realizing yield as needed. */
 export interface YieldRealizer {
-  ensureUsdcAvailable(input: { amountRawUsdc: bigint }): Promise<{
+  ensureUsdcAvailable(input: {
+    amountRawUsdc: bigint;
+    payment?: RealizePaymentBinding;
+  }): Promise<{
     realizedRawUsdc: bigint;
     txSignature: string | null;
   }>;
@@ -241,7 +257,13 @@ export class StandardX402Payer {
     let realized: { realizedRawUsdc: bigint; txSignature: string | null };
     try {
       realized = await this.realizer.ensureUsdcAvailable({
-        amountRawUsdc: selected.amountRawUsdc
+        amountRawUsdc: selected.amountRawUsdc,
+        payment: {
+          payTo: selected.payTo,
+          amountRawUsdc: selected.amountRawUsdc.toString(),
+          resourceUrlHash: sha256HexOf(input.url),
+          method
+        }
       });
     } catch (error) {
       throw new StandardX402PayError(

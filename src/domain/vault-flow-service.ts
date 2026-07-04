@@ -34,12 +34,14 @@ import { badRequest, conflict, notFound } from "./errors.js";
 import type { Ledger } from "./ledger.js";
 import type {
   DepositIntent,
+  PaymentBindingWire,
   SyncEvent,
   SyncEventType,
   VaultFlowStatus,
   WalletPosition,
   WithdrawalIntent
 } from "./models.js";
+import type { SpendingMandateService } from "./spending-mandate-service.js";
 import type { FeeLamportsToUsdcConverter } from "./kamino-settlement-submitter.js";
 import {
   extractValidRequiredSignerSignature,
@@ -96,6 +98,7 @@ export class VaultFlowService {
   private readonly sponsor: KeyPairSigner;
   private readonly config: VaultFlowServiceConfig;
   private readonly feeLamportsToUsdc: FeeLamportsToUsdcConverter | null;
+  private readonly mandates: SpendingMandateService | null;
 
   constructor(params: {
     ledger: Ledger;
@@ -104,6 +107,8 @@ export class VaultFlowService {
     sponsor: KeyPairSigner;
     config?: Partial<VaultFlowServiceConfig>;
     feeLamportsToUsdc?: FeeLamportsToUsdcConverter;
+    /** Spending-mandate enforcement layer; null skips mandate checks. */
+    mandates?: SpendingMandateService | null;
   }) {
     this.ledger = params.ledger;
     this.adapter = params.adapter;
@@ -111,6 +116,7 @@ export class VaultFlowService {
     this.sponsor = params.sponsor;
     this.config = { ...DEFAULT_FLOW_CONFIG, ...params.config };
     this.feeLamportsToUsdc = params.feeLamportsToUsdc ?? null;
+    this.mandates = params.mandates ?? null;
   }
 
   async prepareDeposit(input: { wallet: string; amountRawUsdc: string }) {
@@ -125,6 +131,12 @@ export class VaultFlowService {
       const position = await this.requireSignerReadyPosition(wallet, vault);
       await this.expireStaleFlows(wallet, vault);
       await this.assertNoPendingFlow(wallet, vault);
+
+      // Spending-mandate layer: rolling daily deposit cap (and kill switch)
+      // before any transaction is built.
+      if (this.mandates !== null) {
+        await this.mandates.authorizeDeposit({ wallet, vault, amountRawUsdc });
+      }
 
       const context = await this.adapter.loadContext();
       // The kvault program rejects DepositAmountBelowMinimum at execution;
@@ -326,6 +338,10 @@ export class VaultFlowService {
     wallet: string;
     amountRawUsdc: string;
     purpose?: "yield_realize" | undefined;
+    /** What the realize funds; required by mandate enforcement "on". */
+    payment?: PaymentBindingWire | undefined;
+    /** Owner approval for a payment above the mandate threshold. */
+    approvalId?: string | undefined;
   }) {
     const wallet = requireAddress(input.wallet, "wallet");
     const amountRawUsdc = parsePositiveRawUnits(
@@ -360,6 +376,26 @@ export class VaultFlowService {
       }
       await this.expireStaleFlows(wallet, vault);
       await this.assertNoPendingFlow(wallet, vault);
+
+      // Spending-mandate layer for yield-realize (the x402 payment path):
+      // caps, payee allowlist, and threshold escalation run BEFORE the
+      // yield-only budget guard, and the outcome is stamped on the intent
+      // for the spending log.
+      let mandateAuthorization = {
+        policySource: null as string | null,
+        mandateHash: null as string | null,
+        policyDecision: null as string | null,
+        approvalId: null as string | null
+      };
+      if (input.purpose === "yield_realize" && this.mandates !== null) {
+        mandateAuthorization = await this.mandates.authorizeRealize({
+          wallet,
+          vault,
+          amountRawUsdc,
+          payment: input.payment ?? null,
+          approvalId: input.approvalId ?? null
+        });
+      }
 
       const context = await this.adapter.loadContext();
       const userShares = await this.adapter.getUserSharesRaw(wallet, context);
@@ -477,6 +513,15 @@ export class VaultFlowService {
         withdrawalId: `wdr_${randomUUID().replaceAll("-", "")}`,
         wallet,
         vault,
+        purpose: input.purpose === "yield_realize" ? "yield_realize" : "normal",
+        paymentBinding: input.payment ?? null,
+        policySource: mandateAuthorization.policySource,
+        mandateHash: mandateAuthorization.mandateHash,
+        policyDecision: mandateAuthorization.policyDecision,
+        approvalId: mandateAuthorization.approvalId,
+        paymentTxSignature: null,
+        paymentVerification:
+          input.purpose === "yield_realize" ? "unreported" : null,
         requestedWithdrawRawUsdc: amountRawUsdc,
         requestedSharesRaw,
         maxSharesToRedeemRaw,
@@ -594,6 +639,81 @@ export class VaultFlowService {
     return serializeWithdrawalIntent(
       await this.sendAndFinalizeWithdrawal(submission.intent)
     );
+  }
+
+  /**
+   * Report-back of the client-side x402 payment tx that a confirmed realize
+   * funded. The relayer never sees that tx directly, so this is the audit
+   * link mandate → realize → payment; verification against the on-chain
+   * token deltas is best-effort and never blocks the caller.
+   */
+  async reportPayment(input: {
+    wallet: string;
+    withdrawalId: string;
+    paymentTxSignature: string;
+  }) {
+    const intent = await this.ledger.getWithdrawal(input.withdrawalId);
+    if (intent === null || intent.wallet !== input.wallet) {
+      throw notFound("withdrawal_not_found", "Withdrawal intent does not exist");
+    }
+    if (intent.purpose !== "yield_realize") {
+      throw conflict(
+        "not_a_realize_withdrawal",
+        "payment report-back applies only to yield_realize withdrawals"
+      );
+    }
+    if (intent.status !== "confirmed") {
+      throw conflict(
+        "realize_not_confirmed",
+        "the realize withdrawal has not confirmed"
+      );
+    }
+
+    let verification: "verified_onchain" | "reported" = "reported";
+    if (intent.paymentBinding !== null) {
+      try {
+        const lookup = await this.engine.lookupTransaction(
+          input.paymentTxSignature
+        );
+        if (lookup.found && lookup.err === null) {
+          const payToAta = deriveAssociatedTokenAddress({
+            owner: intent.paymentBinding.payTo,
+            mint: SUBLY_VAULT.usdcMint
+          });
+          const delta = lookup.tokenBalanceDeltas.get(payToAta) ?? 0n;
+          if (delta >= BigInt(intent.paymentBinding.amountRawUsdc)) {
+            verification = "verified_onchain";
+          }
+        }
+      } catch {
+        // Chain lookup is best-effort; keep "reported".
+      }
+    }
+
+    const saved = await this.ledger.withWalletVaultLock(
+      intent.wallet,
+      intent.vault,
+      async () => {
+        const latest = await this.ledger.getWithdrawal(input.withdrawalId);
+        if (latest === null) {
+          throw notFound(
+            "withdrawal_not_found",
+            "Withdrawal intent does not exist"
+          );
+        }
+        return this.ledger.saveWithdrawal({
+          ...latest,
+          paymentTxSignature: input.paymentTxSignature,
+          paymentVerification: verification
+        });
+      }
+    );
+
+    return {
+      withdrawalId: saved.withdrawalId,
+      paymentTxSignature: saved.paymentTxSignature,
+      paymentVerification: saved.paymentVerification
+    };
   }
 
   async getWithdrawal(withdrawalId: string) {
@@ -826,7 +946,7 @@ export class VaultFlowService {
         slot: refreshed.observedSlot
       });
 
-      return this.ledger.saveWithdrawal({
+      const confirmed = await this.ledger.saveWithdrawal({
         ...latest,
         status: "confirmed",
         actualSharesBurnedRaw,
@@ -834,6 +954,17 @@ export class VaultFlowService {
         principalBasisAfterRawUsdc: basisAfter,
         terminalAt: new Date().toISOString()
       });
+
+      // The owner approval is single-use: consumed only once the realize it
+      // authorized lands on-chain (earlier failures may re-prepare in-TTL).
+      if (this.mandates !== null && confirmed.approvalId !== null) {
+        await this.mandates.consumeApproval(
+          confirmed.approvalId,
+          confirmed.withdrawalId
+        );
+      }
+
+      return confirmed;
     });
   }
 
@@ -1257,6 +1388,14 @@ export function serializeWithdrawalIntent(intent: WithdrawalIntent) {
     withdrawalId: intent.withdrawalId,
     wallet: intent.wallet,
     vault: intent.vault,
+    purpose: intent.purpose,
+    paymentBinding: intent.paymentBinding,
+    policySource: intent.policySource,
+    mandateHash: intent.mandateHash,
+    policyDecision: intent.policyDecision,
+    approvalId: intent.approvalId,
+    paymentTxSignature: intent.paymentTxSignature,
+    paymentVerification: intent.paymentVerification,
     requestedWithdrawRawUsdc: rawUnitsToString(intent.requestedWithdrawRawUsdc),
     requestedSharesRaw: rawUnitsToString(intent.requestedSharesRaw),
     maxSharesToRedeemRaw: rawUnitsToString(intent.maxSharesToRedeemRaw),

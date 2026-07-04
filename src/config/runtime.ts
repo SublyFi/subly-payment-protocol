@@ -2,6 +2,7 @@ import type { FastifyBaseLogger } from "fastify";
 import type { ServerOptions } from "../api/server.js";
 import { isProductionEnv } from "./env.js";
 import { ChainWalletSyncService } from "../domain/chain-wallet-sync.js";
+import type { Ledger } from "../domain/ledger.js";
 import { feeEstimatorFromEnv, type FeeEstimator } from "../domain/fee-estimator.js";
 import { KaminoCanonicalTransactionBuilder } from "../domain/kamino-transaction-builder.js";
 import { KaminoSettlementSubmitter } from "../domain/kamino-settlement-submitter.js";
@@ -10,6 +11,8 @@ import {
   SublyService
 } from "../domain/payment-service.js";
 import { PythHermesFeeEstimator } from "../domain/pyth-fee-estimator.js";
+import { SpendingMandateService } from "../domain/spending-mandate-service.js";
+import { parseMandateEnforcementLevel } from "../domain/spending-mandate.js";
 import { VaultFlowService } from "../domain/vault-flow-service.js";
 import { KaminoApiClient } from "../kamino/api-client.js";
 import { KaminoVaultAdapter } from "../kamino/vault-adapter.js";
@@ -50,9 +53,12 @@ export async function createSublyRuntime(
     logger?.warn(
       "Starting in detached mode: settlement, deposits, and withdrawals are unavailable until SOLANA_RPC_URL and SUBLY_SPONSOR_KEYPAIR(_PATH) are configured"
     );
+    const detachedService = defaultSublyService();
     return {
-      service: defaultSublyService(),
-      serverOptions: {},
+      service: detachedService,
+      serverOptions: {
+        mandateService: buildMandateService(detachedService.ledger, env, logger)
+      },
       mode: "detached"
     };
   }
@@ -119,6 +125,8 @@ export async function createSublyRuntime(
     }
   });
 
+  const mandateService = buildMandateService(service.ledger, env, logger);
+
   const vaultFlowService = new VaultFlowService({
     ledger: service.ledger,
     adapter,
@@ -130,7 +138,8 @@ export async function createSublyRuntime(
         ? {}
         : { computeUnitPriceMicroLamports })
     },
-    ...(feeLamportsToUsdc === null ? {} : { feeLamportsToUsdc })
+    ...(feeLamportsToUsdc === null ? {} : { feeLamportsToUsdc }),
+    mandates: mandateService
   });
 
   const chainWalletSync = new ChainWalletSyncService({
@@ -154,9 +163,42 @@ export async function createSublyRuntime(
 
   return {
     service,
-    serverOptions: { vaultFlowService, chainWalletSync, sponsorMonitoring },
+    serverOptions: {
+      vaultFlowService,
+      chainWalletSync,
+      sponsorMonitoring,
+      mandateService
+    },
     mode: "mainnet"
   };
+}
+
+/**
+ * Spending-mandate enforcement layer (docs/spending-mandate-design.md).
+ * SUBLY_MANDATE_ENFORCEMENT stages the rollout: off | warn (default) | on.
+ */
+function buildMandateService(
+  ledger: Ledger,
+  env: NodeJS.ProcessEnv,
+  logger?: FastifyBaseLogger
+): SpendingMandateService {
+  return new SpendingMandateService({
+    ledger,
+    config: {
+      enforcementLevel: parseMandateEnforcementLevel(
+        env.SUBLY_MANDATE_ENFORCEMENT
+      ),
+      ...(env.SUBLY_APPROVE_URL_BASE === undefined
+        ? {}
+        : { approveUrlBase: env.SUBLY_APPROVE_URL_BASE }),
+      ...(logger === undefined
+        ? {}
+        : {
+            onWarn: (message: string, detail: unknown) =>
+              logger.warn({ detail }, `[subly-mandate] ${message}`)
+          })
+    }
+  });
 }
 
 function buildFeeEstimator(env: NodeJS.ProcessEnv): {

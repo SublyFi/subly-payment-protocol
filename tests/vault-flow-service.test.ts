@@ -6,6 +6,7 @@ import nacl from "tweetnacl";
 import { SUBLY_VAULT } from "../src/config/constants.js";
 import { InMemoryLedger } from "../src/domain/ledger.js";
 import type { PaymentIntent, WalletPosition } from "../src/domain/models.js";
+import { SpendingMandateService } from "../src/domain/spending-mandate-service.js";
 import { VaultFlowService } from "../src/domain/vault-flow-service.js";
 import type {
   KaminoVaultAdapter,
@@ -64,6 +65,7 @@ class FakeAdapter {
 function buildService(params?: {
   adapter?: FakeAdapter;
   ledger?: InMemoryLedger;
+  mandates?: SpendingMandateService;
 }) {
   const ledger = params?.ledger ?? new InMemoryLedger();
   const adapter = params?.adapter ?? new FakeAdapter();
@@ -74,7 +76,8 @@ function buildService(params?: {
     sponsor: {
       address: WALLET,
       keyPair: {} as CryptoKeyPair
-    } as never
+    } as never,
+    ...(params?.mandates === undefined ? {} : { mandates: params.mandates })
   });
 
   return { service, ledger, adapter };
@@ -305,5 +308,96 @@ describe("VaultFlowService yield-realize guard", () => {
       amountRawUsdc: "2000000" // principal exit, no purpose flag
     });
     expect(prepared.status).toBe("prepared");
+  });
+});
+
+describe("VaultFlowService spending-mandate integration", () => {
+  const PAYMENT = {
+    payTo: WALLET,
+    amountRawUsdc: "10000",
+    resourceUrlHash: "ef".repeat(32),
+    method: "GET"
+  };
+
+  function withMandates(level: "on" | "warn") {
+    const ledger = new InMemoryLedger();
+    const mandates = new SpendingMandateService({
+      ledger,
+      config: { enforcementLevel: level, onWarn: () => undefined }
+    });
+    return buildService({ ledger, mandates });
+  }
+
+  it("stamps the mandate decision and binding on a realize intent", async () => {
+    const { service, ledger } = withMandates("on");
+    await registerPosition(ledger);
+
+    const prepared = await service.prepareWithdrawal({
+      wallet: WALLET,
+      amountRawUsdc: "10000",
+      purpose: "yield_realize",
+      payment: PAYMENT
+    });
+    expect(prepared.purpose).toBe("yield_realize");
+    expect(prepared.paymentBinding).toEqual(PAYMENT);
+    expect(prepared.policySource).toBe("default");
+    expect(prepared.policyDecision).toBe("auto_within_policy");
+    expect(prepared.paymentVerification).toBe("unreported");
+  });
+
+  it("refuses a realize without its payment binding when enforcement is on", async () => {
+    const { service, ledger } = withMandates("on");
+    await registerPosition(ledger);
+
+    await expect(
+      service.prepareWithdrawal({
+        wallet: WALLET,
+        amountRawUsdc: "10000",
+        purpose: "yield_realize"
+      })
+    ).rejects.toMatchObject({ code: "payment_binding_required" });
+  });
+
+  it("keeps warn mode non-blocking for legacy clients without a binding", async () => {
+    const { service, ledger } = withMandates("warn");
+    await registerPosition(ledger);
+
+    const prepared = await service.prepareWithdrawal({
+      wallet: WALLET,
+      amountRawUsdc: "10000",
+      purpose: "yield_realize"
+    });
+    expect(prepared.status).toBe("prepared");
+    expect(prepared.policyDecision).toBe("auto_within_policy");
+  });
+
+  it("leaves plain exit withdrawals outside the mandate payment gate", async () => {
+    const { service, ledger } = withMandates("on");
+    await registerPosition(ledger);
+
+    const prepared = await service.prepareWithdrawal({
+      wallet: WALLET,
+      amountRawUsdc: "2000000"
+    });
+    expect(prepared.purpose).toBe("normal");
+    expect(prepared.policyDecision).toBeNull();
+  });
+
+  it("enforces the daily deposit cap at prepare time", async () => {
+    const { service, ledger } = withMandates("on");
+    await registerPosition(ledger);
+
+    await expect(
+      service.prepareDeposit({
+        wallet: WALLET,
+        amountRawUsdc: "3000000001" // 3,000.000001 USDC > default daily cap
+      })
+    ).rejects.toMatchObject({ code: "daily_deposit_cap_exceeded" });
+
+    const withinCap = await service.prepareDeposit({
+      wallet: WALLET,
+      amountRawUsdc: "1000010"
+    });
+    expect(withinCap.status).toBe("prepared");
   });
 });

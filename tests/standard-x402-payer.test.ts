@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { SOLANA_MAINNET_NETWORK, SUBLY_VAULT } from "../src/config/constants.js";
 import { encodeX402Header, PAYMENT_REQUIRED_HEADER } from "../src/x402/headers.js";
 import { EMPTY_BODY_HASH } from "../src/lib/hash.js";
+import { sha256HexOf } from "../src/lib/canonical-json.js";
 import {
   StandardX402Payer,
   StandardX402PayError,
@@ -107,8 +108,16 @@ describe("StandardX402Payer", () => {
 
     const result = await payer.pay({ url: URL });
 
+    // The payer declares the payment binding to the realizer so the relayer's
+    // spending-mandate layer can enforce caps against "what is being paid".
     expect(realizer.ensureUsdcAvailable).toHaveBeenCalledWith({
-      amountRawUsdc: 10_000n
+      amountRawUsdc: 10_000n,
+      payment: {
+        payTo: "J7ZvJEspvwP1oRxQZ7mYmNmT22NTm3GWq3t7HEbvPZYx",
+        amountRawUsdc: "10000",
+        resourceUrlHash: sha256HexOf(URL),
+        method: "GET"
+      }
     });
     expect(x402Fetch).toHaveBeenCalledTimes(1);
     expect(result.paid).toBe(true);

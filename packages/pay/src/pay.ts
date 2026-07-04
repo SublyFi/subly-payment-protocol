@@ -120,14 +120,27 @@ try {
   if (error instanceof StandardX402PayError) {
     // detail carries the next step on approval_required refusals
     // (approvalId / approveUrl / expiresAtMs): paste approveUrl to the
-    // owner, then retry the SAME fetch adding the apr_... id.
+    // owner, then rerun the printed retry command. It must repeat the SAME
+    // client cap — approval-needing prices exceed the default cap, so
+    // dropping it would refuse with amount_exceeds_client_cap instead.
+    const refusalApprovalId =
+      error.reason === "approval_required"
+        ? (error.detail as { approvalId?: string } | null)?.approvalId
+        : undefined;
     process.stdout.write(
       `${JSON.stringify(
         {
           paid: false,
           reason: error.reason,
           message: error.message,
-          detail: error.detail ?? null
+          detail: error.detail ?? null,
+          ...(refusalApprovalId === undefined
+            ? {}
+            : {
+                retry: `pay fetch "${url}"${
+                  maxAmountArg === undefined ? "" : ` ${maxAmountArg}`
+                } ${refusalApprovalId}`
+              })
         },
         null,
         2

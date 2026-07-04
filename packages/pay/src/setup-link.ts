@@ -40,7 +40,16 @@ const policy: Record<string, string> = {};
 let initialDepositRawUsdc: string | undefined;
 let mandateTtlDays: number | undefined;
 
-const args = process.argv.slice(2);
+// Accepts both `--flag value` and `--flag=value`.
+const args: string[] = [];
+for (const raw of process.argv.slice(2)) {
+  const eq = raw.startsWith("--") ? raw.indexOf("=") : -1;
+  if (eq > 0) {
+    args.push(raw.slice(0, eq), raw.slice(eq + 1));
+  } else {
+    args.push(raw);
+  }
+}
 for (let i = 0; i < args.length; i += 2) {
   const flag = args[i]!;
   const value = args[i + 1];

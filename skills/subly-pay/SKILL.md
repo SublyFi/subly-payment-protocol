@@ -1,7 +1,7 @@
 ---
 name: subly-pay
 description: Fetch a paywalled (HTTP 402) URL and pay for it automatically from the agent wallet's Kamino vault yield, without spending the principal. Also manages the Subly vault (deposit/withdraw) and the human owner's spending mandate (setup link, Face ID approvals). Use when a request returns 402, when the user asks to buy/access a paid API or resource, or mentions Subly / x402 / yield-funded payment.
-version: 0.2.0
+version: 0.2.1
 metadata:
   openclaw:
     requires:
@@ -62,7 +62,8 @@ balance, guide the user through this once:
    minutes and works once. The human opens it on their phone, reviews the
    limits, and confirms with Face ID (passkey) or a Solana wallet signature.
    After they say they finished, verify and deposit:
-   `npx -y @subly_fi/pay setup-status <sessionId>` → status "completed"
+   `npx -y @subly_fi/pay setup-status <sessionId>` (the pasted setupUrl
+   works as the argument too) → status "completed"
    `npx -y @subly_fi/pay deposit 1010000` (the pre-approved first deposit
    is picked up automatically; deposit also self-registers the wallet).
 5. Yield accrues over time; a payment needs the price plus a fixed overhead
@@ -101,10 +102,13 @@ body and the receipt to the user.
     have settled. Do not blindly re-pay; report the message and ask the user
     before using `SUBLY_PAY_FORCE_NEW_PAYMENT=1`.
   - `approval_required` → the price exceeds the owner's approval threshold;
-    NOTHING was paid. The `detail` carries an `approveUrl` and `approvalId`:
-    paste the approveUrl to the user, and once they approved (Face ID /
-    wallet sign), repeat the SAME fetch adding the id:
-    `npx -y @subly_fi/pay fetch "<url>" apr_<approvalId>`
+    NOTHING was paid. The output carries an `approveUrl`, an `approvalId`,
+    and a ready-made `retry` command: paste the approveUrl to the user, and
+    once they approved (Face ID / wallet sign), run the `retry` command
+    exactly as printed. It repeats the SAME cap — approval-needing prices
+    exceed the default cap, so dropping it would refuse with
+    `amount_exceeds_client_cap`:
+    `npx -y @subly_fi/pay fetch "<url>" <sameMaxAmountRawUsdc> apr_<approvalId>`
   - `state_persist_failed` → the local pending-payment marker could not be
     stored. Do not retry until the state path/disk issue is fixed.
 

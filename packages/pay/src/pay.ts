@@ -31,9 +31,21 @@ function fail(message: string): never {
 
 const url = process.argv[2];
 if (url === undefined || !/^https?:\/\//.test(url)) {
-  fail("Usage: pay fetch <url> [maxAmountRawUsdc]");
+  fail("Usage: pay fetch <url> [maxAmountRawUsdc] [apr_<approvalId>]");
 }
-const maxAmountArg = process.argv[3];
+// Trailing args in any order: digits = client cap, apr_... = the owner
+// approval from a previous approval_required refusal (retry the SAME url).
+let maxAmountArg: string | undefined;
+let approvalId: string | undefined;
+for (const arg of process.argv.slice(3)) {
+  if (/^apr_[0-9a-f]+$/i.test(arg)) {
+    approvalId = arg;
+  } else if (/^\d+$/.test(arg)) {
+    maxAmountArg = arg;
+  } else {
+    fail(`unrecognized argument: ${arg}\nUsage: pay fetch <url> [maxAmountRawUsdc] [apr_<approvalId>]`);
+  }
+}
 
 const relayerBaseUrl =
   process.env.SUBLY_RELAYER_URL ??
@@ -95,6 +107,7 @@ try {
     ...(maxAmountArg === undefined
       ? {}
       : { maxAmountRawUsdc: BigInt(maxAmountArg) }),
+    ...(approvalId === undefined ? {} : { approvalId }),
     ...(process.env.SUBLY_PAY_FORCE_NEW_PAYMENT === "1"
       ? { forceNewPayment: true }
       : {})
@@ -105,9 +118,17 @@ try {
   }
 } catch (error) {
   if (error instanceof StandardX402PayError) {
+    // detail carries the next step on approval_required refusals
+    // (approvalId / approveUrl / expiresAtMs): paste approveUrl to the
+    // owner, then retry the SAME fetch adding the apr_... id.
     process.stdout.write(
       `${JSON.stringify(
-        { paid: false, reason: error.reason, message: error.message },
+        {
+          paid: false,
+          reason: error.reason,
+          message: error.message,
+          detail: error.detail ?? null
+        },
         null,
         2
       )}\n`

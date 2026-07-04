@@ -31,9 +31,15 @@ const relayerBaseUrl =
 const amountRawUsdc = process.argv[2];
 if (amountRawUsdc === undefined || !/^[1-9]\d*$/.test(amountRawUsdc)) {
   fail(
-    "Usage: npm run demo:withdraw -- <amountRawUsdc>  " +
+    "Usage: pay withdraw <amountRawUsdc> [apr_<approvalId>]  " +
       "(positive integer, e.g. 1000000 = 1 USDC)"
   );
+}
+// Owner approval id, only needed when the mandate's withdrawalPolicy is
+// "owner_approval_required" (a previous run printed the approveUrl).
+const approvalId = process.argv[3];
+if (approvalId !== undefined && !/^apr_[0-9a-f]+$/i.test(approvalId)) {
+  fail(`unrecognized argument: ${approvalId} (expected apr_<approvalId>)`);
 }
 
 const keyPairSigner = await loadKeyPairSigner({
@@ -60,10 +66,38 @@ console.log(
 let submitted;
 try {
   submitted = await vaultFlows.withdraw({
-    amountRawUsdc: BigInt(amountRawUsdc)
+    amountRawUsdc: BigInt(amountRawUsdc),
+    ...(approvalId === undefined ? {} : { approvalId })
   });
 } catch (error) {
   if (error instanceof VaultFlowClientError) {
+    // Owner-approval escalation: not a failure — print the next action so a
+    // chat agent can paste the link and retry with the approval id.
+    if (error.code === "withdrawal_approval_required") {
+      const details = (error.errorDetails ?? {}) as {
+        approvalId?: string;
+        approveUrl?: string;
+        expiresAtMs?: number;
+      };
+      process.stdout.write(
+        `${JSON.stringify(
+          {
+            ok: false,
+            approvalRequired: true,
+            approvalId: details.approvalId ?? null,
+            approveUrl: details.approveUrl ?? null,
+            expiresAtMs: details.expiresAtMs ?? null,
+            message:
+              "This withdrawal needs the owner's approval. Paste approveUrl " +
+              "to the user; once they approve, retry: " +
+              `pay withdraw ${amountRawUsdc} ${details.approvalId ?? "<approvalId>"}`
+          },
+          null,
+          2
+        )}\n`
+      );
+      process.exit(1);
+    }
     fail(`[withdraw] ${error.step} failed: ${error.message}`);
   }
   throw error;

@@ -19,10 +19,14 @@ Ships one `pay` dispatcher bin with subcommands, all runnable with `npx` (no clo
   threshold, deposits, and (when the mandate opts in) withdrawals return an
   `approveUrl` to paste into chat; retry with the `approvalId` once the
   human approved.
-- `pay fetch <url>` — one-shot: pay for a URL, print the receipt (used by the
-  OpenClaw skill)
-- `pay deposit <amountRawUsdc>` / `pay withdraw <amountRawUsdc>` — vault
-  deposit / withdraw
+- `pay fetch <url> [maxAmountRawUsdc] [apr_<approvalId>]` — one-shot: pay for
+  a URL, print the receipt (used by the OpenClaw skill); retry with the
+  `apr_...` id after an `approval_required` refusal
+- `pay deposit <amountRawUsdc> [apr_...]` / `pay withdraw <amountRawUsdc>
+  [apr_...]` — vault deposit / withdraw with the same owner-approval flow
+- `pay setup-link [--initial-deposit <raw>] [--approval-threshold <raw>] ...`
+  / `pay setup-status <sessionId>` — owner onboarding for CLI/skill harnesses
+  (same flow as the MCP setup tools)
 
 ## Wallet
 

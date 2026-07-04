@@ -9,14 +9,16 @@ const TARGETS = {
   mcp: "mcp-server.js",
   fetch: "pay.js",
   deposit: "deposit.js",
-  withdraw: "withdraw.js"
+  withdraw: "withdraw.js",
+  "setup-link": "setup-link.js",
+  "setup-status": "setup-status.js"
 };
 
 const [sub, ...rest] = process.argv.slice(2);
 const target = sub === undefined ? undefined : TARGETS[sub];
 if (target === undefined) {
   console.error(
-    "usage: subly <mcp|fetch <url>|deposit <amountRawUsdc>|withdraw <amountRawUsdc>>"
+    "usage: subly <mcp|fetch <url>|deposit <amountRawUsdc>|withdraw <amountRawUsdc>|setup-link|setup-status <sessionId>>"
   );
   process.exit(1);
 }

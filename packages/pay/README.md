@@ -78,6 +78,60 @@ claude mcp add subly -- npx -y @subly_fi/pay mcp
 npx -y @subly_fi/pay fetch https://seller.example.com/api/premium
 ```
 
+### Claude Desktop
+
+Prerequisites: [Node.js](https://nodejs.org) 20+ installed, and an agent
+keypair (see [Wallet](#wallet) above).
+
+1. Open the config file (create it if it does not exist):
+   - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+   - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+
+   Or in the app: **Settings → Developer → Edit Config**.
+
+2. Add the `subly` server. Claude Desktop is a GUI app and does **not**
+   inherit your shell environment (`.zshrc`, `.env` files), so every
+   variable must go in the `env` block:
+
+   ```json
+   {
+     "mcpServers": {
+       "subly": {
+         "command": "npx",
+         "args": ["-y", "@subly_fi/pay", "mcp"],
+         "env": {
+           "SUBLY_DEMO_AGENT_KEYPAIR_PATH": "/Users/you/.subly/agent.json"
+         }
+       }
+     }
+   }
+   ```
+
+   Use an absolute path for the keypair (`~` is not expanded). For a
+   custody wallet, replace the keypair var with the `circle` / `privy`
+   variables from [Environment](#environment). Optional vars
+   (`SUBLY_MCP_MAX_AMOUNT_RAW_USDC`, `SOLANA_RPC_URL`, …) go in the same
+   `env` block.
+
+3. Restart Claude Desktop (quit fully, then reopen). The tools icon under
+   the chat input should now list **subly-payments** with the tools above.
+
+   If the server fails to start, the usual cause is that Claude Desktop
+   cannot find `npx` (e.g. Node installed via nvm). Point `command` at the
+   absolute path instead — run `which npx` in a terminal and use that
+   value, e.g. `"command": "/opt/homebrew/bin/npx"`.
+
+4. Use it by chatting. First time: "set up Subly" walks you through the
+   owner setup link (spending mandate + first deposit). After that,
+   asking for anything behind an x402 paywall ("fetch
+   https://seller.example.com/api/premium") pays from vault yield
+   automatically and returns the response plus a payment receipt.
+   Payments above the owner's approval threshold return an `approveUrl` —
+   open it in a browser, approve, then tell Claude to retry.
+
+   Claude Desktop asks for permission on each first tool use; choose
+   "Allow always" to keep the flow hands-free.
+
 ## Environment
 
 | Var | Required | Default |

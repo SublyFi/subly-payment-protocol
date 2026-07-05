@@ -71,7 +71,7 @@ export async function ensureWalletOnboarded(params: {
     signingPolicyId: SELF_SERVE_POLICY_ID,
     signingMode: "non_interactive",
     signerValidationMode: params.signer.validationMode,
-    signerProvider: "local-keypair",
+    signerProvider: params.signer.provider ?? "local-keypair",
     activateForPayments: true
   });
   await post("sync", `/v1/wallets/${wallet}/sync`, { source: "chain" });

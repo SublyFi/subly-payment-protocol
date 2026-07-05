@@ -13,6 +13,7 @@ import {
   type Address,
   type Blockhash,
   type Instruction,
+  type SignatureBytes,
   type Transaction
 } from "@solana/kit";
 import { sha256TaggedHex } from "../lib/hash.js";
@@ -87,8 +88,39 @@ export function transactionMessageHash(transaction: Transaction): string {
   return sha256TaggedHex(Buffer.from(transaction.messageBytes));
 }
 
-function decodeSerializedTransaction(serializedBase64: string): Transaction {
+export function decodeSerializedTransaction(
+  serializedBase64: string
+): Transaction {
   return getTransactionDecoder().decode(Buffer.from(serializedBase64, "base64"));
+}
+
+/**
+ * Attaches a signature produced outside this process (custody/MPC provider)
+ * to an already-decoded transaction. The signature is inserted as-is; callers
+ * must verify it against the transaction's messageBytes and the signer's
+ * public key first (see src/client/remote-signer-transport.ts).
+ */
+export function attachExternalSignatureToTransaction(params: {
+  transaction: Transaction;
+  signer: Address;
+  signature: Uint8Array;
+}): { serializedBase64: string; transaction: Transaction } {
+  if (!(params.signer in params.transaction.signatures)) {
+    throw new Error(
+      `transaction does not expect a signature from ${params.signer}`
+    );
+  }
+  const transaction: Transaction = Object.freeze({
+    ...params.transaction,
+    signatures: Object.freeze({
+      ...params.transaction.signatures,
+      [params.signer]: params.signature as SignatureBytes
+    })
+  });
+  return {
+    serializedBase64: getBase64EncodedWireTransaction(transaction),
+    transaction
+  };
 }
 
 export async function addSignaturesToSerializedTransaction(params: {

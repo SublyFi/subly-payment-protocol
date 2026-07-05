@@ -7,7 +7,8 @@
  * Usage:
  *   pay fetch <url> [maxAmountRawUsdc]
  * Env:
- *   SUBLY_DEMO_AGENT_KEYPAIR or SUBLY_DEMO_AGENT_KEYPAIR_PATH   (required)
+ *   SUBLY_SIGNER_PROVIDER   local (default) | circle | privy; credentials
+ *                           per provider — see src/client/signer-env.ts
  *   SUBLY_RELAYER_URL       Subly relayer API; default https://api.demo.sublyfi.com
  *   SOLANA_RPC_URL          default public mainnet RPC
  *   SUBLY_MCP_MAX_AMOUNT_RAW_USDC   default cap (10000 = 0.01 USDC)
@@ -15,13 +16,13 @@
  */
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { LocalKeypairAgentWalletSigner } from "../../../src/client/agent-wallet-signer.js";
 import { ensureWalletOnboarded } from "../../../src/client/onboarding.js";
 import { createRelayerX402Payer } from "../../../src/client/relayer-payer.js";
+import { agentWalletSignerFromEnv } from "../../../src/client/signer-env.js";
 import { StandardX402PayError } from "../../../src/client/standard-x402-payer.js";
 import { fileStandardX402StateStore } from "../../../src/client/standard-x402-state-store.js";
-import { loadKeyPairSigner, loadSecretKeyBytes } from "../../../src/solana/keys.js";
 import { createRpc } from "../../../src/solana/rpc.js";
+import { svmTransactionSignerFromBundle } from "./svm-signer.js";
 import { createSvmX402Fetch } from "./svm-x402-fetch.js";
 
 function fail(message: string): never {
@@ -61,24 +62,18 @@ const pendingStatePath =
   process.env.SUBLY_MCP_STATE_PATH ??
   join(homedir(), ".subly", "standard-x402-pending.json");
 
-const keyPairSigner = await loadKeyPairSigner({
-  base58Secret: process.env.SUBLY_DEMO_AGENT_KEYPAIR,
-  jsonFilePath: process.env.SUBLY_DEMO_AGENT_KEYPAIR_PATH,
-  label: "SUBLY_DEMO_AGENT_KEYPAIR"
-});
-const agentSecretKey = loadSecretKeyBytes({
-  base58Secret: process.env.SUBLY_DEMO_AGENT_KEYPAIR,
-  jsonFilePath: process.env.SUBLY_DEMO_AGENT_KEYPAIR_PATH,
-  label: "SUBLY_DEMO_AGENT_KEYPAIR"
-});
-const signer = new LocalKeypairAgentWalletSigner(keyPairSigner);
+const bundle = await agentWalletSignerFromEnv();
+const signer = bundle.signer;
 const rpc = createRpc(rpcUrl);
 
 const payer = createRelayerX402Payer({
   relayerBaseUrl,
   signer,
   rpc,
-  x402Fetch: await createSvmX402Fetch({ agentSecretKey, rpcUrl }),
+  x402Fetch: await createSvmX402Fetch({
+    signer: await svmTransactionSignerFromBundle(bundle),
+    rpcUrl
+  }),
   defaultMaxAmountRawUsdc,
   stateStore: fileStandardX402StateStore(pendingStatePath)
 });

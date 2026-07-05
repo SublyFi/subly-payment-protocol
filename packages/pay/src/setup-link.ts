@@ -11,12 +11,12 @@
  *                  [--per-payment-cap <rawUsdc>] [--daily-api-cap <rawUsdc>]
  *                  [--daily-deposit-cap <rawUsdc>] [--ttl-days <days>]
  * Env:
- *   SUBLY_DEMO_AGENT_KEYPAIR or SUBLY_DEMO_AGENT_KEYPAIR_PATH   (required)
+ *   SUBLY_SIGNER_PROVIDER   local (default) | circle | privy; credentials
+ *                           per provider — see src/client/signer-env.ts
  *   SUBLY_RELAYER_URL   Subly relayer API; default https://api.demo.sublyfi.com
  */
-import { LocalKeypairAgentWalletSigner } from "../../../src/client/agent-wallet-signer.js";
+import { agentWalletSignerFromEnv } from "../../../src/client/signer-env.js";
 import { VaultFlowClient, VaultFlowClientError } from "../../../src/client/vault-flows.js";
-import { loadKeyPairSigner } from "../../../src/solana/keys.js";
 import { createRpc } from "../../../src/solana/rpc.js";
 
 function fail(message: string): never {
@@ -82,12 +82,7 @@ const relayerBaseUrl =
   process.env.SUBLY_FACILITATOR_URL ??
   "https://api.demo.sublyfi.com";
 
-const keyPairSigner = await loadKeyPairSigner({
-  base58Secret: process.env.SUBLY_DEMO_AGENT_KEYPAIR,
-  jsonFilePath: process.env.SUBLY_DEMO_AGENT_KEYPAIR_PATH,
-  label: "SUBLY_DEMO_AGENT_KEYPAIR"
-});
-const signer = new LocalKeypairAgentWalletSigner(keyPairSigner);
+const { signer } = await agentWalletSignerFromEnv();
 const vaultFlows = new VaultFlowClient({
   relayerBaseUrl,
   signer,

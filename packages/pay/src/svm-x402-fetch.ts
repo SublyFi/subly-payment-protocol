@@ -1,4 +1,4 @@
-import { createKeyPairSignerFromBytes } from "@solana/kit";
+import type { TransactionSigner } from "@solana/kit";
 import { wrapFetchWithPaymentFromConfig } from "@x402/fetch";
 import type { SelectPaymentRequirements } from "@x402/fetch";
 import { ExactSvmScheme, toClientSvmSigner } from "@x402/svm";
@@ -14,21 +14,20 @@ import {
 /**
  * Builds the x402 payment `fetch` for the published client using the OFFICIAL
  * x402 Foundation Solana implementation (@x402/svm + @x402/fetch, kit v5). It
- * derives the agent's SVM signer from the raw 64-byte secret, registers the
- * Exact SVM scheme only for the preflight-approved CAIP-2 network, and returns
- * a fetch that transparently pays the matching 402 challenge.
+ * takes any kit TransactionSigner for the agent wallet (local keypair or a
+ * custody-backed adapter — see svm-signer.ts), registers the Exact SVM scheme
+ * only for the preflight-approved CAIP-2 network, and returns a fetch that
+ * transparently pays the matching 402 challenge.
  *
  * This replaces PayAI's x402-solana, whose transaction builder rejected
  * off-curve (PDA) seller payTo addresses; @x402/svm derives the destination ATA
  * with @solana-program/token, which handles off-curve owners correctly.
  */
 export async function createSvmX402Fetch(params: {
-  agentSecretKey: Uint8Array;
+  signer: TransactionSigner;
   rpcUrl: string;
 }): Promise<StandardX402FetchLike> {
-  const signer = toClientSvmSigner(
-    await createKeyPairSignerFromBytes(params.agentSecretKey)
-  );
+  const signer = toClientSvmSigner(params.signer);
 
   return (url, init, expected) => {
     const wrapped = wrapFetchWithPaymentFromConfig(fetch, {

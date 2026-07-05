@@ -12,14 +12,15 @@
  * Required env:
  *   SOLANA_RPC_URL              RPC for the agent's own lookup-table view
  *                               (optional; defaults to the public mainnet RPC)
- *   SUBLY_DEMO_AGENT_KEYPAIR or SUBLY_DEMO_AGENT_KEYPAIR_PATH
+ *   SUBLY_SIGNER_PROVIDER       local (default) | circle | privy;
+ *                               credentials per provider — see
+ *                               src/client/signer-env.ts
  * Optional env:
  *   SUBLY_RELAYER_URL           Subly relayer API; default https://api.demo.sublyfi.com
  */
-import { LocalKeypairAgentWalletSigner } from "../src/client/agent-wallet-signer.js";
 import { ensureWalletOnboarded } from "../src/client/onboarding.js";
+import { agentWalletSignerFromEnv } from "../src/client/signer-env.js";
 import { VaultFlowClient, VaultFlowClientError } from "../src/client/vault-flows.js";
-import { loadKeyPairSigner } from "../src/solana/keys.js";
 import { createRpc } from "../src/solana/rpc.js";
 import { fail, formatRawUsdc } from "./shared.js";
 
@@ -43,12 +44,7 @@ if (approvalId !== undefined && !/^apr_[0-9a-f]+$/i.test(approvalId)) {
   fail(`unrecognized argument: ${approvalId} (expected apr_<approvalId>)`);
 }
 
-const keyPairSigner = await loadKeyPairSigner({
-  base58Secret: process.env.SUBLY_DEMO_AGENT_KEYPAIR,
-  jsonFilePath: process.env.SUBLY_DEMO_AGENT_KEYPAIR_PATH,
-  label: "SUBLY_DEMO_AGENT_KEYPAIR"
-});
-const signer = new LocalKeypairAgentWalletSigner(keyPairSigner);
+const { signer } = await agentWalletSignerFromEnv();
 const rpc = createRpc(
   process.env.SOLANA_RPC_URL ?? "https://api.mainnet-beta.solana.com"
 );

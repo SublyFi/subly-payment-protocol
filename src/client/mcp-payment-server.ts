@@ -30,11 +30,17 @@ paid APIs that offer a Solana USDC exact rail with facilitator feePayer support 
 from its wallet's Kamino vault YIELD — the deposited principal is never spent, \
 and the seller needs no Subly integration.
 
-One-time setup: the operator needs a Solana keypair for the agent wallet. \
-Subly does NOT create wallets; make one with \`solana-keygen new -o \
-agent.json\` (or export a keypair from an existing wallet) and point \
-SUBLY_DEMO_AGENT_KEYPAIR_PATH at it. The private key never leaves that \
-file; this server only signs locally with it. Then fund the wallet with \
+One-time setup: the operator needs a Solana agent wallet. Subly does NOT \
+create wallets; either make a local keypair with \`solana-keygen new -o \
+agent.json\` (or export one from an existing wallet) and point \
+SUBLY_DEMO_AGENT_KEYPAIR_PATH at it, or use a custody wallet — set \
+SUBLY_SIGNER_PROVIDER=circle (Circle developer-controlled wallet: \
+CIRCLE_API_KEY, CIRCLE_ENTITY_SECRET, CIRCLE_WALLET_ID) or =privy (Privy \
+server wallet incl. agentic/owner-key wallets: PRIVY_APP_ID, \
+PRIVY_APP_SECRET, PRIVY_WALLET_ID, plus PRIVY_AUTHORIZATION_KEY for \
+owner-key wallets). With a \
+local keypair the private key never leaves that file; with a custody \
+provider it never enters this machine at all. Then fund the wallet with \
 USDC on Solana mainnet — no SOL is ever needed, all vault transaction fees \
 are sponsored.
 

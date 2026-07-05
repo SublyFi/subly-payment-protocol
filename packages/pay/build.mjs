@@ -18,7 +18,9 @@ const entries = {
   "mcp-server": join(here, "src", "mcp-server.ts"),
   pay: join(here, "src", "pay.ts"),
   deposit: join(repoRoot, "demo", "deposit.ts"),
-  withdraw: join(repoRoot, "demo", "withdraw.ts")
+  withdraw: join(repoRoot, "demo", "withdraw.ts"),
+  "setup-link": join(here, "src", "setup-link.ts"),
+  "setup-status": join(here, "src", "setup-status.ts")
 };
 
 await build({

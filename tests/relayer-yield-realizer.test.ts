@@ -140,7 +140,8 @@ describe("RelayerYieldRealizer", () => {
     const result = await realizer.ensureUsdcAvailable({ amountRawUsdc: 10_000n });
     expect(result).toEqual({
       realizedRawUsdc: 10_000n,
-      txSignature: "realizeSig"
+      txSignature: "realizeSig",
+      withdrawalId: expect.any(String)
     });
     expect(calls).toEqual([
       `${BASE}/v1/wallets/${WALLET}/sync`,

@@ -1,4 +1,5 @@
 import { SOLANA_MAINNET_NETWORK, SUBLY_VAULT } from "../config/constants.js";
+import { sha256HexOf } from "../lib/canonical-json.js";
 import {
   PAYMENT_REQUIRED_HEADER,
   requestBodyHashFor
@@ -12,9 +13,9 @@ import {
 } from "../x402/standard-requirements.js";
 
 /**
- * Buyer-side payer for STANDARD x402 (v2) sellers — pays ANY x402-compatible
- * paid API (Nansen via PayAI, etc.) from Kamino vault yield, with no
- * Subly-specific integration on the seller side.
+ * Buyer-side payer for STANDARD x402 (v2) sellers — pays compatible Solana
+ * USDC `exact` APIs from Kamino vault yield, with no Subly-specific integration
+ * on the seller side.
  *
  * Flow per purchase:
  *   1. probe the URL unpaid -> read the 402 challenge
@@ -29,12 +30,39 @@ import {
  * never ride in the same transaction.
  */
 
+/**
+ * The x402 payment a realize funds, declared to the relayer so server-side
+ * spending caps and the audit log key off "what was paid", not just an
+ * amount (docs/spending-mandate-design.md).
+ */
+export interface RealizePaymentBinding {
+  payTo: string;
+  amountRawUsdc: string;
+  resourceUrlHash: string;
+  method: string;
+}
+
 /** Ensures the agent USDC ATA can cover a payment, realizing yield as needed. */
 export interface YieldRealizer {
-  ensureUsdcAvailable(input: { amountRawUsdc: bigint }): Promise<{
+  ensureUsdcAvailable(input: {
+    amountRawUsdc: bigint;
+    payment?: RealizePaymentBinding;
+    /** Owner approval for payments above the mandate threshold. */
+    approvalId?: string;
+  }): Promise<{
     realizedRawUsdc: bigint;
     txSignature: string | null;
+    /** The relayer's realize withdrawal id, when the realizer knows it. */
+    withdrawalId?: string | null;
   }>;
+  /**
+   * Optional best-effort report-back of the x402 payment tx a realize
+   * funded (relayer audit chain). Failures must never affect the payment.
+   */
+  reportPayment?(input: {
+    withdrawalId: string;
+    paymentTxSignature: string;
+  }): Promise<void>;
 }
 
 /** Minimal HTTP surface (satisfied by the global fetch Response). */
@@ -84,6 +112,12 @@ export interface StandardPayInput {
   headers?: Record<string, string>;
   maxAmountRawUsdc?: bigint;
   forceNewPayment?: boolean;
+  /**
+   * Owner approval id for a payment above the mandate threshold: after an
+   * "approval_required" refusal and the owner's sign-off, retry the SAME
+   * call with the approvalId from the refusal detail.
+   */
+  approvalId?: string;
 }
 
 export interface StandardX402PayerConfig {
@@ -114,6 +148,8 @@ export interface StandardPayResult {
     feePayer: string | null;
     realizedRawUsdc: string;
     realizeTxSignature: string | null;
+    /** From the seller's X-PAYMENT-RESPONSE settle header, when present. */
+    paymentTxSignature: string | null;
   };
 }
 
@@ -123,6 +159,7 @@ export class StandardX402PayError extends Error {
       | "invalid_challenge"
       | "no_payable_requirement"
       | "amount_exceeds_client_cap"
+      | "approval_required"
       | "realize_failed"
       | "payment_outcome_unknown"
       | "state_persist_failed",
@@ -238,12 +275,37 @@ export class StandardX402Payer {
       );
     }
 
-    let realized: { realizedRawUsdc: bigint; txSignature: string | null };
+    let realized: {
+      realizedRawUsdc: bigint;
+      txSignature: string | null;
+      withdrawalId?: string | null;
+    };
     try {
       realized = await this.realizer.ensureUsdcAvailable({
-        amountRawUsdc: selected.amountRawUsdc
+        amountRawUsdc: selected.amountRawUsdc,
+        payment: {
+          payTo: selected.payTo,
+          amountRawUsdc: selected.amountRawUsdc.toString(),
+          resourceUrlHash: sha256HexOf(input.url),
+          method
+        },
+        ...(input.approvalId === undefined
+          ? {}
+          : { approvalId: input.approvalId })
       });
     } catch (error) {
+      // Mandate threshold escalation is a REFUSAL BEFORE anything moved:
+      // no yield realized, nothing paid. Surface the approve link so the
+      // caller can ask the owner and retry with the approvalId.
+      if ((error as { code?: unknown }).code === "approval_required") {
+        throw new StandardX402PayError(
+          "approval_required",
+          "this payment exceeds the owner-approval threshold; NOTHING was " +
+            "paid. Ask the owner to open the approveUrl, then retry the same " +
+            "call with the approvalId",
+          (error as { detail?: unknown }).detail ?? null
+        );
+      }
       throw new StandardX402PayError(
         "realize_failed",
         `could not realize yield to cover ${selected.amountRawUsdc} raw USDC: ${
@@ -309,6 +371,29 @@ export class StandardX402Payer {
     }
     this.clearDelivered(pendingKey);
 
+    // The seller's settle response header names the on-chain payment tx.
+    // Reporting it back to the relayer completes the mandate → realize →
+    // payment audit chain; best-effort only, the payment already succeeded.
+    const paymentTxSignature = extractSettledPaymentTxSignature(response);
+    if (
+      paymentTxSignature !== null &&
+      typeof realized.withdrawalId === "string" &&
+      this.realizer.reportPayment !== undefined
+    ) {
+      try {
+        await this.realizer.reportPayment({
+          withdrawalId: realized.withdrawalId,
+          paymentTxSignature
+        });
+      } catch (error) {
+        console.error(
+          `[subly-x402] payment report-back failed (audit only, payment ok): ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+    }
+
     return {
       paid: true,
       status: response.status,
@@ -318,7 +403,8 @@ export class StandardX402Payer {
         payTo: selected.payTo,
         feePayer: selected.feePayer,
         realizedRawUsdc: realized.realizedRawUsdc.toString(),
-        realizeTxSignature: realized.txSignature
+        realizeTxSignature: realized.txSignature,
+        paymentTxSignature
       }
     };
   }
@@ -450,4 +536,32 @@ function pendingPaymentKey(input: {
   requestBodyHash: string;
 }): string {
   return `${input.method}:${input.url}:${input.requestBodyHash}`;
+}
+
+/**
+ * Standard x402 v2: after settlement the resource server echoes the settle
+ * response as base64 JSON in X-PAYMENT-RESPONSE, including the payment
+ * transaction signature. Absent or malformed headers yield null.
+ */
+export function extractSettledPaymentTxSignature(
+  response: FetchResponseLike
+): string | null {
+  const header = response.headers.get("x-payment-response");
+  if (header === null || header.length === 0) {
+    return null;
+  }
+  try {
+    const decoded = JSON.parse(
+      Buffer.from(header, "base64").toString("utf8")
+    ) as { transaction?: unknown; txHash?: unknown };
+    if (typeof decoded.transaction === "string" && decoded.transaction.length > 0) {
+      return decoded.transaction;
+    }
+    if (typeof decoded.txHash === "string" && decoded.txHash.length > 0) {
+      return decoded.txHash;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }

@@ -3,6 +3,10 @@ import type {
   PaymentIntent,
   PaymentStatus,
   SellerLiquidityPolicy,
+  SetupSession,
+  SpendingApproval,
+  SpendingMandateEvent,
+  SpendingMandateRecord,
   SyncEvent,
   WalletPosition,
   WithdrawalIntent
@@ -63,6 +67,22 @@ export interface Ledger {
     vault: string,
     limit?: number
   ): Awaitable<SyncEvent[]>;
+  getSpendingMandate(wallet: string): Awaitable<SpendingMandateRecord | null>;
+  saveSpendingMandate(
+    record: SpendingMandateRecord
+  ): Awaitable<SpendingMandateRecord>;
+  saveSpendingMandateEvent(
+    event: SpendingMandateEvent
+  ): Awaitable<SpendingMandateEvent>;
+  getSpendingApproval(approvalId: string): Awaitable<SpendingApproval | null>;
+  saveSpendingApproval(
+    approval: SpendingApproval
+  ): Awaitable<SpendingApproval>;
+  listSpendingApprovalsForWallet(
+    wallet: string
+  ): Awaitable<SpendingApproval[]>;
+  getSetupSession(sessionId: string): Awaitable<SetupSession | null>;
+  saveSetupSession(session: SetupSession): Awaitable<SetupSession>;
 }
 
 export class InMemoryLedger implements Ledger {
@@ -72,6 +92,10 @@ export class InMemoryLedger implements Ledger {
   private readonly withdrawals = new Map<string, WithdrawalIntent>();
   private readonly liquidityPolicies = new Map<string, SellerLiquidityPolicy>();
   private readonly syncEvents: SyncEvent[] = [];
+  private readonly spendingMandates = new Map<string, SpendingMandateRecord>();
+  private readonly spendingMandateEvents: SpendingMandateEvent[] = [];
+  private readonly spendingApprovals = new Map<string, SpendingApproval>();
+  private readonly setupSessions = new Map<string, SetupSession>();
   private readonly lockTails = new Map<string, Promise<void>>();
 
   async withWalletVaultLock<T>(
@@ -230,6 +254,48 @@ export class InMemoryLedger implements Ledger {
       .slice(-limit)
       .reverse()
       .map((event) => ({ ...event }));
+  }
+
+  getSpendingMandate(wallet: string): SpendingMandateRecord | null {
+    const record = this.spendingMandates.get(wallet) ?? null;
+    return record === null ? null : structuredClone(record);
+  }
+
+  saveSpendingMandate(record: SpendingMandateRecord): SpendingMandateRecord {
+    this.spendingMandates.set(record.wallet, structuredClone(record));
+    return structuredClone(record);
+  }
+
+  saveSpendingMandateEvent(event: SpendingMandateEvent): SpendingMandateEvent {
+    this.spendingMandateEvents.push(structuredClone(event));
+    return structuredClone(event);
+  }
+
+  getSpendingApproval(approvalId: string): SpendingApproval | null {
+    const approval = this.spendingApprovals.get(approvalId) ?? null;
+    return approval === null ? null : structuredClone(approval);
+  }
+
+  saveSpendingApproval(approval: SpendingApproval): SpendingApproval {
+    this.spendingApprovals.set(approval.approvalId, structuredClone(approval));
+    return structuredClone(approval);
+  }
+
+  listSpendingApprovalsForWallet(wallet: string): SpendingApproval[] {
+    return [...this.spendingApprovals.values()]
+      .filter((approval) => approval.wallet === wallet)
+      .sort((a, b) => b.requestedAtMs - a.requestedAtMs)
+      .map((approval) => structuredClone(approval));
+  }
+
+  getSetupSession(sessionId: string): SetupSession | null {
+    const session = this.setupSessions.get(sessionId) ?? null;
+    return session === null ? null : structuredClone(session);
+  }
+
+  saveSetupSession(session: SetupSession): SetupSession {
+    this.setupSessions.set(session.sessionId, structuredClone(session));
+    return structuredClone(session);
   }
 }
 

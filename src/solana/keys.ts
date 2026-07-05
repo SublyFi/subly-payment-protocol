@@ -36,9 +36,8 @@ export async function loadKeyPairSigner(params: {
 
 /**
  * Loads the raw 64-byte ed25519 secret from the same sources as
- * loadKeyPairSigner. Needed by consumers that build a legacy @solana/web3.js
- * Keypair (e.g. the x402-solana wallet adapter) rather than a @solana/kit
- * signer. The bytes never leave the process.
+ * loadKeyPairSigner. Needed by consumers that adapt the local keypair to
+ * standard x402 client libraries. The bytes never leave the process.
  */
 export function loadSecretKeyBytes(params: {
   base58Secret?: string | undefined;

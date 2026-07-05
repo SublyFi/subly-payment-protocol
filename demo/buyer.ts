@@ -1,7 +1,6 @@
 /**
  * LEGACY demo buyer: an agent that pays a Subly-gated Seller API from Kamino
- * vault yield. Current demos use standard x402 Sellers via demo/pay-x402.ts or
- * @subly_fi/pay.
+ * vault yield. Current demos use standard x402 Sellers via @subly_fi/pay.
  *
  * Flow: request -> 402 challenge -> prepare at facilitator -> structured-
  * intent validation + local signing -> retry with PAYMENT-SIGNATURE ->

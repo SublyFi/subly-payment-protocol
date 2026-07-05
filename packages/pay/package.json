@@ -1,7 +1,7 @@
 {
   "name": "@subly_fi/pay",
-  "version": "0.4.1",
-  "description": "Subly client: pay for ANY standard x402 (HTTP 402) paid API from Kamino vault yield — the seller needs no Subly integration. Ships an MCP server and a one-shot pay/deposit CLI; non-custodial (signs locally with your own key).",
+  "version": "0.6.1",
+  "description": "Subly client: pay compatible standard x402 Solana USDC exact APIs from Kamino vault yield — the seller needs no Subly integration. Ships an MCP server and a one-shot pay/deposit CLI; non-custodial (signs locally with your own key).",
   "license": "MIT",
   "type": "module",
   "engines": {

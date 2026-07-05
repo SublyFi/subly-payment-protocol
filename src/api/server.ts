@@ -23,19 +23,31 @@ import { forbidden, notFound, unavailable } from "../domain/errors.js";
 import type { ChainWalletSyncService } from "../domain/chain-wallet-sync.js";
 import { OperationalMetrics, TRACKED_ERROR_CODES } from "../domain/metrics.js";
 import type { VaultFlowService } from "../domain/vault-flow-service.js";
+import type { SpendingMandateService } from "../domain/spending-mandate-service.js";
 import {
+  approvalDecisionSchema,
   chainSyncWalletPositionSchema,
+  completeSetupSessionSchema,
+  createSetupSessionSchema,
   liquidityPolicySchema,
+  ownerSignedActionSchema,
   prepareDepositSchema,
   preparePaymentSchema,
   prepareWithdrawalSchema,
   recoverSettlementsSchema,
   registerAgentWalletSchema,
+  registerMandateSchema,
+  reportPaymentSchema,
   submitDepositSchema,
   submitWithdrawalSchema,
   syncWalletPositionSchema,
   verifyPaymentPayloadSchema
 } from "./schemas.js";
+import {
+  approvePageHtml,
+  revokePageHtml,
+  setupPageHtml
+} from "./owner-pages.js";
 
 export interface SponsorMonitoring {
   sponsorAddress: string;
@@ -49,6 +61,7 @@ export interface ServerOptions {
   vaultFlowService?: VaultFlowService | null;
   chainWalletSync?: ChainWalletSyncService | null;
   sponsorMonitoring?: SponsorMonitoring | null;
+  mandateService?: SpendingMandateService | null;
   metrics?: OperationalMetrics | undefined;
   /** Per-IP request rate (per minute) for non-health endpoints; 0 disables. */
   apiRatePerMinute?: number | undefined;
@@ -81,6 +94,7 @@ export function buildServer(
   const vaultFlowService = options.vaultFlowService ?? null;
   const chainWalletSync = options.chainWalletSync ?? null;
   const sponsorMonitoring = options.sponsorMonitoring ?? null;
+  const mandateService = options.mandateService ?? null;
   const metrics = options.metrics ?? new OperationalMetrics();
   const server = Fastify({
     logger: true,
@@ -587,6 +601,231 @@ export function buildServer(
       }
       return withdrawal;
     }
+  );
+
+  // ------------------------------------------------------- spending mandate
+  //
+  // Registration, revocation, and approval decisions are authorized by the
+  // SIGNATURES INSIDE the submitted documents (the owner credential), not by
+  // transport auth — the owner signs on their own device and the document can
+  // arrive over any channel (web page, CLI). Reads stay wallet/admin-authed.
+
+  const requireMandates = (): SpendingMandateService => {
+    if (mandateService === null) {
+      throw unavailable(
+        "mandate_unavailable",
+        "Spending-mandate endpoints are not configured on this server"
+      );
+    }
+    return mandateService;
+  };
+
+  server.put<{
+    Params: { wallet: string };
+  }>("/v1/wallets/:wallet/mandate", async (request) => {
+    const document = registerMandateSchema.parse(request.body);
+    return requireMandates().registerMandate({
+      wallet: request.params.wallet,
+      vault: SUBLY_VAULT.address,
+      document
+    });
+  });
+
+  server.get<{
+    Params: { wallet: string };
+  }>(
+    "/v1/wallets/:wallet/mandate",
+    { preHandler: requireWalletOrAdminAuth },
+    async (request) => {
+      assertOwnWallet(request, request.params.wallet);
+      return requireMandates().getMandate(
+        request.params.wallet,
+        SUBLY_VAULT.address
+      );
+    }
+  );
+
+  server.post<{
+    Params: { wallet: string };
+  }>("/v1/wallets/:wallet/mandate/revoke", async (request) => {
+    const body = ownerSignedActionSchema.parse(request.body);
+    return requireMandates().revokeMandate({
+      wallet: request.params.wallet,
+      ...body
+    });
+  });
+
+  // Owner-loss dead-man switch: the AGENT key (wallet-auth) schedules a
+  // revoke that only takes effect after the grace window the owner can veto.
+  server.post<{
+    Params: { wallet: string };
+  }>(
+    "/v1/wallets/:wallet/mandate/recovery-revoke",
+    { preHandler: requireWalletOrAdminAuth },
+    async (request) => {
+      assertOwnWallet(request, request.params.wallet);
+      return requireMandates().scheduleRecoveryRevoke(request.params.wallet);
+    }
+  );
+
+  server.post<{
+    Params: { wallet: string };
+  }>("/v1/wallets/:wallet/mandate/recovery-cancel", async (request) => {
+    const body = ownerSignedActionSchema.parse(request.body);
+    return requireMandates().cancelRecoveryRevoke({
+      wallet: request.params.wallet,
+      ...body
+    });
+  });
+
+  server.get<{
+    Params: { wallet: string };
+    Querystring: { status?: string };
+  }>(
+    "/v1/wallets/:wallet/approvals",
+    { preHandler: requireWalletOrAdminAuth },
+    async (request) => {
+      assertOwnWallet(request, request.params.wallet);
+      return {
+        approvals: await requireMandates().listApprovals(
+          request.params.wallet,
+          request.query.status
+        )
+      };
+    }
+  );
+
+  server.post<{
+    Params: { approvalId: string };
+  }>("/v1/approvals/:approvalId/decision", async (request) => {
+    const body = approvalDecisionSchema.parse(request.body);
+    return requireMandates().decideApproval({
+      approvalId: request.params.approvalId,
+      ...body
+    });
+  });
+
+  server.get<{
+    Params: { wallet: string };
+    Querystring: { limit?: string };
+  }>(
+    "/v1/wallets/:wallet/spending-log",
+    { preHandler: requireWalletOrAdminAuth },
+    async (request) => {
+      assertOwnWallet(request, request.params.wallet);
+      const limit =
+        request.query.limit === undefined
+          ? undefined
+          : Number.parseInt(request.query.limit, 10);
+      return requireMandates().spendingLog(
+        request.params.wallet,
+        SUBLY_VAULT.address,
+        limit !== undefined && Number.isSafeInteger(limit) && limit > 0
+          ? Math.min(limit, 1000)
+          : undefined
+      );
+    }
+  );
+
+  server.post(
+    "/v1/payments/report",
+    { preHandler: requireWalletOrAdminAuth },
+    async (request) => {
+      const body = reportPaymentSchema.parse(request.body);
+      assertOwnWallet(request, body.wallet);
+      return requireVaultFlows().reportPayment(body);
+    }
+  );
+
+  // --------------------------------------------------------- setup sessions
+  //
+  // The AGENT creates a session under wallet-auth (its signature pins the
+  // chat-agreed policy + initial deposit) and pastes the returned capability
+  // URL into chat. The session endpoints themselves are public: the URL is
+  // the authorization, the human's device has no wallet-auth key, and the
+  // completion is authorized by the owner signature INSIDE the document.
+
+  server.post<{
+    Params: { wallet: string };
+  }>(
+    "/v1/wallets/:wallet/setup-sessions",
+    { preHandler: requireWalletOrAdminAuth },
+    async (request) => {
+      assertOwnWallet(request, request.params.wallet);
+      const body = createSetupSessionSchema.parse(request.body ?? {});
+      return requireMandates().createSetupSession({
+        wallet: request.params.wallet,
+        vault: SUBLY_VAULT.address,
+        ...(body.policy === undefined ? {} : { policy: body.policy }),
+        ...(body.enforcementMode === undefined
+          ? {}
+          : { enforcementMode: body.enforcementMode }),
+        ...(body.mandateTtlDays === undefined
+          ? {}
+          : { mandateTtlMs: body.mandateTtlDays * 24 * 60 * 60 * 1000 }),
+        ...(body.initialDepositRawUsdc === undefined
+          ? {}
+          : { initialDepositRawUsdc: body.initialDepositRawUsdc }),
+        agentAuth: {
+          wallet: headerValue(request, WALLET_AUTH_WALLET_HEADER) ?? null,
+          signedAt: headerValue(request, WALLET_AUTH_SIGNED_AT_HEADER) ?? null,
+          signature: headerValue(request, WALLET_AUTH_SIGNATURE_HEADER) ?? null,
+          admin: request.authedAsAdmin === true
+        }
+      });
+    }
+  );
+
+  server.get<{
+    Params: { sessionId: string };
+  }>("/v1/setup-sessions/:sessionId", async (request) =>
+    requireMandates().getSetupSession(request.params.sessionId)
+  );
+
+  server.post<{
+    Params: { sessionId: string };
+  }>("/v1/setup-sessions/:sessionId/complete", async (request) => {
+    const body = completeSetupSessionSchema.parse(request.body);
+    return requireMandates().completeSetupSession({
+      sessionId: request.params.sessionId,
+      document: body.document
+    });
+  });
+
+  // Public capability reads backing the owner pages: the approval id / the
+  // wallet address in the link is the authorization to see the summary.
+  server.get<{
+    Params: { approvalId: string };
+  }>("/v1/approvals/:approvalId", async (request) =>
+    requireMandates().getApprovalView(request.params.approvalId)
+  );
+
+  server.get<{
+    Params: { wallet: string };
+  }>("/v1/wallets/:wallet/mandate/summary", async (request) =>
+    requireMandates().getMandateSummary(request.params.wallet)
+  );
+
+  // ------------------------------------------------------------ owner pages
+  //
+  // Self-contained HTML (no external assets) served by the relayer itself.
+  // The pages read their ids from the URL path and talk to the same-origin
+  // /v1 API; signing happens on the owner's device (passkey or Phantom).
+
+  const servePage = (reply: FastifyReply, html: string) =>
+    reply
+      .header("content-type", "text/html; charset=utf-8")
+      .header("cache-control", "no-store")
+      .send(html);
+
+  server.get("/setup/:sessionId", async (_request, reply) =>
+    servePage(reply, setupPageHtml())
+  );
+  server.get("/approve/:approvalId", async (_request, reply) =>
+    servePage(reply, approvePageHtml())
+  );
+  server.get("/revoke/:wallet", async (_request, reply) =>
+    servePage(reply, revokePageHtml())
   );
 
   return server;

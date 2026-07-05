@@ -40,7 +40,8 @@ export class RelayerRealizeError extends Error {
       | "budget_unavailable"
       | "prepare_failed"
       | "submit_failed"
-      | "realize_not_confirmed",
+      | "realize_not_confirmed"
+      | "approval_required",
     message: string,
     readonly detail: unknown = null
   ) {
@@ -83,7 +84,19 @@ export class RelayerYieldRealizer implements YieldRealizer {
 
   async ensureUsdcAvailable(input: {
     amountRawUsdc: bigint;
-  }): Promise<{ realizedRawUsdc: bigint; txSignature: string | null }> {
+    payment?: {
+      payTo: string;
+      amountRawUsdc: string;
+      resourceUrlHash: string;
+      method: string;
+    };
+    /** Owner approval for a payment above the mandate threshold. */
+    approvalId?: string;
+  }): Promise<{
+    realizedRawUsdc: bigint;
+    txSignature: string | null;
+    withdrawalId: string | null;
+  }> {
     // Always realize the full payment amount from the yield ledger. The agent's
     // ATA may contain manual top-ups or unrelated USDC, so raw ATA balance is
     // not valid provenance for a "yield-funded" payment.
@@ -97,7 +110,13 @@ export class RelayerYieldRealizer implements YieldRealizer {
         amountRawUsdc: shortfallRawUsdc,
         // The relayer refuses to prepare this withdrawal beyond the spendable
         // yield — the principal-protection guard the client cannot bypass.
-        purpose: "yield_realize"
+        purpose: "yield_realize",
+        // Declares what is being paid so the relayer's spending-mandate layer
+        // can enforce caps/payee and keep the mandate → payment audit chain.
+        ...(input.payment === undefined ? {} : { payment: input.payment }),
+        ...(input.approvalId === undefined
+          ? {}
+          : { approvalId: input.approvalId })
       });
     } catch (error) {
       throw this.mapWithdrawError(error);
@@ -113,8 +132,21 @@ export class RelayerYieldRealizer implements YieldRealizer {
 
     return {
       realizedRawUsdc: BigInt(outcome.actualWithdrawRawUsdc ?? "0"),
-      txSignature: outcome.txSignature
+      txSignature: outcome.txSignature,
+      withdrawalId: outcome.withdrawalId
     };
+  }
+
+  /**
+   * Best-effort report-back of the x402 payment tx this realize funded —
+   * closes the relayer's mandate → realize → payment audit chain. Callers
+   * must never let a failure here affect the payment result.
+   */
+  async reportPayment(input: {
+    withdrawalId: string;
+    paymentTxSignature: string;
+  }): Promise<void> {
+    await this.vaultFlows.reportPayment(input);
   }
 
   /**
@@ -158,9 +190,20 @@ export class RelayerYieldRealizer implements YieldRealizer {
         error
       );
     }
+    const serverCode = error.code ?? errorCodeFrom(error.detail);
+    // Mandate threshold escalation: nothing was realized or paid. The detail
+    // carries approvalId/approveUrl — the caller pastes the link into chat
+    // and retries the same call with the approvalId once the owner signed.
+    if (serverCode === "approval_required") {
+      return new RelayerRealizeError(
+        "approval_required",
+        "this payment exceeds the owner-approval threshold; nothing was " +
+          "realized or paid. Ask the owner to approve, then retry with the approvalId",
+        error.errorDetails ?? error.detail
+      );
+    }
     // The relayer's own principal-protection guard: surface it under the
     // same code as the client precheck so callers see one "wait for yield".
-    const serverCode = errorCodeFrom(error.detail);
     if (
       serverCode === "insufficient_yield" ||
       serverCode === "post_state_principal_invariant_failed"

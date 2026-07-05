@@ -1,7 +1,7 @@
 ---
 name: subly-pay
-description: Fetch a paywalled (HTTP 402) URL and pay for it automatically from the agent wallet's Kamino vault yield, without spending the principal. Use when a request returns 402, when the user asks to buy/access a paid API or resource, or mentions Subly / x402 / yield-funded payment.
-version: 0.1.1
+description: Fetch a paywalled (HTTP 402) URL and pay for it automatically from the agent wallet's Kamino vault yield, without spending the principal. Also manages the Subly vault (deposit/withdraw) and the human owner's spending mandate (setup link, Face ID approvals). Use when a request returns 402, when the user asks to buy/access a paid API or resource, or mentions Subly / x402 / yield-funded payment.
+version: 0.2.1
 metadata:
   openclaw:
     requires:
@@ -52,11 +52,21 @@ balance, guide the user through this once:
    stays in that file — never share or print it.
 2. Point the skill at it: `export SUBLY_DEMO_AGENT_KEYPAIR_PATH=~/.subly/agent.json`
 3. Send USDC (Solana mainnet) to that address. No SOL is needed — fees are
-   sponsored. Then deposit into the vault (minimum just over 1 USDC — the
+   sponsored.
+4. Appoint the human owner and make the first deposit (one Face ID covers
+   both). Agree the spending limits and the first deposit amount in chat,
+   then create the setup link (minimum deposit is just over 1 USDC — the
    vault's share rounding refuses exactly 1.000000):
-   `npx -y @subly_fi/pay deposit 1010000` (1.01 USDC; deposit also
-   self-registers the wallet).
-4. Yield accrues over time; a payment needs the price plus a fixed overhead
+   `npx -y @subly_fi/pay setup-link --initial-deposit 1010000`
+   Paste the printed `setupUrl` to the user VERBATIM — it expires in 10
+   minutes and works once. The human opens it on their phone, reviews the
+   limits, and confirms with Face ID (passkey) or a Solana wallet signature.
+   After they say they finished, verify and deposit:
+   `npx -y @subly_fi/pay setup-status <sessionId>` (the pasted setupUrl
+   works as the argument too) → status "completed"
+   `npx -y @subly_fi/pay deposit 1010000` (the pre-approved first deposit
+   is picked up automatically; deposit also self-registers the wallet).
+5. Yield accrues over time; a payment needs the price plus a fixed overhead
    (~0.0024 USDC) of spendable yield.
 
 ## How to run
@@ -91,11 +101,36 @@ body and the receipt to the user.
   - `payment_outcome_unknown` → a previous external x402 attempt may already
     have settled. Do not blindly re-pay; report the message and ask the user
     before using `SUBLY_PAY_FORCE_NEW_PAYMENT=1`.
+  - `approval_required` → the price exceeds the owner's approval threshold;
+    NOTHING was paid. The output carries an `approveUrl`, an `approvalId`,
+    and a ready-made `retry` command: paste the approveUrl to the user, and
+    once they approved (Face ID / wallet sign), run the `retry` command
+    exactly as printed. It repeats the SAME cap — approval-needing prices
+    exceed the default cap, so dropping it would refuse with
+    `amount_exceeds_client_cap`:
+    `npx -y @subly_fi/pay fetch "<url>" <sameMaxAmountRawUsdc> apr_<approvalId>`
   - `state_persist_failed` → the local pending-payment marker could not be
     stored. Do not retry until the state path/disk issue is fixed.
+
+## Deposits and withdrawals
+
+- `npx -y @subly_fi/pay deposit <amountRawUsdc> [apr_<approvalId>]`
+- `npx -y @subly_fi/pay withdraw <amountRawUsdc> [apr_<approvalId>]`
+
+Deposits move principal into DeFi risk, so they require the human owner's
+approval. If the output contains `"approvalRequired": true`, paste the
+`approveUrl` to the user and retry with the printed `apr_...` id once they
+approved. If it contains `"setupRequired": true`, run the owner onboarding
+(setup-link) from the wallet-setup section first — its initial deposit is
+pre-approved by the same single Face ID. Withdrawals are normally automatic
+(they exit risk back to the agent wallet); the same approvalRequired flow
+applies only when the owner's mandate opts into withdrawal approval.
 
 ## Guardrails
 
 - Never read, print, or transmit the contents of the keypair file in
   `SUBLY_DEMO_AGENT_KEYPAIR_PATH`. Only the public receipt is shared.
 - Do not raise the payment cap on your own initiative.
+- Paste setup/approve links exactly as printed; never alter the values the
+  human is asked to confirm, and never claim an approval happened — always
+  verify via setup-status or by retrying with the approval id.

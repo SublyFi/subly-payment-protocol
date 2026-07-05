@@ -5,7 +5,14 @@ import bs58 from "bs58";
 import nacl from "tweetnacl";
 import { SUBLY_VAULT } from "../src/config/constants.js";
 import { InMemoryLedger } from "../src/domain/ledger.js";
-import type { PaymentIntent, WalletPosition } from "../src/domain/models.js";
+import type {
+  PaymentIntent,
+  WalletPosition,
+  WithdrawalIntent
+} from "../src/domain/models.js";
+import { buildDocument } from "./helpers/mandate-fixtures.js";
+import { deriveAssociatedTokenAddress } from "../src/lib/associated-token-account.js";
+import { SpendingMandateService } from "../src/domain/spending-mandate-service.js";
 import { VaultFlowService } from "../src/domain/vault-flow-service.js";
 import type {
   KaminoVaultAdapter,
@@ -64,17 +71,20 @@ class FakeAdapter {
 function buildService(params?: {
   adapter?: FakeAdapter;
   ledger?: InMemoryLedger;
+  mandates?: SpendingMandateService;
+  engine?: Partial<TransactionSubmissionEngine>;
 }) {
   const ledger = params?.ledger ?? new InMemoryLedger();
   const adapter = params?.adapter ?? new FakeAdapter();
   const service = new VaultFlowService({
     ledger,
     adapter: adapter as unknown as KaminoVaultAdapter,
-    engine: {} as TransactionSubmissionEngine,
+    engine: (params?.engine ?? {}) as TransactionSubmissionEngine,
     sponsor: {
       address: WALLET,
       keyPair: {} as CryptoKeyPair
-    } as never
+    } as never,
+    ...(params?.mandates === undefined ? {} : { mandates: params.mandates })
   });
 
   return { service, ledger, adapter };
@@ -305,5 +315,330 @@ describe("VaultFlowService yield-realize guard", () => {
       amountRawUsdc: "2000000" // principal exit, no purpose flag
     });
     expect(prepared.status).toBe("prepared");
+  });
+});
+
+describe("VaultFlowService spending-mandate integration", () => {
+  const PAYMENT = {
+    payTo: WALLET,
+    amountRawUsdc: "10000",
+    resourceUrlHash: "ef".repeat(32),
+    method: "GET"
+  };
+
+  function withMandates(level: "on" | "warn") {
+    const ledger = new InMemoryLedger();
+    const mandates = new SpendingMandateService({
+      ledger,
+      config: { enforcementLevel: level, onWarn: () => undefined }
+    });
+    return { ...buildService({ ledger, mandates }), mandates };
+  }
+
+  it("stamps the mandate decision and binding on a realize intent", async () => {
+    const { service, ledger } = withMandates("on");
+    await registerPosition(ledger);
+
+    const prepared = await service.prepareWithdrawal({
+      wallet: WALLET,
+      amountRawUsdc: "10000",
+      purpose: "yield_realize",
+      payment: PAYMENT
+    });
+    expect(prepared.purpose).toBe("yield_realize");
+    expect(prepared.paymentBinding).toEqual(PAYMENT);
+    expect(prepared.policySource).toBe("default");
+    expect(prepared.policyDecision).toBe("auto_within_policy");
+    expect(prepared.paymentVerification).toBe("unreported");
+  });
+
+  it("refuses a realize without its payment binding when enforcement is on", async () => {
+    const { service, ledger } = withMandates("on");
+    await registerPosition(ledger);
+
+    await expect(
+      service.prepareWithdrawal({
+        wallet: WALLET,
+        amountRawUsdc: "10000",
+        purpose: "yield_realize"
+      })
+    ).rejects.toMatchObject({ code: "payment_binding_required" });
+  });
+
+  it("keeps warn mode non-blocking for legacy clients without a binding", async () => {
+    const { service, ledger } = withMandates("warn");
+    await registerPosition(ledger);
+
+    const prepared = await service.prepareWithdrawal({
+      wallet: WALLET,
+      amountRawUsdc: "10000",
+      purpose: "yield_realize"
+    });
+    expect(prepared.status).toBe("prepared");
+    // Non-blocking, but the audit stamp records the missing binding.
+    expect(prepared.policyDecision).toBe("warned:payment_binding_required");
+  });
+
+  it("keeps plain exit withdrawals agent-allowed but stamps the decision", async () => {
+    const { service, ledger } = withMandates("on");
+    await registerPosition(ledger);
+
+    const prepared = await service.prepareWithdrawal({
+      wallet: WALLET,
+      amountRawUsdc: "2000000"
+    });
+    expect(prepared.purpose).toBe("normal");
+    // Outside the PAYMENT gate (no binding required), but the withdrawal
+    // gate still ran and recorded its verdict for the audit log.
+    expect(prepared.policyDecision).toBe("auto_within_policy");
+    expect(prepared.policySource).toBe("default");
+  });
+
+  it("escalates exit withdrawals when the mandate opts into withdrawal approval", async () => {
+    const { service, ledger, mandates } = withMandates("on");
+    await registerPosition(ledger);
+    await mandates.registerMandate({
+      wallet: WALLET,
+      vault: SUBLY_VAULT.address,
+      document: buildDocument({
+        agentKeys: WALLET_KEYS,
+        policy: { withdrawalPolicy: "owner_approval_required" }
+      })
+    });
+
+    await expect(
+      service.prepareWithdrawal({ wallet: WALLET, amountRawUsdc: "2000000" })
+    ).rejects.toMatchObject({ code: "withdrawal_approval_required" });
+  });
+
+  it("enforces the daily deposit cap at prepare time", async () => {
+    const { service, ledger, mandates } = withMandates("on");
+    await registerPosition(ledger);
+    await mandates.registerMandate({
+      wallet: WALLET,
+      vault: SUBLY_VAULT.address,
+      document: buildDocument({
+        agentKeys: WALLET_KEYS,
+        policy: { depositPolicy: "agent_allowed" }
+      })
+    });
+
+    await expect(
+      service.prepareDeposit({
+        wallet: WALLET,
+        amountRawUsdc: "3000000001" // 3,000.000001 USDC > default daily cap
+      })
+    ).rejects.toMatchObject({ code: "daily_deposit_cap_exceeded" });
+
+    const withinCap = await service.prepareDeposit({
+      wallet: WALLET,
+      amountRawUsdc: "1000010"
+    });
+    expect(withinCap.status).toBe("prepared");
+    expect(withinCap.policyDecision).toBe("auto_within_policy");
+  });
+
+  it("refuses deposits without a mandate and honors the initialDeposit approval", async () => {
+    const { service, ledger, mandates } = withMandates("on");
+    await registerPosition(ledger);
+
+    // No registered owner -> nobody can approve -> setup is a prerequisite.
+    await expect(
+      service.prepareDeposit({ wallet: WALLET, amountRawUsdc: "1000010" })
+    ).rejects.toMatchObject({ code: "mandate_required_for_deposit" });
+
+    const registered = await mandates.registerMandate({
+      wallet: WALLET,
+      vault: SUBLY_VAULT.address,
+      document: buildDocument({
+        agentKeys: WALLET_KEYS,
+        payload: { initialDeposit: { amountRawUsdc: "1000010" } }
+      })
+    });
+    const approvalId = registered.initialDepositApproval!.approvalId;
+
+    // Default depositPolicy requires an owner approval per deposit.
+    await expect(
+      service.prepareDeposit({ wallet: WALLET, amountRawUsdc: "1000010" })
+    ).rejects.toMatchObject({ code: "deposit_approval_required" });
+
+    // The mandate's single Face ID pre-approved the first deposit.
+    const prepared = await service.prepareDeposit({
+      wallet: WALLET,
+      amountRawUsdc: "1000010",
+      approvalId
+    });
+    expect(prepared.status).toBe("prepared");
+    expect(prepared.policyDecision).toBe(`owner_approved:${approvalId}`);
+    expect(prepared.approvalId).toBe(approvalId);
+  });
+});
+
+describe("VaultFlowService payment report-back", () => {
+  const PAY_TO = WALLET;
+  const PAY_TO_ATA = deriveAssociatedTokenAddress({
+    owner: PAY_TO,
+    mint: SUBLY_VAULT.usdcMint
+  });
+
+  function confirmedRealize(
+    overrides?: Partial<WithdrawalIntent>
+  ): WithdrawalIntent {
+    return {
+      withdrawalId: "wdr_report",
+      wallet: WALLET,
+      vault: SUBLY_VAULT.address,
+      purpose: "yield_realize",
+      paymentBinding: {
+        payTo: PAY_TO,
+        amountRawUsdc: "10000",
+        resourceUrlHash: "ab".repeat(32),
+        method: "GET"
+      },
+      policySource: "default",
+      mandateHash: null,
+      policyDecision: "auto_within_policy",
+      approvalId: null,
+      paymentTxSignature: null,
+      paymentVerification: "unreported",
+      requestedWithdrawRawUsdc: 10_000n,
+      requestedSharesRaw: 10_000n,
+      maxSharesToRedeemRaw: 10_000n,
+      destinationUsdcAta: WALLET,
+      preparedMessageHash: "sha256-h",
+      recentBlockhash: null,
+      lastValidBlockHeight: null,
+      serializedTransaction: "",
+      txSignature: "realize_tx",
+      submittedSerializedTransaction: null,
+      actualSharesBurnedRaw: 10_000n,
+      actualWithdrawRawUsdc: 10_000n,
+      principalBasisBeforeRawUsdc: 0n,
+      principalBasisAfterRawUsdc: 0n,
+      status: "confirmed",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      submittedAt: null,
+      terminalAt: new Date().toISOString(),
+      errorCode: null,
+      liquidityRejectionReason: null,
+      ...overrides
+    };
+  }
+
+  function lookupEngine(deltaRawUsdc: bigint | null) {
+    return {
+      lookupTransaction: async () =>
+        deltaRawUsdc === null
+          ? { found: false as const }
+          : {
+              found: true as const,
+              err: null,
+              feeLamports: 5000n,
+              tokenBalanceDeltas: new Map([[PAY_TO_ATA, deltaRawUsdc]]),
+              slot: 2n
+            }
+    };
+  }
+
+  it("verifies the payment on-chain when the payTo ATA delta covers it", async () => {
+    const { service, ledger } = buildService({ engine: lookupEngine(10_000n) });
+    await ledger.saveWithdrawal(confirmedRealize());
+
+    const reported = await service.reportPayment({
+      wallet: WALLET,
+      withdrawalId: "wdr_report",
+      paymentTxSignature: "payment_tx"
+    });
+    expect(reported.paymentVerification).toBe("verified_onchain");
+    expect(reported.paymentTxSignature).toBe("payment_tx");
+  });
+
+  it("keeps the report unverified when the tx is missing or short", async () => {
+    const { service, ledger } = buildService({ engine: lookupEngine(9_999n) });
+    await ledger.saveWithdrawal(confirmedRealize());
+    const short = await service.reportPayment({
+      wallet: WALLET,
+      withdrawalId: "wdr_report",
+      paymentTxSignature: "payment_tx"
+    });
+    expect(short.paymentVerification).toBe("reported");
+
+    const { service: missing, ledger: ledger2 } = buildService({
+      engine: lookupEngine(null)
+    });
+    await ledger2.saveWithdrawal(confirmedRealize());
+    const notFoundTx = await missing.reportPayment({
+      wallet: WALLET,
+      withdrawalId: "wdr_report",
+      paymentTxSignature: "payment_tx"
+    });
+    expect(notFoundTx.paymentVerification).toBe("reported");
+  });
+
+  it("refuses to overwrite a report with a different signature and never downgrades", async () => {
+    const { service, ledger } = buildService({ engine: lookupEngine(10_000n) });
+    await ledger.saveWithdrawal(confirmedRealize());
+
+    await service.reportPayment({
+      wallet: WALLET,
+      withdrawalId: "wdr_report",
+      paymentTxSignature: "payment_tx"
+    });
+
+    await expect(
+      service.reportPayment({
+        wallet: WALLET,
+        withdrawalId: "wdr_report",
+        paymentTxSignature: "different_payment_tx"
+      })
+    ).rejects.toMatchObject({ code: "payment_already_reported" });
+
+    // Same-signature re-report is idempotent and keeps verified_onchain even
+    // if the chain lookup no longer resolves.
+    const { service: flaky } = buildService({
+      engine: lookupEngine(null),
+      ledger
+    });
+    const again = await flaky.reportPayment({
+      wallet: WALLET,
+      withdrawalId: "wdr_report",
+      paymentTxSignature: "payment_tx"
+    });
+    expect(again.paymentVerification).toBe("verified_onchain");
+  });
+
+  it("rejects reports for foreign, non-realize, or unconfirmed withdrawals", async () => {
+    const { service, ledger } = buildService({ engine: lookupEngine(10_000n) });
+    await ledger.saveWithdrawal(confirmedRealize());
+    await ledger.saveWithdrawal(
+      confirmedRealize({ withdrawalId: "wdr_normal", purpose: "normal" })
+    );
+    await ledger.saveWithdrawal(
+      confirmedRealize({ withdrawalId: "wdr_pending", status: "submitted" })
+    );
+
+    await expect(
+      service.reportPayment({
+        wallet: bs58.encode(nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9)).publicKey),
+        withdrawalId: "wdr_report",
+        paymentTxSignature: "payment_tx"
+      })
+    ).rejects.toMatchObject({ code: "withdrawal_not_found" });
+
+    await expect(
+      service.reportPayment({
+        wallet: WALLET,
+        withdrawalId: "wdr_normal",
+        paymentTxSignature: "payment_tx"
+      })
+    ).rejects.toMatchObject({ code: "not_a_realize_withdrawal" });
+
+    await expect(
+      service.reportPayment({
+        wallet: WALLET,
+        withdrawalId: "wdr_pending",
+        paymentTxSignature: "payment_tx"
+      })
+    ).rejects.toMatchObject({ code: "realize_not_confirmed" });
   });
 });

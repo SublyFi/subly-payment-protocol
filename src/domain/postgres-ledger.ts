@@ -7,6 +7,10 @@ import type {
   PaymentStatus,
   ProvenancedRawValue,
   SellerLiquidityPolicy,
+  SetupSession,
+  SpendingApproval,
+  SpendingMandateEvent,
+  SpendingMandateRecord,
   SyncEvent,
   WalletPosition,
   WithdrawalIntent
@@ -367,6 +371,136 @@ export class PostgresLedger implements Ledger {
     return result.rows.map((row) => hydrateSyncEvent(row.data));
   }
 
+  async getSpendingMandate(
+    wallet: string
+  ): Promise<SpendingMandateRecord | null> {
+    await this.ensureSchema();
+    const result = await this.query(
+      "select data from spending_mandates where wallet = $1",
+      [wallet]
+    );
+
+    return result.rows[0]?.data === undefined
+      ? null
+      : (result.rows[0].data as SpendingMandateRecord);
+  }
+
+  async saveSpendingMandate(
+    record: SpendingMandateRecord
+  ): Promise<SpendingMandateRecord> {
+    await this.ensureSchema();
+    const saved = await this.query(
+      `insert into spending_mandates (wallet, status, mandate_hash, data, updated_at)
+       values ($1, $2, $3, $4::jsonb, now())
+       on conflict (wallet)
+       do update set
+         status = excluded.status,
+         mandate_hash = excluded.mandate_hash,
+         data = excluded.data,
+         updated_at = now()
+       returning data`,
+      [record.wallet, record.status, record.mandateHash, JSON.stringify(record)]
+    );
+
+    return saved.rows[0].data as SpendingMandateRecord;
+  }
+
+  async saveSpendingMandateEvent(
+    event: SpendingMandateEvent
+  ): Promise<SpendingMandateEvent> {
+    await this.ensureSchema();
+    await this.query(
+      `insert into spending_mandate_events (event_id, wallet, event_type, data)
+       values ($1, $2, $3, $4::jsonb)
+       on conflict (event_id) do nothing`,
+      [event.eventId, event.wallet, event.eventType, JSON.stringify(event)]
+    );
+
+    return { ...event };
+  }
+
+  async getSpendingApproval(
+    approvalId: string
+  ): Promise<SpendingApproval | null> {
+    await this.ensureSchema();
+    const result = await this.query(
+      "select data from payment_approvals where approval_id = $1",
+      [approvalId]
+    );
+
+    return result.rows[0]?.data === undefined
+      ? null
+      : (result.rows[0].data as SpendingApproval);
+  }
+
+  async saveSpendingApproval(
+    approval: SpendingApproval
+  ): Promise<SpendingApproval> {
+    await this.ensureSchema();
+    const saved = await this.query(
+      `insert into payment_approvals (approval_id, wallet, status, binding_hash, data, updated_at)
+       values ($1, $2, $3, $4, $5::jsonb, now())
+       on conflict (approval_id)
+       do update set
+         status = excluded.status,
+         data = excluded.data,
+         updated_at = now()
+       returning data`,
+      [
+        approval.approvalId,
+        approval.wallet,
+        approval.status,
+        approval.bindingHash,
+        JSON.stringify(approval)
+      ]
+    );
+
+    return saved.rows[0].data as SpendingApproval;
+  }
+
+  async listSpendingApprovalsForWallet(
+    wallet: string
+  ): Promise<SpendingApproval[]> {
+    await this.ensureSchema();
+    const result = await this.query(
+      `select data from payment_approvals
+       where wallet = $1
+       order by (data->>'requestedAtMs')::bigint desc`,
+      [wallet]
+    );
+
+    return result.rows.map((row) => row.data as SpendingApproval);
+  }
+
+  async getSetupSession(sessionId: string): Promise<SetupSession | null> {
+    await this.ensureSchema();
+    const result = await this.query(
+      "select data from setup_sessions where session_id = $1",
+      [sessionId]
+    );
+
+    return result.rows[0]?.data === undefined
+      ? null
+      : (result.rows[0].data as SetupSession);
+  }
+
+  async saveSetupSession(session: SetupSession): Promise<SetupSession> {
+    await this.ensureSchema();
+    const saved = await this.query(
+      `insert into setup_sessions (session_id, wallet, status, data, updated_at)
+       values ($1, $2, $3, $4::jsonb, now())
+       on conflict (session_id)
+       do update set
+         status = excluded.status,
+         data = excluded.data,
+         updated_at = now()
+       returning data`,
+      [session.sessionId, session.wallet, session.status, JSON.stringify(session)]
+    );
+
+    return saved.rows[0].data as SetupSession;
+  }
+
   async close(): Promise<void> {
     await this.pool.end();
   }
@@ -502,6 +636,54 @@ create table if not exists sync_events (
 
 create index if not exists sync_events_wallet_vault_idx
   on sync_events (wallet, vault, created_at);
+
+create table if not exists spending_mandates (
+  wallet text primary key,
+  status text not null,
+  mandate_hash text not null,
+  data jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists spending_mandate_events (
+  event_id text primary key,
+  wallet text not null,
+  event_type text not null,
+  data jsonb not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists spending_mandate_events_wallet_idx
+  on spending_mandate_events (wallet, created_at);
+
+-- Owner approvals for operations above the mandate threshold
+-- (payment / deposit / withdrawal bindings share one table).
+create table if not exists payment_approvals (
+  approval_id text primary key,
+  wallet text not null,
+  status text not null,
+  binding_hash text not null,
+  data jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists payment_approvals_wallet_idx
+  on payment_approvals (wallet, status);
+
+-- Owner-onboarding setup sessions (single-use capability links, TTL 10 min).
+create table if not exists setup_sessions (
+  session_id text primary key,
+  wallet text not null,
+  status text not null,
+  data jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists setup_sessions_wallet_idx
+  on setup_sessions (wallet, created_at);
 `;
 
 function dehydrate<T>(value: T): unknown {
@@ -569,6 +751,11 @@ function hydrateDepositIntent(data: Record<string, unknown>): DepositIntent {
         ? null
         : BigInt(String(data[field]));
   }
+  // Rows written before the spending-mandate layer carry none of these.
+  next.policySource = (data.policySource as string | undefined) ?? null;
+  next.mandateHash = (data.mandateHash as string | undefined) ?? null;
+  next.policyDecision = (data.policyDecision as string | undefined) ?? null;
+  next.approvalId = (data.approvalId as string | undefined) ?? null;
   return next;
 }
 
@@ -583,6 +770,19 @@ function hydrateWithdrawalIntent(data: Record<string, unknown>): WithdrawalInten
         ? null
         : BigInt(String(data[field]));
   }
+  // Rows written before the spending-mandate layer carry none of these.
+  next.purpose = data.purpose === "yield_realize" ? "yield_realize" : "normal";
+  next.paymentBinding =
+    (data.paymentBinding as WithdrawalIntent["paymentBinding"]) ?? null;
+  next.policySource = (data.policySource as string | undefined) ?? null;
+  next.mandateHash = (data.mandateHash as string | undefined) ?? null;
+  next.policyDecision = (data.policyDecision as string | undefined) ?? null;
+  next.approvalId = (data.approvalId as string | undefined) ?? null;
+  next.paymentTxSignature =
+    (data.paymentTxSignature as string | undefined) ?? null;
+  next.paymentVerification =
+    (data.paymentVerification as WithdrawalIntent["paymentVerification"]) ??
+    null;
   return next;
 }
 

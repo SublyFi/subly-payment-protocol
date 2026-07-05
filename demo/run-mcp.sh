@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Launches the current standard-x402 Subly MCP server with the configured
+# Launches the published standard-x402 Subly MCP server with the configured
 # relayer env. The detached env fallback is only for local legacy dev.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -9,4 +9,4 @@ if [ -f demo/env/buyer.mainnet.env ]; then
 else
   source demo/env/buyer.detached.env
 fi
-exec npx tsx demo/mcp-server.ts
+exec npx -y @subly_fi/pay mcp

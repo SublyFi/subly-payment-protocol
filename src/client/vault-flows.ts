@@ -16,9 +16,13 @@ import { walletAuthHeaders } from "./wallet-auth-headers.js";
 
 export class VaultFlowClientError extends Error {
   constructor(
-    readonly step: "prepare" | "submit" | "budget" | "sync",
+    readonly step: "prepare" | "submit" | "budget" | "sync" | "read",
     message: string,
-    readonly detail: unknown = null
+    readonly detail: unknown = null,
+    /** The relayer's error.code when the response carried one. */
+    readonly code: string | null = null,
+    /** The relayer's error.details (e.g. approvalId/approveUrl). */
+    readonly errorDetails: unknown = null
   ) {
     super(message);
     this.name = "VaultFlowClientError";
@@ -66,6 +70,41 @@ export interface VaultBudgetView {
   spendableYieldRawUsdc: string;
 }
 
+export interface ApprovalView {
+  approvalId: string;
+  wallet: string;
+  binding: unknown;
+  bindingHash: string;
+  status: string;
+  requestedAtMs: number;
+  expiresAtMs: number;
+}
+
+export interface SetupSessionCreated {
+  sessionId: string;
+  setupUrl: string;
+  expiresAtMs: number;
+  wallet: string;
+  vault: string;
+  policy: Record<string, unknown>;
+  enforcementMode: string;
+  mandateExpiresAtMs: number;
+  initialDepositRawUsdc: string | null;
+}
+
+export interface SetupSessionView {
+  sessionId: string;
+  status: "pending" | "completed" | "expired";
+  wallet: string;
+  mandateHash?: string | null;
+  initialDepositApproval?: {
+    approvalId: string;
+    expiresAtMs: number;
+    status: string;
+  } | null;
+  expiresAtMs?: number;
+}
+
 interface PreparedDeposit {
   depositId: string;
   serializedTransaction: string;
@@ -101,12 +140,44 @@ export class VaultFlowClient {
     this.pollIntervalMs = config.pollIntervalMs ?? 2_500;
   }
 
-  /** Moves USDC from the agent wallet into the vault (fee sponsored). */
-  async deposit(input: { amountRawUsdc: bigint }): Promise<VaultDepositOutcome> {
-    const prepared = (await this.postJson("prepare", "/v1/deposits/prepare", {
-      wallet: this.signer.walletAddress,
-      amountRawUsdc: input.amountRawUsdc.toString()
-    })) as PreparedDeposit;
+  /**
+   * Moves USDC from the agent wallet into the vault (fee sponsored). Under
+   * depositPolicy "owner_approval_required" the relayer refuses to prepare
+   * without an owner approval; when the caller passes none, an already
+   * APPROVED deposit approval for this exact amount (e.g. the mandate's
+   * initialDeposit — "one Face ID covers mandate + first deposit") is looked
+   * up and used automatically before surfacing deposit_approval_required.
+   */
+  async deposit(input: {
+    amountRawUsdc: bigint;
+    approvalId?: string;
+  }): Promise<VaultDepositOutcome> {
+    let approvalId = input.approvalId;
+    let prepared: PreparedDeposit;
+    try {
+      prepared = (await this.postJson("prepare", "/v1/deposits/prepare", {
+        wallet: this.signer.walletAddress,
+        amountRawUsdc: input.amountRawUsdc.toString(),
+        ...(approvalId === undefined ? {} : { approvalId })
+      })) as PreparedDeposit;
+    } catch (error) {
+      if (
+        !(error instanceof VaultFlowClientError) ||
+        error.code !== "deposit_approval_required" ||
+        approvalId !== undefined
+      ) {
+        throw error;
+      }
+      approvalId = await this.findApprovedDepositApproval(input.amountRawUsdc);
+      if (approvalId === undefined) {
+        throw error;
+      }
+      prepared = (await this.postJson("prepare", "/v1/deposits/prepare", {
+        wallet: this.signer.walletAddress,
+        amountRawUsdc: input.amountRawUsdc.toString(),
+        approvalId
+      })) as PreparedDeposit;
+    }
 
     const signed = await this.signer.signDeposit({
       intent: prepared.signingIntent,
@@ -147,6 +218,18 @@ export class VaultFlowClient {
   async withdraw(input: {
     amountRawUsdc: bigint;
     purpose?: "yield_realize";
+    /**
+     * The x402 payment a yield_realize funds; the relayer's spending-mandate
+     * layer checks caps/payee against it and records it in the audit log.
+     */
+    payment?: {
+      payTo: string;
+      amountRawUsdc: string;
+      resourceUrlHash: string;
+      method: string;
+    };
+    /** Owner approval id for payments above the mandate threshold. */
+    approvalId?: string;
   }): Promise<VaultWithdrawalOutcome> {
     const prepared = (await this.postJson(
       "prepare",
@@ -154,7 +237,11 @@ export class VaultFlowClient {
       {
         wallet: this.signer.walletAddress,
         amountRawUsdc: input.amountRawUsdc.toString(),
-        ...(input.purpose === undefined ? {} : { purpose: input.purpose })
+        ...(input.purpose === undefined ? {} : { purpose: input.purpose }),
+        ...(input.payment === undefined ? {} : { payment: input.payment }),
+        ...(input.approvalId === undefined
+          ? {}
+          : { approvalId: input.approvalId })
       }
     )) as PreparedWithdrawal;
 
@@ -248,6 +335,98 @@ export class VaultFlowClient {
     };
   }
 
+  /** Best-effort audit link: reports the x402 payment tx a realize funded. */
+  async reportPayment(input: {
+    withdrawalId: string;
+    paymentTxSignature: string;
+  }): Promise<void> {
+    await this.postJson("submit", "/v1/payments/report", {
+      wallet: this.signer.walletAddress,
+      withdrawalId: input.withdrawalId,
+      paymentTxSignature: input.paymentTxSignature
+    });
+  }
+
+  /** Wallet's approvals as the relayer sees them (optionally by status). */
+  async listApprovals(status?: string): Promise<ApprovalView[]> {
+    const body = (await this.getJson(
+      `/v1/wallets/${this.signer.walletAddress}/approvals${
+        status === undefined ? "" : `?status=${encodeURIComponent(status)}`
+      }`
+    )) as { approvals?: ApprovalView[] };
+    return body.approvals ?? [];
+  }
+
+  /**
+   * Creates the owner-onboarding setup link (wallet-auth pins the agreed
+   * policy + initial deposit). Paste `setupUrl` into the chat verbatim.
+   */
+  async createSetupSession(input: {
+    policy?: Record<string, unknown>;
+    enforcementMode?: "subly" | "wallet_infra";
+    mandateTtlDays?: number;
+    initialDepositRawUsdc?: string;
+  }): Promise<SetupSessionCreated> {
+    return (await this.postJson(
+      "prepare",
+      `/v1/wallets/${this.signer.walletAddress}/setup-sessions`,
+      {
+        ...(input.policy === undefined ? {} : { policy: input.policy }),
+        ...(input.enforcementMode === undefined
+          ? {}
+          : { enforcementMode: input.enforcementMode }),
+        ...(input.mandateTtlDays === undefined
+          ? {}
+          : { mandateTtlDays: input.mandateTtlDays }),
+        ...(input.initialDepositRawUsdc === undefined
+          ? {}
+          : { initialDepositRawUsdc: input.initialDepositRawUsdc })
+      }
+    )) as SetupSessionCreated;
+  }
+
+  /** Polls a setup session (public capability URL — no auth needed). */
+  async getSetupSession(sessionId: string): Promise<SetupSessionView> {
+    const url = `${this.baseUrl}/v1/setup-sessions/${encodeURIComponent(sessionId)}`;
+    const response = await this.fetchImpl(url);
+    const text = await response.text();
+    if (response.status !== 200) {
+      const parsed = parseRelayerError(text);
+      throw new VaultFlowClientError(
+        "read",
+        parsed.message ?? `setup session read failed with ${response.status}`,
+        text,
+        parsed.code,
+        parsed.details
+      );
+    }
+    return JSON.parse(text) as SetupSessionView;
+  }
+
+  /**
+   * Finds an APPROVED, unconsumed deposit approval bound to exactly this
+   * amount — the shape the mandate's initialDeposit approval has.
+   */
+  private async findApprovedDepositApproval(
+    amountRawUsdc: bigint
+  ): Promise<string | undefined> {
+    try {
+      const approvals = await this.listApprovals("approved");
+      const match = approvals.find((approval) => {
+        const binding = approval.binding as
+          | { kind?: string; amountRawUsdc?: string }
+          | null;
+        return (
+          binding?.kind === "deposit" &&
+          binding.amountRawUsdc === amountRawUsdc.toString()
+        );
+      });
+      return match?.approvalId;
+    } catch {
+      return undefined;
+    }
+  }
+
   /**
    * Polls the reconciling GET endpoint until the intent leaves "submitted"
    * (each read looks the tx up on-chain) or the timeout elapses.
@@ -305,10 +484,15 @@ export class VaultFlowClient {
     });
     const text = await response.text();
     if (response.status !== 200) {
+      const parsed = parseRelayerError(text);
       throw new VaultFlowClientError(
         step,
-        `${path} failed with ${response.status}: ${text}`,
-        text
+        parsed.message === null
+          ? `${path} failed with ${response.status}: ${text}`
+          : `${path} failed (${parsed.code ?? response.status}): ${parsed.message}`,
+        text,
+        parsed.code,
+        parsed.details
       );
     }
     try {
@@ -320,5 +504,58 @@ export class VaultFlowClient {
         text
       );
     }
+  }
+
+  private async getJson(path: string): Promise<unknown> {
+    const url = `${this.baseUrl}${path}`;
+    const response = await this.fetchImpl(url, {
+      headers: await walletAuthHeaders({
+        signer: this.signer,
+        method: "GET",
+        url
+      })
+    });
+    const text = await response.text();
+    if (response.status !== 200) {
+      const parsed = parseRelayerError(text);
+      throw new VaultFlowClientError(
+        "read",
+        parsed.message === null
+          ? `${path} failed with ${response.status}: ${text}`
+          : `${path} failed (${parsed.code ?? response.status}): ${parsed.message}`,
+        text,
+        parsed.code,
+        parsed.details
+      );
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new VaultFlowClientError(
+        "read",
+        `${path} returned 200 with a non-JSON body`,
+        text
+      );
+    }
+  }
+}
+
+function parseRelayerError(text: string): {
+  code: string | null;
+  message: string | null;
+  details: unknown;
+} {
+  try {
+    const parsed = JSON.parse(text) as {
+      error?: { code?: unknown; message?: unknown; details?: unknown };
+    };
+    return {
+      code: typeof parsed.error?.code === "string" ? parsed.error.code : null,
+      message:
+        typeof parsed.error?.message === "string" ? parsed.error.message : null,
+      details: parsed.error?.details ?? null
+    };
+  } catch {
+    return { code: null, message: null, details: null };
   }
 }

@@ -76,6 +76,13 @@ export interface DepositIntent {
   wallet: string;
   vault: string;
   amountRawUsdc: bigint;
+  /** Policy that authorized this deposit: "default" or "mandate:<hash>". */
+  policySource: string | null;
+  mandateHash: string | null;
+  /** "auto_within_policy" | "owner_approved:<approvalId>" | "warned:<code>" | "unenforced". */
+  policyDecision: string | null;
+  /** Owner approval that authorized this deposit (depositPolicy escalation). */
+  approvalId: string | null;
   preparedMessageHash: string;
   recentBlockhash: string | null;
   lastValidBlockHeight: number | null;
@@ -93,10 +100,36 @@ export interface DepositIntent {
   errorCode: string | null;
 }
 
+/**
+ * Payment binding attached to a yield-realize withdrawal: the declared
+ * "what is being paid" that spending caps and the audit log key off.
+ * Amounts stay strings here so the JSONB round-trip is lossless.
+ */
+export interface PaymentBindingWire {
+  payTo: string;
+  amountRawUsdc: string;
+  resourceUrlHash: string;
+  method: string;
+}
+
+export type PaymentVerification = "verified_onchain" | "reported" | "unreported";
+
 export interface WithdrawalIntent {
   withdrawalId: string;
   wallet: string;
   vault: string;
+  /** "yield_realize" funds an x402 payment; "normal" is a principal exit. */
+  purpose: "normal" | "yield_realize";
+  paymentBinding: PaymentBindingWire | null;
+  /** Policy that authorized this realize: "default" or "mandate:<hash>". */
+  policySource: string | null;
+  mandateHash: string | null;
+  /** "auto_within_policy" | "owner_approved:<approvalId>" | "unenforced". */
+  policyDecision: string | null;
+  approvalId: string | null;
+  /** Report-back of the client-side x402 payment tx (best-effort audit link). */
+  paymentTxSignature: string | null;
+  paymentVerification: PaymentVerification | null;
   requestedWithdrawRawUsdc: bigint;
   requestedSharesRaw: bigint;
   maxSharesToRedeemRaw: bigint;
@@ -142,6 +175,109 @@ export interface SyncEvent {
   rawSnapshot: unknown;
   slot: number | null;
   observedAt: string;
+}
+
+export type SpendingMandateStatus = "active" | "revoked" | "recovery_pending";
+
+/**
+ * Registered spending mandate (docs/spending-mandate-design.md). The raw
+ * signed document is kept verbatim for third-party re-verification; all
+ * fields here are JSON-safe (no bigints) so persistence is lossless.
+ */
+export interface SpendingMandateRecord {
+  wallet: string;
+  vault: string;
+  /** The full submitted document, signatures included. */
+  documentJson: unknown;
+  mandateHash: string;
+  ownerAuth: "ed25519" | "passkey";
+  ownerCredential: {
+    publicKey: string;
+    credentialId?: string | undefined;
+    /** COSE algorithm id; present only for passkey owners. */
+    algorithm?: number | undefined;
+  };
+  enforcementMode: "subly" | "wallet_infra";
+  issuedAtMs: number;
+  expiresAtMs: number;
+  status: SpendingMandateStatus;
+  /** When a pending recovery-revoke (dead-man switch) takes effect. */
+  recoveryAtMs: number | null;
+  revokedAtMs: number | null;
+  revokeJson: unknown | null;
+}
+
+export type SpendingMandateEventType =
+  | "registered"
+  | "replaced"
+  | "revoked"
+  | "recovery_scheduled"
+  | "recovery_cancelled";
+
+/** Append-only history of mandate lifecycle transitions (audit trail). */
+export interface SpendingMandateEvent {
+  eventId: string;
+  wallet: string;
+  eventType: SpendingMandateEventType;
+  mandateHash: string;
+  documentJson: unknown;
+  createdAtMs: number;
+}
+
+export type SpendingApprovalStatus =
+  | "pending"
+  | "approved"
+  | "denied"
+  | "expired"
+  | "consumed";
+
+/**
+ * Owner approval for one operation above the mandate threshold. Single-use,
+ * bound to the exact operation content (bindingHash), 15 min TTL. Shared by
+ * payment / deposit / withdrawal escalations.
+ */
+export interface SpendingApproval {
+  approvalId: string;
+  wallet: string;
+  bindingHash: string;
+  bindingJson: unknown;
+  mandateHash: string;
+  status: SpendingApprovalStatus;
+  decisionJson: unknown | null;
+  requestedAtMs: number;
+  expiresAtMs: number;
+  decidedAtMs: number | null;
+  consumedAtMs: number | null;
+  consumedByWithdrawalId: string | null;
+}
+
+/**
+ * Owner-onboarding setup session (docs/spending-mandate-design.md, Phase 2):
+ * the agent creates it under wallet-auth with the chat-agreed policy and
+ * initial deposit, pastes the capability URL into chat, and the human
+ * completes it once on their own device. Values are confirm-only: complete
+ * must submit a mandate matching this prefill exactly, because the session's
+ * wallet-auth signature is what stands in for the agent mandate co-sign.
+ */
+export interface SetupSession {
+  sessionId: string;
+  wallet: string;
+  vault: string;
+  /** Prefilled policy in wire form (raw USDC strings). */
+  policyWire: unknown;
+  enforcementMode: "subly" | "wallet_infra";
+  /** expiresAtMs the completed mandate must carry. */
+  mandateExpiresAtMs: number;
+  initialDepositRawUsdc: string | null;
+  status: "pending" | "completed";
+  createdAtMs: number;
+  /** Session (link) TTL — 10 minutes. */
+  expiresAtMs: number;
+  completedAtMs: number | null;
+  mandateHash: string | null;
+  initialDepositApprovalId: string | null;
+  /** Wallet-auth provenance of the agent request that created the session. */
+  agentAuth: unknown;
 }
 
 export interface SellerLiquidityPolicy {

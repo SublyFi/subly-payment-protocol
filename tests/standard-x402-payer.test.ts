@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { SOLANA_MAINNET_NETWORK, SUBLY_VAULT } from "../src/config/constants.js";
 import { encodeX402Header, PAYMENT_REQUIRED_HEADER } from "../src/x402/headers.js";
 import { EMPTY_BODY_HASH } from "../src/lib/hash.js";
+import { sha256HexOf } from "../src/lib/canonical-json.js";
 import {
   StandardX402Payer,
   StandardX402PayError,
@@ -83,6 +84,141 @@ function memoryStore(
 }
 
 describe("StandardX402Payer", () => {
+  it("maps a mandate approval_required refusal to a structured retry step", async () => {
+    const realizer: YieldRealizer = {
+      ensureUsdcAvailable: vi.fn(async (input: { approvalId?: string }) => {
+        if (input.approvalId === "apr_ok") {
+          return {
+            realizedRawUsdc: 10_500n,
+            txSignature: "realizeSig111",
+            withdrawalId: "wdr_1"
+          };
+        }
+        throw Object.assign(new Error("approval required"), {
+          code: "approval_required",
+          detail: {
+            approvalId: "apr_ok",
+            approveUrl: "https://app.subly.fi/approve/apr_ok",
+            expiresAtMs: 123
+          }
+        });
+      })
+    };
+    const probeFetch: FetchLike = async () =>
+      resp({
+        status: 402,
+        headers: {
+          [PAYMENT_REQUIRED_HEADER.toLowerCase()]: encodeX402Header(challenge())
+        }
+      });
+    const x402Fetch: StandardX402FetchLike = async () =>
+      resp({ status: 200, body: "paid" });
+    const payer = new StandardX402Payer({
+      realizer,
+      x402Fetch,
+      probeFetch,
+      defaultMaxAmountRawUsdc: 1_000_000n
+    });
+
+    // First attempt: refused BEFORE anything moved, with the approve link.
+    const refusal = await payer.pay({ url: URL }).catch((error) => error);
+    expect(refusal).toBeInstanceOf(StandardX402PayError);
+    expect((refusal as StandardX402PayError).reason).toBe("approval_required");
+    expect((refusal as StandardX402PayError).detail).toMatchObject({
+      approvalId: "apr_ok",
+      approveUrl: "https://app.subly.fi/approve/apr_ok"
+    });
+
+    // Retry with the approvalId goes through.
+    const result = await payer.pay({ url: URL, approvalId: "apr_ok" });
+    expect(result.paid).toBe(true);
+    expect(realizer.ensureUsdcAvailable).toHaveBeenLastCalledWith(
+      expect.objectContaining({ approvalId: "apr_ok" })
+    );
+  });
+
+  it("reports the settled payment tx back to the realizer (best-effort)", async () => {
+    const reportPayment = vi.fn(async () => undefined);
+    const realizer: YieldRealizer = {
+      ensureUsdcAvailable: vi.fn(async () => ({
+        realizedRawUsdc: 10_500n,
+        txSignature: "realizeSig111",
+        withdrawalId: "wdr_report"
+      })),
+      reportPayment
+    };
+    const probeFetch: FetchLike = async () =>
+      resp({
+        status: 402,
+        headers: {
+          [PAYMENT_REQUIRED_HEADER.toLowerCase()]: encodeX402Header(challenge())
+        }
+      });
+    const settleHeader = Buffer.from(
+      JSON.stringify({ success: true, transaction: "payTx555" }),
+      "utf8"
+    ).toString("base64");
+    const x402Fetch: StandardX402FetchLike = async () =>
+      resp({
+        status: 200,
+        body: "paid",
+        headers: { "x-payment-response": settleHeader }
+      });
+    const payer = new StandardX402Payer({
+      realizer,
+      x402Fetch,
+      probeFetch,
+      defaultMaxAmountRawUsdc: 1_000_000n
+    });
+
+    const result = await payer.pay({ url: URL });
+    expect(result.payment?.paymentTxSignature).toBe("payTx555");
+    expect(reportPayment).toHaveBeenCalledWith({
+      withdrawalId: "wdr_report",
+      paymentTxSignature: "payTx555"
+    });
+  });
+
+  it("a failing report-back never fails the delivered payment", async () => {
+    const realizer: YieldRealizer = {
+      ensureUsdcAvailable: vi.fn(async () => ({
+        realizedRawUsdc: 10_500n,
+        txSignature: "realizeSig111",
+        withdrawalId: "wdr_report"
+      })),
+      reportPayment: vi.fn(async () => {
+        throw new Error("relayer offline");
+      })
+    };
+    const probeFetch: FetchLike = async () =>
+      resp({
+        status: 402,
+        headers: {
+          [PAYMENT_REQUIRED_HEADER.toLowerCase()]: encodeX402Header(challenge())
+        }
+      });
+    const settleHeader = Buffer.from(
+      JSON.stringify({ success: true, transaction: "payTx556" }),
+      "utf8"
+    ).toString("base64");
+    const x402Fetch: StandardX402FetchLike = async () =>
+      resp({
+        status: 200,
+        body: "paid",
+        headers: { "x-payment-response": settleHeader }
+      });
+    const payer = new StandardX402Payer({
+      realizer,
+      x402Fetch,
+      probeFetch,
+      defaultMaxAmountRawUsdc: 1_000_000n
+    });
+
+    const result = await payer.pay({ url: URL });
+    expect(result.paid).toBe(true);
+    expect(result.payment?.paymentTxSignature).toBe("payTx556");
+  });
+
   it("probes, realizes yield, then pays via the x402 client", async () => {
     const realizer = okRealizer();
     const probeFetch: FetchLike = async () =>
@@ -107,8 +243,16 @@ describe("StandardX402Payer", () => {
 
     const result = await payer.pay({ url: URL });
 
+    // The payer declares the payment binding to the realizer so the relayer's
+    // spending-mandate layer can enforce caps against "what is being paid".
     expect(realizer.ensureUsdcAvailable).toHaveBeenCalledWith({
-      amountRawUsdc: 10_000n
+      amountRawUsdc: 10_000n,
+      payment: {
+        payTo: "J7ZvJEspvwP1oRxQZ7mYmNmT22NTm3GWq3t7HEbvPZYx",
+        amountRawUsdc: "10000",
+        resourceUrlHash: sha256HexOf(URL),
+        method: "GET"
+      }
     });
     expect(x402Fetch).toHaveBeenCalledTimes(1);
     expect(result.paid).toBe(true);
@@ -160,6 +304,33 @@ describe("StandardX402Payer", () => {
 
     await expect(payer.pay({ url: URL })).rejects.toMatchObject({
       reason: "amount_exceeds_client_cap"
+    });
+    expect(realizer.ensureUsdcAvailable).not.toHaveBeenCalled();
+    expect(x402Fetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses without realizing when the Solana requirement has no feePayer", async () => {
+    const realizer = okRealizer();
+    const x402Fetch = vi.fn<StandardX402FetchLike>(async () =>
+      resp({ status: 200 })
+    );
+    const missingFeePayer = challenge();
+    (missingFeePayer.accepts[1] as { extra?: unknown }).extra = {};
+    const payer = new StandardX402Payer({
+      realizer,
+      x402Fetch,
+      probeFetch: async () =>
+        resp({
+          status: 402,
+          headers: {
+            [PAYMENT_REQUIRED_HEADER]: encodeX402Header(missingFeePayer)
+          }
+        }),
+      defaultMaxAmountRawUsdc: 20_000n
+    });
+
+    await expect(payer.pay({ url: URL })).rejects.toMatchObject({
+      reason: "no_payable_requirement"
     });
     expect(realizer.ensureUsdcAvailable).not.toHaveBeenCalled();
     expect(x402Fetch).not.toHaveBeenCalled();

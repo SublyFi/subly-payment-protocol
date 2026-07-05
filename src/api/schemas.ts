@@ -44,7 +44,9 @@ export const chainSyncWalletPositionSchema = z.object({
 
 export const prepareDepositSchema = z.object({
   wallet: solanaAddressString,
-  amountRawUsdc: positiveRawIntegerString
+  amountRawUsdc: positiveRawIntegerString,
+  /** Owner approval id (depositPolicy "owner_approval_required"). */
+  approvalId: z.string().min(1).max(64).optional()
 });
 
 export const submitDepositSchema = z.object({
@@ -52,6 +54,18 @@ export const submitDepositSchema = z.object({
   serializedTransaction: z.string().min(1).max(4096),
   agentSignature: z.string().min(1).max(128)
 });
+
+export const sha256HexString = z.string().regex(/^[0-9a-f]{64}$/);
+
+export const paymentBindingSchema = z
+  .object({
+    payTo: solanaAddressString,
+    amountRawUsdc: positiveRawIntegerString,
+    resourceUrlHash: sha256HexString,
+    // Letters only: this string is rendered on the owner's approve page.
+    method: z.string().regex(/^[A-Za-z]{1,16}$/)
+  })
+  .strict();
 
 export const prepareWithdrawalSchema = z.object({
   wallet: solanaAddressString,
@@ -61,7 +75,11 @@ export const prepareWithdrawalSchema = z.object({
    * then refuses any amount the spendable yield cannot cover, so the deposited
    * principal is protected server-side, not just by the client's precheck.
    */
-  purpose: z.enum(["yield_realize"]).optional()
+  purpose: z.enum(["yield_realize"]).optional(),
+  /** The x402 payment this realize funds (spending-mandate audit binding). */
+  payment: paymentBindingSchema.optional(),
+  /** Owner approval id for payments above the mandate threshold. */
+  approvalId: z.string().min(1).max(64).optional()
 });
 
 export const submitWithdrawalSchema = z.object({
@@ -108,4 +126,110 @@ export const verifyPaymentPayloadSchema = z.object({
 
 export const recoverSettlementsSchema = z.object({
   limit: z.number().int().positive().max(1000).optional()
+});
+
+// ---------------------------------------------------------- spending mandate
+
+const nullablePositiveRaw = positiveRawIntegerString.nullable();
+
+export const mandatePolicySchema = z
+  .object({
+    perPaymentCapRawUsdc: positiveRawIntegerString,
+    dailyApiSpendCapRawUsdc: nullablePositiveRaw,
+    monthlyApiSpendCapRawUsdc: nullablePositiveRaw,
+    dailyDepositCapRawUsdc: nullablePositiveRaw,
+    // "0" = every payment needs approval (full HITL); null = no escalation.
+    approvalThresholdRawUsdc: rawIntegerString.nullable(),
+    allowedPayToAddresses: z.array(solanaAddressString).min(1).nullable(),
+    depositPolicy: z.enum(["owner_approval_required", "agent_allowed"]),
+    withdrawalPolicy: z.enum(["agent_allowed", "owner_approval_required"])
+  })
+  .strict();
+
+/**
+ * Owner signatures are base58 ed25519 (<=128 chars) OR base64url-encoded
+ * WebAuthn assertion JSON for passkey owners (typically ~1 KB).
+ */
+const ownerSignatureString = z.string().min(1).max(8192);
+
+/**
+ * Strict: unknown fields are rejected rather than silently dropped, because
+ * the mandate hash covers exactly these fields and a dropped field would
+ * mean owner and relayer disagree about what was signed.
+ */
+export const registerMandateSchema = z
+  .object({
+    version: z.literal(1),
+    ownerAuth: z.enum(["ed25519", "passkey"]),
+    ownerCredential: z
+      .object({
+        // base58 ed25519 pubkey, or base64url SPKI DER for passkeys.
+        publicKey: z.string().min(1).max(1024),
+        credentialId: z.string().min(1).max(512).optional(),
+        // COSE algorithm id of the passkey credential.
+        algorithm: z.number().int().optional()
+      })
+      .strict(),
+    enforcementMode: z.enum(["subly", "wallet_infra"]),
+    agentWallet: solanaAddressString,
+    vault: solanaAddressString,
+    issuedAtMs: z.number().int().positive(),
+    expiresAtMs: z.number().int().positive(),
+    policy: mandatePolicySchema,
+    initialDeposit: z
+      .object({ amountRawUsdc: positiveRawIntegerString })
+      .strict()
+      .optional(),
+    ownerSignature: ownerSignatureString,
+    agentWalletSignature: z.string().min(1).max(128),
+    currentOwnerSignature: ownerSignatureString.optional()
+  })
+  .strict();
+
+export const ownerSignedActionSchema = z.object({
+  mandateHash: sha256HexString,
+  signedAtMs: z.number().int().positive(),
+  signature: ownerSignatureString
+});
+
+export const approvalDecisionSchema = z.object({
+  decision: z.enum(["approve", "deny"]),
+  signedAtMs: z.number().int().positive(),
+  signature: ownerSignatureString
+});
+
+// ------------------------------------------------------------ setup sessions
+
+export const createSetupSessionSchema = z
+  .object({
+    /** Chat-agreed overrides merged over the relayer default policy. */
+    policy: mandatePolicySchema.partial().optional(),
+    enforcementMode: z.enum(["subly", "wallet_infra"]).optional(),
+    /** Mandate lifetime granted at setup (default 365 days). */
+    mandateTtlDays: z.number().int().positive().max(3650).optional(),
+    /** First deposit bundled into the mandate's single Face ID. */
+    initialDepositRawUsdc: positiveRawIntegerString.optional()
+  })
+  .strict();
+
+/**
+ * Setup completion: the mandate signed on the owner's device. The agent
+ * co-sign is absent — the wallet-auth'd session creation stands in for it,
+ * and the server enforces the document matches the session prefill.
+ */
+export const completeSetupSessionSchema = z
+  .object({
+    document: registerMandateSchema
+      .omit({ agentWalletSignature: true })
+      .extend({
+        agentWalletSignature: z.string().min(1).max(128).optional()
+      })
+      .strict()
+  })
+  .strict();
+
+export const reportPaymentSchema = z.object({
+  wallet: solanaAddressString,
+  withdrawalId: z.string().min(1).max(64),
+  paymentTxSignature: z.string().min(32).max(128)
 });

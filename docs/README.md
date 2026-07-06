@@ -1,6 +1,6 @@
 # Subly Docs
 
-最終更新: 2026-07-02 JST
+最終更新: 2026-07-07 JST
 
 ## 現在の正
 
@@ -20,6 +20,7 @@ Seller から見ると通常の x402 支払い。Buyer から見ると「元本�
 
 - `docs/nansen-x402-yield-payment-architecture.md`
 - `docs/buyer-side-yield-payment-strategy.md`
+- `docs/business-model.md` — 収益アーキテクチャ(TVL × perf fee 3 層)と配布戦略
 - `packages/pay/README.md`
 
 ## 用語

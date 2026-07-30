@@ -9,12 +9,33 @@ export const SPL_TOKEN_PROGRAM_ID =
 export const ASSOCIATED_TOKEN_PROGRAM_ID =
   "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL" as const;
 
+const envOr = (name: string, fallback: string): string => {
+  const value = process.env[name]?.trim();
+  return value ? value : fallback;
+};
+
+// The Kamino vault this deployment settles against. Defaults to Subly's
+// public mainnet USDC vault; a third-party operator running against their own
+// Kamino vault overrides the SUBLY_VAULT_* variables on BOTH sides — the
+// relayer, and every client process — because the client's intent validation
+// checks prepared transactions against this local config, never against what
+// the relayer claims. lookupTable/farm document the default vault only; the
+// transaction-building path loads both from on-chain vault state.
 export const SUBLY_VAULT = {
   name: "Subly USDC Payment Vault Alpha",
-  address: "5kfkpQZ6AkQgizHVThqkxD4J3db2i7pE3mHdPNRbx7jr",
+  address: envOr(
+    "SUBLY_VAULT_ADDRESS",
+    "5kfkpQZ6AkQgizHVThqkxD4J3db2i7pE3mHdPNRbx7jr"
+  ),
   programId: "KvauGMspG5k6rtzrqqn7WNn3oZdyKqLKwK2XWQ8FLjd",
-  usdcMint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-  shareMint: "7hGX49So539MU9Rrah8nBNVYXswWVwEJvgWNYeBDYq3a",
+  usdcMint: envOr(
+    "SUBLY_VAULT_USDC_MINT",
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+  ),
+  shareMint: envOr(
+    "SUBLY_VAULT_SHARE_MINT",
+    "7hGX49So539MU9Rrah8nBNVYXswWVwEJvgWNYeBDYq3a"
+  ),
   lookupTable: "7UbXhDnpK7WVnwsfivzQRENoqKqAULQ5s19gS1xJrQEo",
   farm: "E2Ct77LowkDAH1T9ubwPpb84pU2GSGrUdgH3KeTTpLX"
 } as const;

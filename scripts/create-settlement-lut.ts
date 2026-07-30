@@ -1,5 +1,7 @@
 /**
- * Creates (or extends) the Subly settlement address lookup table.
+ * Creates the Subly settlement address lookup table. Always creates a NEW
+ * table — re-running never extends an existing one; append the newly printed
+ * address to the comma-separated SUBLY_EXTRA_LOOKUP_TABLES.
  *
  * The canonical settlement transaction references the vault reserves, farm
  * accounts, and auxiliary programs. When the curator's vault LUT does not

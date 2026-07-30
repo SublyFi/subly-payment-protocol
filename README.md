@@ -214,6 +214,7 @@ All configuration is via environment variables (there are no config files and no
 | `SUBLY_MCP_MAX_AMOUNT_RAW_USDC` | `10000` (0.01 USDC) | Client-side per-payment cap for `pay mcp` and `pay fetch`. |
 | `SUBLY_MCP_STATE_PATH` | `~/.subly/standard-x402-pending.json` | Local store of pending payments (double-payment protection). |
 | `SUBLY_PAY_METHOD` / `SUBLY_PAY_BODY` | `GET` / — | `pay fetch` only: HTTP method / JSON body for POST-body sellers. |
+| `SUBLY_VAULT_ADDRESS` / `SUBLY_VAULT_SHARE_MINT` / `SUBLY_VAULT_USDC_MINT` | Subly's public vault | Only when your relayer settles against a custom Kamino vault — see [Running it as your own service](#running-it-as-your-own-service). These are your signer's trust anchor: set them only to a vault you independently verified or control. |
 
 ### Custody signers (Circle / Privy)
 
@@ -255,7 +256,7 @@ Subly separates the **agent** (holds the wallet key, spends yield) from the **ow
 
 ## Self-hosting the relayer
 
-The relayer is the buyer-side vault/budget/yield-realize API in [`src/`](src). It is **not** an x402 facilitator — sellers keep their own. By default the npm client talks to Subly's hosted beta relayer (`api.demo.sublyfi.com`); everything it does can be self-hosted.
+The relayer is the buyer-side vault/budget/yield-realize API in [`src/`](src). It is **not** an x402 facilitator — sellers keep their own. By default the npm client talks to Subly's hosted beta relayer (`api.demo.sublyfi.com`), but **anyone can run their own relayer as their own service** — no permission from Subly is needed, and nothing in the on-chain settlement path is exclusive to Subly's deployment. The full from-zero runbook (sponsor wallet, lookup table, invest crank, monitoring, economics) is [`deploy/README.md`](deploy/README.md); the short version follows.
 
 ### Local development
 
@@ -284,6 +285,22 @@ curl -s https://<your-domain>/healthz                      # {"ok":true}
 
 There is no migration step — the Postgres schema auto-creates on first connection. Full instructions (updates via `git archive`, monitoring cron): [`deploy/README.md`](deploy/README.md).
 
+### Running it as your own service
+
+The operator checklist, in order (details in [`deploy/README.md`](deploy/README.md)):
+
+1. **Sponsor wallet** — `solana-keygen new`, fund with ~0.5 SOL. It fronts gas for every deposit/withdraw/realize (about one sponsored transaction per payment); users never need SOL.
+2. **Dedicated RPC + your own domain** — set `SUBLY_APPROVE_URL_BASE` / `SUBLY_SETUP_URL_BASE` to *your* domain, or owner passkeys will bind to the wrong WebAuthn rpId and fail.
+3. **`SUBLY_MANDATE_ENFORCEMENT=on`** — the `warn` default exists for staged rollouts; a fresh deployment should enforce from day one.
+4. **Settlement lookup table** — one-time `scripts/create-settlement-lut.ts` run, then `SUBLY_EXTRA_LOOKUP_TABLES`.
+5. **Invest crank** — run `scripts/invest-vault.ts` after significant deposits so funds actually earn yield (the instruction is permissionless).
+6. **Monitoring** — cron `scripts/check-sponsor-balance.sh`; nothing auto-halts when the sponsor runs dry, flows just start failing.
+7. **Point users at you** — they set `SUBLY_RELAYER_URL=https://your-domain` on the standard `@subly_fi/pay` client; no API token needed. With enforcement `on`, their first action is the owner setup link (`pay setup-link`) — a bare first deposit is refused with `mandate_required_for_deposit`.
+
+**Economics, honestly:** sponsored gas is recorded as `feeDebt` against each user's position and reduces their spendable yield, but no USDC ever flows back to the operator — there is no fee-collection mechanism in the code today. Treat gas as an operating cost and bring your own revenue model ([`docs/business-model.md`](docs/business-model.md) describes the intended one).
+
+**Your own vault (advanced):** deployments settle against Subly's public Kamino USDC vault by default, which third parties can use freely (shares sit under each agent wallet's own authority). To run your own Kamino vault instead, set `SUBLY_VAULT_ADDRESS` / `SUBLY_VAULT_SHARE_MINT` / `SUBLY_VAULT_USDC_MINT` on **both** the relayer and every client — the client deliberately validates transactions against its local vault config, never the relayer's claims. Published npm clients up to 0.6.1 have the defaults compiled in, so custom-vault setups need a client built from this repo until the next release.
+
 ### Key server environment
 
 | Variable | Required (prod) | Description |
@@ -296,13 +313,14 @@ There is no migration step — the Postgres schema auto-creates on first connect
 | `SUBLY_MANDATE_ENFORCEMENT` | no (default `warn`) | `off` \| `warn` \| `on` — set `on` to actually block policy violations. |
 | `SUBLY_TRUST_PROXY` | behind a proxy | Required behind Caddy/LB so per-IP rate limiting keys on the real client IP. |
 | `SUBLY_APPROVE_URL_BASE` / `SUBLY_SETUP_URL_BASE` | for mandates | Where owner approve/setup pages are served (WebAuthn rpId derives from these). |
+| `SUBLY_VAULT_ADDRESS` / `SUBLY_VAULT_SHARE_MINT` / `SUBLY_VAULT_USDC_MINT` | no (defaults: Subly's public vault) | Settle against a different Kamino vault. Must match on relayer *and* clients. |
 | `SUBLY_ENABLE_LEGACY_X402` | no (default off) | Re-enables the retired seller-side `subly-yield-exact` endpoints. Leave off. |
 
 ### Operational scripts
 
 | Script | Purpose |
 | --- | --- |
-| `scripts/create-settlement-lut.ts` | One-time: create/extend the settlement lookup table (keeps vault transactions under Solana's size limit). |
+| `scripts/create-settlement-lut.ts` | One-time: create the settlement lookup table (keeps vault transactions under Solana's size limit). Re-runs create a *new* table — append it to `SUBLY_EXTRA_LOOKUP_TABLES`. |
 | `scripts/invest-vault.ts` | Crank idle vault USDC into Kamino reserves so yield actually accrues. |
 | `npm run validate:mainnet` | Read-only mainnet validation harness — simulates the full settlement path, moves no funds. |
 | `scripts/check-sponsor-balance.sh` | Cron monitor: alerts a webhook when the sponsor's SOL drops below threshold. |

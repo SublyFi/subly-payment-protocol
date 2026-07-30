@@ -154,6 +154,7 @@ keypair (see [Wallet](#wallet) above).
 | `SUBLY_PAY_METHOD` / `SUBLY_PAY_BODY` | no (`pay fetch` only) | `GET` / — (JSON body for POST-body sellers) |
 | `SUBLY_PAY_FORCE_NEW_PAYMENT` | no (`pay fetch` only) | unset (`1` forces a fresh payment — may double-pay) |
 | `CIRCLE_BASE_URL` / `PRIVY_BASE_URL` | no | provider API defaults |
+| `SUBLY_VAULT_ADDRESS` / `SUBLY_VAULT_SHARE_MINT` / `SUBLY_VAULT_USDC_MINT` | only with a custom-vault relayer | Subly's public vault. These are your signer's trust anchor (intents are validated against this local config, never the relayer's claims) — set them only to a vault you independently verified or control |
 
 Requests authenticate with a signature from your wallet key — there is no API
 token. `SUBLY_FACILITATOR_URL` is still accepted as a legacy fallback for

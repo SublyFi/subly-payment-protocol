@@ -6,7 +6,9 @@ deposited USDC, and the principal is never spent. Non-custodial: it signs
 locally with your own Solana key; Subly never holds it.
 
 Current payments target standard x402 sellers that offer a Solana USDC `exact`
-rail with facilitator `extra.feePayer` support.
+rail with facilitator `extra.feePayer` support (meaning the seller side
+sponsors the payment transaction's network fee — true of common facilitators
+such as PayAI and Coinbase CDP).
 
 Ships one `pay` dispatcher bin with subcommands, all runnable with `npx` (no clone):
 
@@ -25,12 +27,13 @@ Ships one `pay` dispatcher bin with subcommands, all runnable with `npx` (no clo
 - `pay deposit <amountRawUsdc> [apr_...]` / `pay withdraw <amountRawUsdc>
   [apr_...]` — vault deposit / withdraw with the same owner-approval flow
 - `pay setup-link [--initial-deposit <raw>] [--approval-threshold <raw>] ...`
-  / `pay setup-status <sessionId>` — owner onboarding for CLI/skill harnesses
-  (same flow as the MCP setup tools)
+  / `pay setup-status <st_sessionId | setupUrl>` — owner onboarding for
+  CLI/skill harnesses (same flow as the MCP setup tools)
 
 ## Wallet
 
-Subly does not create wallets — bring your own Solana keypair:
+Subly does not create wallets — bring your own Solana keypair (`solana-keygen`
+ships with the [Solana CLI](https://docs.anza.xyz/cli/install)):
 
 ```bash
 solana-keygen new --no-bip39-passphrase -o ~/.subly/agent.json
@@ -129,8 +132,11 @@ keypair (see [Wallet](#wallet) above).
    Payments above the owner's approval threshold return an `approveUrl` —
    open it in a browser, approve, then tell Claude to retry.
 
-   Claude Desktop asks for permission on each first tool use; choose
-   "Allow always" to keep the flow hands-free.
+   Claude Desktop asks for permission on each first tool use. The permission
+   prompt is effectively your payment confirmation: "Allow always" on
+   `fetch_with_subly_payment` removes that human check and relies entirely on
+   the spending-mandate caps — keep per-use approval for payments, and reserve
+   "Allow always" for read-only tools like `get_subly_yield_budget`.
 
 ## Environment
 
@@ -144,6 +150,10 @@ keypair (see [Wallet](#wallet) above).
 | `SUBLY_RELAYER_URL` | no | `https://api.demo.sublyfi.com` |
 | `SOLANA_RPC_URL` | no | public mainnet RPC |
 | `SUBLY_MCP_MAX_AMOUNT_RAW_USDC` | no | `10000` (0.01 USDC) per-payment cap |
+| `SUBLY_MCP_STATE_PATH` | no | `~/.subly/standard-x402-pending.json` (pending-payment store, double-payment protection) |
+| `SUBLY_PAY_METHOD` / `SUBLY_PAY_BODY` | no (`pay fetch` only) | `GET` / — (JSON body for POST-body sellers) |
+| `SUBLY_PAY_FORCE_NEW_PAYMENT` | no (`pay fetch` only) | unset (`1` forces a fresh payment — may double-pay) |
+| `CIRCLE_BASE_URL` / `PRIVY_BASE_URL` | no | provider API defaults |
 
 Requests authenticate with a signature from your wallet key — there is no API
 token. `SUBLY_FACILITATOR_URL` is still accepted as a legacy fallback for

@@ -80,9 +80,10 @@ npx -y @subly_fi/pay fetch https://seller.demo.sublyfi.com/api/premium/alpha
 
 ## 期待値: いくら預けるとどのくらいで支払えるか
 
-決済 1 回には「価格 + 固定オーバーヘッド ~0.0024 USDC (vault 引き出し
-ペナルティ 0.001 + ネットワーク手数料立替分)」の spendable yield が
-必要です。yield の蓄積ペースは預入額に比例します:
+決済 1 回には「価格 + オーバーヘッド ~0.0035 USDC (vault 引き出し
+ペナルティ 0.001 + 手数料立替ヘッドルーム 0.0025)」の spendable yield が
+必要です (実際に課金される立替額は通常ヘッドルーム以下)。yield の蓄積ペースは
+預入額に比例します:
 
 | deposit | 初決済まで (目安) | 以降の決済間隔 (目安) |
 |---|---|---|
@@ -102,7 +103,7 @@ npx -y @subly_fi/pay fetch https://seller.demo.sublyfi.com/api/premium/alpha
 | `amount_exceeds_client_cap` | challenge の価格があなたの上限 (`SUBLY_MCP_MAX_AMOUNT_RAW_USDC`) 超え。意図した価格なら上限を上げる |
 | `delivery_failed_payment_pending` | 支払い署名済みで配信だけ失敗。**同じ URL でもう一度呼ぶだけ** (同じ署名で再試行され、二重払いしない) |
 | `payment_outcome_unknown` / `payment_already_settled` | 前回の支払いの結果が不明 / 既に決済済み。ツールが自動で facilitator に照会し、未 settle 確定なら次の呼び出しで安全に再購入される。`payment_already_settled` の場合の `forceNewPayment=true` は「同じものに二重に払う」明示なので安易に使わない |
-| `deposit_below_minimum` | vault の最小 deposit は 1 USDC (`1000000` raw) |
+| `deposit_below_minimum` | vault の最小 deposit は 1 USDC 強 (share の丸めで `1000000` ちょうどは拒否される — `1010000` などを使う) |
 | 429 (rate limited) | レート制限。少し待つ |
 | resource mismatch | URL は 402 を返した URL と完全一致が必要 (末尾スラッシュ等に注意) |
 
@@ -116,10 +117,11 @@ npx -y @subly_fi/pay withdraw 1000000  # 1 USDC
 
 注意点:
 
-- 引き出し額には vault の引き出しペナルティ (固定 0.001 USDC + 端数) が
-  かかる
-- **引き出すと、その時点で蓄積していた spendable yield は元本扱いに
-  繰り入れられ、支払い予算はゼロから再蓄積になる** (資金は失われないが、
-  次の支払いまでまた待つことになる)。退出時以外の引き出しは計画的に
+- 引き出し額には vault の引き出しペナルティがかかる: max(1bps, 0.001 USDC)
+  (10 USDC までは floor の 0.001 USDC、それを超えると 0.01%)
+- **引き出しは蓄積済み yield から先に消費される**: spendable yield は
+  引き出した分 (+ペナルティと手数料立替) だけ減り、蓄積 yield を超えて引き出した場合のみ支払い予算が
+  ゼロからの再蓄積になる (principal basis が引き上げられることはない)。
+  退出時以外の引き出しは計画的に
 - 全額引き出し (退出) は deposit 額 + 蓄積 yield がまとめて agent
   ウォレットの USDC ATA に戻る

@@ -1,6 +1,11 @@
 # Subly Docs
 
-最終更新: 2026-07-07 JST
+> **Looking for the project overview, quick start, or self-hosting guide?**
+> See the [root README](../README.md). This directory is the design-docs index;
+> most documents are currently written in Japanese (English translations are
+> welcome — see [CONTRIBUTING](../CONTRIBUTING.md)).
+
+最終更新: 2026-07-30 JST
 
 ## 現在の正
 

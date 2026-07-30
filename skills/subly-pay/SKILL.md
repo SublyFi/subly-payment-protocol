@@ -67,7 +67,8 @@ balance, guide the user through this once:
    `npx -y @subly_fi/pay deposit 1010000` (the pre-approved first deposit
    is picked up automatically; deposit also self-registers the wallet).
 5. Yield accrues over time; a payment needs the price plus a fixed overhead
-   (~0.0024 USDC) of spendable yield.
+   (~0.0035 USDC: 0.001 vault withdrawal penalty + 0.0025 fee headroom) of
+   spendable yield.
 
 ## How to run
 

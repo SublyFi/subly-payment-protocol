@@ -408,7 +408,7 @@ Repository layout: the root package (`subly-agent-payments`) is **private** — 
 | [`docs/protocol-dependency-risk.md`](docs/protocol-dependency-risk.md) | DeFi dependency risk: disclosure, auto-halt, safety reserve design. |
 | [`docs/payment-privacy-design.md`](docs/payment-privacy-design.md) | Third-party payment unlinkability design (not implemented). |
 | [`packages/pay/README.md`](packages/pay/README.md) | Client package reference (env vars, MCP tools, troubleshooting). |
-| [`deploy/README.md`](deploy/README.md) | Production deployment runbook. |
+| [`deploy/README.md`](deploy/README.md) | Operator guide — run your own gas-sponsoring relayer from zero (deploy, LUT, monitoring, economics). |
 
 > Note: several design documents are currently written in Japanese; English translations are welcome contributions.
 

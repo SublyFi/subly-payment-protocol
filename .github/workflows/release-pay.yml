@@ -32,7 +32,7 @@ jobs:
       - name: Verify release tag matches package version
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: test "$RELEASE_TAG" = "pay-v$(node -p \"require('./package.json').version\")"
+        run: node -e 'const expected = `pay-v${require("./package.json").version}`; if (process.env.RELEASE_TAG !== expected) { throw new Error(`Expected ${expected}, got ${process.env.RELEASE_TAG}`); }'
         working-directory: packages/pay
       - run: npm run typecheck
         working-directory: packages/pay

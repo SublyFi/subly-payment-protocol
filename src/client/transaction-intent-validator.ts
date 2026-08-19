@@ -62,6 +62,7 @@ export interface PaymentSigningIntent {
   requestBindingHash: string;
   seller: string;
   vault: string;
+  farm: string;
   shareMint: string;
   asset: string;
   amountRawUsdc: string;
@@ -79,6 +80,7 @@ export interface PaymentSigningIntent {
 export interface DepositSigningIntent {
   wallet: string;
   vault: string;
+  farm: string;
   shareMint: string;
   asset: string;
   amountRawUsdc: string;
@@ -90,6 +92,7 @@ export interface DepositSigningIntent {
 export interface WithdrawalSigningIntent {
   wallet: string;
   vault: string;
+  farm: string;
   shareMint: string;
   asset: string;
   destinationUsdcAta: string;
@@ -258,6 +261,9 @@ export function validatePaymentIntentTransaction(params: {
   if (intent.shareMint !== SUBLY_VAULT.shareMint) {
     reject("share_mint_mismatch", "Unsupported share mint");
   }
+  if (intent.farm !== SUBLY_VAULT.farm) {
+    reject("farm_mismatch", "Unsupported Kamino farm");
+  }
   if (intent.asset !== SUBLY_VAULT.usdcMint) {
     reject("asset_mismatch", "Only USDC payments are supported");
   }
@@ -335,7 +341,7 @@ export function validatePaymentIntentTransaction(params: {
   expectComputeBudgetPair(ixs, policy);
   expectCreateTemporaryAccount(ixs, intent, policy);
   expectInitializeTemporaryAccount(ixs, intent);
-  consumeFarmInstructions(ixs, intent.wallet);
+  consumeFarmInstructions(ixs, intent);
   expectKvaultWithdraw(ixs, {
     wallet: intent.wallet,
     vault: intent.vault,
@@ -504,13 +510,27 @@ export function validateWithdrawalIntentTransaction(params: {
   }
 
   let sawWithdraw = false;
+  let farmUserState: string | null = null;
+  let farmInstructionCount = 0;
   for (const ix of decoded.instructions) {
     switch (ix.programAddress) {
       case COMPUTE_BUDGET_PROGRAM_ID:
         validateComputeBudgetInstruction(ix, policy);
         break;
       case MEMO_PROGRAM_ID:
+        break;
       case KAMINO_FARMS_PROGRAM_ID:
+        farmInstructionCount += 1;
+        if (farmInstructionCount === 1) {
+          farmUserState = validateFarmUnstakeInstruction(ix, intent);
+        } else if (farmInstructionCount === 2) {
+          validateFarmWithdrawInstruction(ix, intent, farmUserState);
+        } else {
+          reject(
+            "farm_instruction_mismatch",
+            "Withdrawal may contain only one farm unstake and one farm withdrawal"
+          );
+        }
         break;
       case ASSOCIATED_TOKEN_PROGRAM_ID:
         expectAtaCreateForOwner(ix, intent.wallet);
@@ -532,6 +552,12 @@ export function validateWithdrawalIntentTransaction(params: {
         break;
       }
       case KVAULT_PROGRAM_ID: {
+        if (sawWithdraw) {
+          reject(
+            "withdraw_mismatch",
+            "Withdrawal may contain only one KVault withdraw instruction"
+          );
+        }
         validateKvaultWithdrawInstruction(ix, {
           wallet: intent.wallet,
           vault: intent.vault,
@@ -554,10 +580,17 @@ export function validateWithdrawalIntentTransaction(params: {
   if (!sawWithdraw) {
     reject("missing_instruction", "Withdrawal transaction has no KVault withdraw");
   }
+  if (farmInstructionCount === 1) {
+    reject(
+      "farm_instruction_mismatch",
+      "A farm unstake must be followed by a farm withdrawal"
+    );
+  }
 }
 
 function assertVaultIntentTargets(intent: {
   vault: string;
+  farm: string;
   shareMint: string;
   asset: string;
 }): void {
@@ -566,6 +599,9 @@ function assertVaultIntentTargets(intent: {
   }
   if (intent.shareMint !== SUBLY_VAULT.shareMint) {
     reject("share_mint_mismatch", "Unsupported share mint");
+  }
+  if (intent.farm !== SUBLY_VAULT.farm) {
+    reject("farm_mismatch", "Unsupported Kamino farm");
   }
   if (intent.asset !== SUBLY_VAULT.usdcMint) {
     reject("asset_mismatch", "Only USDC is supported");
@@ -713,18 +749,104 @@ function expectInitializeTemporaryAccount(
   }
 }
 
-function consumeFarmInstructions(ixs: DecodedInstruction[], wallet: string): void {
-  while (
-    ixs[0] !== undefined &&
-    ixs[0].programAddress === KAMINO_FARMS_PROGRAM_ID
+function consumeFarmInstructions(
+  ixs: DecodedInstruction[],
+  intent: Pick<PaymentSigningIntent, "wallet" | "farm" | "shareMint">
+): void {
+  if (ixs[0]?.programAddress !== KAMINO_FARMS_PROGRAM_ID) {
+    return;
+  }
+  const unstake = ixs.shift()!;
+  const userState = validateFarmUnstakeInstruction(unstake, intent);
+  if (ixs[0]?.programAddress !== KAMINO_FARMS_PROGRAM_ID) {
+    reject(
+      "farm_instruction_mismatch",
+      "A farm unstake must be followed by a farm withdrawal"
+    );
+  }
+  const withdraw = ixs.shift()!;
+  validateFarmWithdrawInstruction(withdraw, intent, userState);
+  if (ixs[0]?.programAddress === KAMINO_FARMS_PROGRAM_ID) {
+    reject(
+      "farm_instruction_mismatch",
+      "Payment may contain only one farm unstake and one farm withdrawal"
+    );
+  }
+}
+
+const KAMINO_FARMS_UNSTAKE_DISCRIMINATOR = Uint8Array.from([
+  90, 95, 107, 42, 205, 124, 50, 225
+]);
+const KAMINO_FARMS_WITHDRAW_UNSTAKED_DISCRIMINATOR = Uint8Array.from([
+  36, 102, 187, 49, 220, 36, 132, 67
+]);
+
+function validateFarmUnstakeInstruction(
+  ix: DecodedInstruction,
+  intent: Pick<PaymentSigningIntent, "wallet" | "farm">
+): string {
+  if (
+    ix.programAddress !== KAMINO_FARMS_PROGRAM_ID ||
+    !bytesStartWith(ix.data, KAMINO_FARMS_UNSTAKE_DISCRIMINATOR) ||
+    ix.data.length !== 24 ||
+    readU128LE(ix.data, 8) <= 0n
   ) {
-    const ix = ixs.shift()!;
-    if (!ix.accounts.includes(wallet)) {
-      reject(
-        "farm_instruction_mismatch",
-        "Farm unstake instruction does not reference the agent wallet"
-      );
-    }
+    reject(
+      "farm_instruction_mismatch",
+      "Expected a non-zero Kamino farm unstake instruction"
+    );
+  }
+  if (ix.accounts.length !== 4) {
+    reject(
+      "farm_instruction_mismatch",
+      "Farm unstake account list is not canonical"
+    );
+  }
+  if (ix.accounts[0] !== intent.wallet) {
+    reject("farm_instruction_mismatch", "Farm unstake owner must be the agent wallet");
+  }
+  if (ix.accounts[2] !== intent.farm) {
+    reject("farm_instruction_mismatch", "Farm unstake target is not the approved farm");
+  }
+  return ix.accounts[1]!;
+}
+
+function validateFarmWithdrawInstruction(
+  ix: DecodedInstruction,
+  intent: Pick<PaymentSigningIntent, "wallet" | "farm" | "shareMint">,
+  expectedUserState: string | null
+): void {
+  if (
+    ix.programAddress !== KAMINO_FARMS_PROGRAM_ID ||
+    !bytesStartWith(ix.data, KAMINO_FARMS_WITHDRAW_UNSTAKED_DISCRIMINATOR) ||
+    ix.data.length !== 8
+  ) {
+    reject(
+      "farm_instruction_mismatch",
+      "Expected a canonical Kamino farm withdrawal instruction"
+    );
+  }
+  if (ix.accounts.length !== 7) {
+    reject(
+      "farm_instruction_mismatch",
+      "Farm withdrawal account list is not canonical"
+    );
+  }
+  const expectedSharesAta = deriveAssociatedTokenAddress({
+    owner: intent.wallet,
+    mint: intent.shareMint
+  });
+  if (
+    ix.accounts[0] !== intent.wallet ||
+    ix.accounts[1] !== expectedUserState ||
+    ix.accounts[2] !== intent.farm ||
+    ix.accounts[3] !== expectedSharesAta ||
+    ix.accounts[6] !== SPL_TOKEN_PROGRAM_ID
+  ) {
+    reject(
+      "farm_instruction_mismatch",
+      "Farm withdrawal must return the approved vault shares to the agent wallet"
+    );
   }
 }
 
@@ -911,6 +1033,17 @@ function readU32LE(data: Uint8Array, offset: number): number {
     reject("invalid_transaction_encoding", "Instruction data too short for u32");
   }
   return Buffer.from(data.subarray(offset, offset + 4)).readUInt32LE(0);
+}
+
+function readU128LE(data: Uint8Array, offset: number): bigint {
+  if (data.length < offset + 16) {
+    reject("invalid_transaction_encoding", "Instruction data too short for u128");
+  }
+  let value = 0n;
+  for (let index = 0; index < 16; index += 1) {
+    value |= BigInt(data[offset + index]!) << BigInt(index * 8);
+  }
+  return value;
 }
 
 function readShortVec(

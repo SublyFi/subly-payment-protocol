@@ -53,6 +53,13 @@ export class PostgresLedger implements Ledger {
       typeof config === "string" ? new Pool({ connectionString: config }) : new Pool(config);
   }
 
+  async withSpendingMandateLock<T>(
+    wallet: string,
+    callback: () => Promise<T>
+  ): Promise<T> {
+    return this.withTransactionLock("subly-spending-mandate", wallet, callback);
+  }
+
   async withWalletVaultLock<T>(
     wallet: string,
     vault: string,
@@ -470,6 +477,23 @@ export class PostgresLedger implements Ledger {
     );
 
     return result.rows.map((row) => row.data as SpendingApproval);
+  }
+
+  async pruneSpendingApprovals(wallet: string, beforeMs: number): Promise<number> {
+    await this.ensureSchema();
+    const result = await this.query(
+      `delete from payment_approvals
+       where wallet = $1
+         and (
+           (data->>'expiresAtMs')::bigint < $2
+           or (
+             status in ('consumed', 'denied', 'expired')
+             and updated_at < now() - interval '7 days'
+           )
+         )`,
+      [wallet, beforeMs]
+    );
+    return result.rowCount ?? 0;
   }
 
   async getSetupSession(sessionId: string): Promise<SetupSession | null> {

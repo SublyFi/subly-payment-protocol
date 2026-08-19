@@ -19,8 +19,8 @@ const envOr = (name: string, fallback: string): string => {
 // Kamino vault overrides the SUBLY_VAULT_* variables on BOTH sides — the
 // relayer, and every client process — because the client's intent validation
 // checks prepared transactions against this local config, never against what
-// the relayer claims. lookupTable/farm document the default vault only; the
-// transaction-building path loads both from on-chain vault state.
+// the relayer claims. The lookup table is still deployment-specific; farm is
+// configurable because Farm unstake/withdraw instructions are validated too.
 export const SUBLY_VAULT = {
   name: "Subly USDC Payment Vault Alpha",
   address: envOr(
@@ -37,7 +37,10 @@ export const SUBLY_VAULT = {
     "7hGX49So539MU9Rrah8nBNVYXswWVwEJvgWNYeBDYq3a"
   ),
   lookupTable: "7UbXhDnpK7WVnwsfivzQRENoqKqAULQ5s19gS1xJrQEo",
-  farm: "E2Ct77LowkDAH1T9ubwPpb84pU2GSGrUdgH3KeTTpLX"
+  farm: envOr(
+    "SUBLY_VAULT_FARM",
+    "E2Ct77LowkDAH1T9ubwPpb84pU2GSGrUdgH3KeTTpLX"
+  )
 } as const;
 
 export const USDC_DECIMALS = 6;

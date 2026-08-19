@@ -99,6 +99,23 @@ describe("verifyWalletAuth", () => {
     });
     expect(result).toMatchObject({ ok: false });
   });
+
+  it("binds the query string to the signed request", () => {
+    const { wallet, sign } = testWallet();
+    const headers = sign({
+      method: "GET",
+      path: "/v1/wallets/x/budget?view=full"
+    });
+    const result = verifyWalletAuth({
+      wallet,
+      signedAt: headers[WALLET_AUTH_SIGNED_AT_HEADER],
+      signature: headers[WALLET_AUTH_SIGNATURE_HEADER],
+      method: "GET",
+      path: "/v1/wallets/x/budget?view=summary",
+      rawBody: ""
+    });
+    expect(result).toMatchObject({ ok: false });
+  });
 });
 
 describe("wallet-signature auth on the API", () => {

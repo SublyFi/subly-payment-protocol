@@ -65,7 +65,11 @@ A note on scope: this code moves real money on Solana mainnet. PRs that touch si
 
 ## Publishing
 
-Publishing `@subly_fi/pay` to npm is maintainer-only — see [`packages/pay/PUBLISHING.md`](packages/pay/PUBLISHING.md).
+Publishing `@subly_fi/pay` to npm is maintainer-only — see [`RELEASE.md`](RELEASE.md) and [`packages/pay/PUBLISHING.md`](packages/pay/PUBLISHING.md). Do not add npm tokens or other credentials to the repository; releases use a configured trusted publisher or a maintainer's local credentials.
+
+## Support and governance
+
+Please check [`SUPPORT.md`](SUPPORT.md) before opening a usage request and [`GOVERNANCE.md`](GOVERNANCE.md) for project decision-making. Never disclose a vulnerability in a public issue; use [`SECURITY.md`](SECURITY.md).
 
 ## Conduct and security
 

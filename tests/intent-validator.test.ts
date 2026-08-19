@@ -40,6 +40,7 @@ import {
   validatePaymentIntentTransaction,
   type PaymentSigningIntent
 } from "../src/client/transaction-intent-validator.js";
+import { KAMINO_FARMS_PROGRAM_ID } from "../src/client/transaction-intent-validator.js";
 import { computeRequestBindingHash } from "../src/domain/request-binding.js";
 import { deriveAssociatedTokenAddress } from "../src/lib/associated-token-account.js";
 import { buildVersionedTransaction } from "../src/solana/tx.js";
@@ -78,6 +79,7 @@ interface BuildOverrides {
   dustDestination?: string;
   dustAmount?: bigint;
   extraInstruction?: boolean;
+  farmInstruction?: "foreign";
   feePayerOverride?: string;
   computeUnitLimit?: number;
   computeUnitPriceMicroLamports?: bigint;
@@ -144,6 +146,24 @@ async function buildSettlement(overrides: BuildOverrides = {}) {
       mint: usdcMint,
       owner: address(overrides.initOwner ?? a.agent.address)
     }),
+    ...(overrides.farmInstruction === "foreign"
+      ? [
+          {
+            programAddress: address(KAMINO_FARMS_PROGRAM_ID),
+            accounts: [
+              { address: a.agent.address, role: 3 },
+              { address: a.attacker.address, role: 1 },
+              { address: a.attacker.address, role: 1 },
+              { address: a.attacker.address, role: 0 }
+            ],
+            data: Uint8Array.from([
+              90, 95, 107, 42, 205, 124, 50, 225,
+              1, 0, 0, 0, 0, 0, 0, 0,
+              0, 0, 0, 0, 0, 0, 0, 0
+            ])
+          }
+        ]
+      : []),
     withdrawIx,
     getTransferCheckedInstruction({
       source: a.temp.address,
@@ -208,6 +228,7 @@ async function buildSettlement(overrides: BuildOverrides = {}) {
     requestBindingHash: "",
     seller: a.seller.address,
     vault: SUBLY_VAULT.address,
+    farm: SUBLY_VAULT.farm,
     shareMint: SUBLY_VAULT.shareMint,
     asset: SUBLY_VAULT.usdcMint,
     amountRawUsdc: "10000",
@@ -347,6 +368,16 @@ describe("validatePaymentIntentTransaction", () => {
     expectRejection(
       () => validatePaymentIntentTransaction({ intent, serializedTransaction }),
       "unexpected_instruction"
+    );
+  });
+
+  it("rejects a foreign Kamino farm instruction", async () => {
+    const { intent, serializedTransaction } = await buildSettlement({
+      farmInstruction: "foreign"
+    });
+    expectRejection(
+      () => validatePaymentIntentTransaction({ intent, serializedTransaction }),
+      "farm_instruction_mismatch"
     );
   });
 

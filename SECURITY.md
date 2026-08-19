@@ -6,9 +6,9 @@ Subly moves real funds on Solana mainnet. We take vulnerability reports seriousl
 
 **Please do not open a public GitHub issue for security vulnerabilities.**
 
-Report privately via [GitHub Security Advisories](https://github.com/SublyFi/subly-payment-protocol/security/advisories/new) ("Report a vulnerability" on the repository's Security tab). If the advisory form is ever unavailable, contact the maintainer directly instead: [@yukikm](https://github.com/yukikm) on GitHub or [@subly_fi](https://x.com/subly_fi) via DM. We will acknowledge your report as quickly as we can, keep you informed of progress, and credit you in the fix release unless you prefer otherwise.
+Report privately via [GitHub Security Advisories](https://github.com/SublyFi/subly-payment-protocol/security/advisories/new) ("Report a vulnerability" on the repository's Security tab). If the advisory form is ever unavailable, contact the maintainer directly instead: [@yukikm](https://github.com/yukikm) on GitHub or [@subly_fi](https://x.com/subly_fi) via DM. We aim to acknowledge reports within five business days, keep you informed of progress, and credit you in the fix release unless you prefer otherwise; this is a best-effort target, not an SLA.
 
-Please include: the affected component, a reproduction or proof of concept, and your assessment of impact.
+Please include: the affected component and version/commit, a reproduction or proof of concept, your assessment of impact, and any mitigation you have tested. Remove private keys, seed phrases, API tokens, wallet signatures, database URLs, and personal data from the report unless they are essential to demonstrate impact.
 
 ## Scope
 
@@ -24,8 +24,12 @@ Out of scope: vulnerabilities in third-party dependencies (Kamino, x402 facilita
 
 ## Supported versions
 
-Security fixes land on `main` and in the latest published `@subly_fi/pay` release. Older npm releases are not patched retroactively.
+Security fixes land on `main` and in the latest published `@subly_fi/pay` release. Older npm releases and untagged forks are not patched retroactively. The root relayer is source-distributed; operators are responsible for deploying a reviewed commit and keeping their dependencies current.
 
 ## Disclosure
 
 Please give us a reasonable window to ship a fix before public disclosure. This project has not yet undergone an external security audit; the [README's security model](README.md#security--trust-model) documents the current trust assumptions honestly.
+
+## Dependency status
+
+The published client dependency lock is checked by CI and must pass a high-severity npm audit before release. The source-distributed relayer has a separate dependency graph; its current Kamino SDK/Solana transitive chain can report upstream npm advisories that require a coordinated SDK upgrade and compatibility review. A clean client audit must not be interpreted as a clean relayer audit. Dependabot and the advisory security workflow keep this distinction visible until that upgrade is completed.

@@ -27,6 +27,11 @@ Existing standard x402 seller
 
 As a rule of thumb: 1,000 USDC at 10% APY covers roughly 27 API calls per day at $0.01 each (before overhead).
 
+**Project status:** Subly is beta software, uses semantic version `0.x`, and has not had an external security audit. The root repository is public source; only [`@subly_fi/pay`](packages/pay) is published to npm. Read the [support](SUPPORT.md), [security](SECURITY.md), [governance](GOVERNANCE.md), and [release](RELEASE.md) policies before operating it with real funds.
+
+> [!WARNING]
+> This release is experimental and moves real funds on Solana mainnet. It has not undergone an external security audit, and the source-distributed relayer still has known upstream dependency advisories and an unresolved Kamino/Solana peer-dependency compatibility issue. The published client currently passes its production dependency audit, but that does not make the relayer or the Kamino vault risk-free. Use only amounts you can afford to lose, keep the beta limits small, and review the exact commit and configuration before self-hosting.
+
 ---
 
 ## Table of contents
@@ -45,7 +50,10 @@ As a rule of thumb: 1,000 USDC at 10% APY covers roughly 27 API calls per day at
 - [Development](#development)
 - [Roadmap](#roadmap)
 - [Documentation](#documentation)
+- [Support](#support)
 - [Contributing](#contributing)
+- [Governance](#governance)
+- [Changelog](#changelog)
 - [License](#license)
 - [Disclaimer](#disclaimer)
 
@@ -214,7 +222,7 @@ All configuration is via environment variables (there are no config files and no
 | `SUBLY_MCP_MAX_AMOUNT_RAW_USDC` | `10000` (0.01 USDC) | Client-side per-payment cap for `pay mcp` and `pay fetch`. |
 | `SUBLY_MCP_STATE_PATH` | `~/.subly/standard-x402-pending.json` | Local store of pending payments (double-payment protection). |
 | `SUBLY_PAY_METHOD` / `SUBLY_PAY_BODY` | `GET` / — | `pay fetch` only: HTTP method / JSON body for POST-body sellers. |
-| `SUBLY_VAULT_ADDRESS` / `SUBLY_VAULT_SHARE_MINT` / `SUBLY_VAULT_USDC_MINT` | Subly's public vault | Only when your relayer settles against a custom Kamino vault — see [Running it as your own service](#running-it-as-your-own-service). These are your signer's trust anchor: set them only to a vault you independently verified or control. |
+| `SUBLY_VAULT_ADDRESS` / `SUBLY_VAULT_SHARE_MINT` / `SUBLY_VAULT_USDC_MINT` / `SUBLY_VAULT_FARM` | Subly's public vault and Farm | Only when your relayer settles against a custom Kamino vault — see [Running it as your own service](#running-it-as-your-own-service). These are your signer's trust anchors: set them only to addresses you independently verified or control. |
 
 ### Custody signers (Circle / Privy)
 
@@ -252,7 +260,7 @@ Subly separates the **agent** (holds the wallet key, spends yield) from the **ow
 - **Kill switch:** the owner can revoke the mandate at any time; revocation blocks all spending immediately. A 72-hour agent-initiated recovery-revoke exists for owner-loss deadlock (the owner can veto during the window).
 - **Audit:** `GET /v1/wallets/:wallet/spending-log` gives one row per payment with the decision (`auto_within_policy` / `owner_approved:apr_...`) and the mandate hash.
 
-**Honest boundary:** these controls are enforced at the relayer, not by an on-chain program — and the enforcement level is env-staged via `SUBLY_MANDATE_ENFORCEMENT=off|warn|on` (**default `warn`**: violations are logged and stamped on the intent but not blocked; only the owner kill switch always blocks). **The hosted beta relayer currently also runs `warn`** — treat the caps above as advisory there until it is switched to `on`. Self-hosters should set it to `on` for real enforcement. See [`docs/spending-mandate-design.md`](docs/spending-mandate-design.md).
+**Honest boundary:** these controls are enforced at the relayer, not by an on-chain program. `SUBLY_MANDATE_ENFORCEMENT=off|warn|on` is available for staged rollout, but the source default is now **`on`**; `warn` only logs and stamps violations without blocking. **The hosted beta relayer may still run `warn`** — treat caps as advisory there until its operator confirms `on`. See [`docs/spending-mandate-design.md`](docs/spending-mandate-design.md).
 
 ## Self-hosting the relayer
 
@@ -291,7 +299,7 @@ The operator checklist, in order (details in [`deploy/README.md`](deploy/README.
 
 1. **Sponsor wallet** — `solana-keygen new`, fund with ~0.5 SOL. It fronts gas for every deposit/withdraw/realize (about one sponsored transaction per payment); users never need SOL.
 2. **Dedicated RPC + your own domain** — set `SUBLY_APPROVE_URL_BASE` / `SUBLY_SETUP_URL_BASE` to *your* domain, or owner passkeys will bind to the wrong WebAuthn rpId and fail.
-3. **`SUBLY_MANDATE_ENFORCEMENT=on`** — the `warn` default exists for staged rollouts; a fresh deployment should enforce from day one.
+3. **`SUBLY_MANDATE_ENFORCEMENT=on`** — this is the secure source default; set it explicitly in production so configuration drift is visible.
 4. **Settlement lookup table** — one-time `scripts/create-settlement-lut.ts` run, then `SUBLY_EXTRA_LOOKUP_TABLES`.
 5. **Invest crank** — run `scripts/invest-vault.ts` after significant deposits so funds actually earn yield (the instruction is permissionless).
 6. **Monitoring** — cron `scripts/check-sponsor-balance.sh`; nothing auto-halts when the sponsor runs dry, flows just start failing.
@@ -299,7 +307,7 @@ The operator checklist, in order (details in [`deploy/README.md`](deploy/README.
 
 **Economics, honestly:** sponsored gas is recorded as `feeDebt` against each user's position and reduces their spendable yield, but no USDC ever flows back to the operator — there is no fee-collection mechanism in the code today. Treat gas as an operating cost and bring your own revenue model ([`docs/business-model.md`](docs/business-model.md) describes the intended one).
 
-**Your own vault (advanced):** deployments settle against Subly's public Kamino USDC vault by default, which third parties can use freely (shares sit under each agent wallet's own authority). To run your own Kamino vault instead, set `SUBLY_VAULT_ADDRESS` / `SUBLY_VAULT_SHARE_MINT` / `SUBLY_VAULT_USDC_MINT` on **both** the relayer and every client — the client deliberately validates transactions against its local vault config, never the relayer's claims. Published npm clients up to 0.6.1 have the defaults compiled in, so custom-vault setups need a client built from this repo until the next release.
+**Your own vault (advanced):** deployments settle against Subly's public Kamino USDC vault by default, which third parties can use freely (shares sit under each agent wallet's own authority). To run your own Kamino vault instead, set `SUBLY_VAULT_ADDRESS` / `SUBLY_VAULT_SHARE_MINT` / `SUBLY_VAULT_USDC_MINT` / `SUBLY_VAULT_FARM` on **both** the relayer and every client — the client deliberately validates transactions against its local vault and Farm config, never the relayer's claims. Published npm clients up to 0.6.1 have the defaults compiled in, so custom-vault setups need a client built from this repo until the next release.
 
 ### Key server environment
 
@@ -310,10 +318,10 @@ The operator checklist, in order (details in [`deploy/README.md`](deploy/README.
 | `DATABASE_URL` | yes — boot refuses without it | Postgres ledger (positions, intents, mandates, approvals, audit events). |
 | `SUBLY_EXTRA_LOOKUP_TABLES` | operational | Settlement address lookup table (create with `scripts/create-settlement-lut.ts`). Boot succeeds without it, but vault transactions can exceed Solana's size limit. |
 | `SUBLY_ADMIN_API_TOKEN` | operational | Operator bearer token for `/v1/admin/*` (unset, those endpoints return 503). Buyers need no token. |
-| `SUBLY_MANDATE_ENFORCEMENT` | no (default `warn`) | `off` \| `warn` \| `on` — set `on` to actually block policy violations. |
+| `SUBLY_MANDATE_ENFORCEMENT` | no (default `on`) | `off` \| `warn` \| `on` — `warn` is for an explicitly staged rollout; `on` blocks policy violations. |
 | `SUBLY_TRUST_PROXY` | behind a proxy | Required behind Caddy/LB so per-IP rate limiting keys on the real client IP. |
 | `SUBLY_APPROVE_URL_BASE` / `SUBLY_SETUP_URL_BASE` | for mandates | Where owner approve/setup pages are served (WebAuthn rpId derives from these). |
-| `SUBLY_VAULT_ADDRESS` / `SUBLY_VAULT_SHARE_MINT` / `SUBLY_VAULT_USDC_MINT` | no (defaults: Subly's public vault) | Settle against a different Kamino vault. Must match on relayer *and* clients. |
+| `SUBLY_VAULT_ADDRESS` / `SUBLY_VAULT_SHARE_MINT` / `SUBLY_VAULT_USDC_MINT` / `SUBLY_VAULT_FARM` | no (defaults: Subly's public vault) | Settle against a different Kamino vault and Farm. Must match on relayer *and* clients; independently verify every address. |
 | `SUBLY_ENABLE_LEGACY_X402` | no (default off) | Re-enables the retired seller-side `subly-yield-exact` endpoints. Leave off. |
 
 ### Operational scripts
@@ -365,7 +373,7 @@ What you trust, and what you don't:
 - **Yield budgets are small by design.** ~6–10% APY on a $500–$5,000 deposit funds cents per day — a fit for metered $0.01-class APIs, not large bills.
 - **Withdrawals consume accrued yield first** — the spendable budget drops by the amount withdrawn and only restarts from zero if you withdraw more than the accrued yield. Every withdrawal also pays the vault's penalty: the greater of 0.01% and a 0.001 USDC floor.
 - **`insufficient_yield` is normal** right after depositing — yield needs time to accrue (rough guide: a 100 USDC deposit reaches its first $0.01 payment within hours to about a day, depending on the vault's current APY; each realize must also cover ~0.0035 USDC of penalty + fee overhead).
-- **Mandate enforcement defaults to `warn`** on self-hosted relayers — flip `SUBLY_MANDATE_ENFORCEMENT=on` for hard enforcement.
+- **Mandate enforcement defaults to `on`** in the current source. `warn` is an explicit staged-rollout mode and must not be used when policy enforcement is required.
 - **Fees:** the protocol charges no payment fees. A performance fee on realized yield is planned for the hosted service ([`docs/business-model.md`](docs/business-model.md)) but is not implemented; self-hosting is entirely fee-free.
 
 ## Development
@@ -409,6 +417,8 @@ Repository layout: the root package (`subly-agent-payments`) is **private** — 
 | [`docs/payment-privacy-design.md`](docs/payment-privacy-design.md) | Third-party payment unlinkability design (not implemented). |
 | [`packages/pay/README.md`](packages/pay/README.md) | Client package reference (env vars, MCP tools, troubleshooting). |
 | [`deploy/README.md`](deploy/README.md) | Operator guide — run your own gas-sponsoring relayer from zero (deploy, LUT, monitoring, economics). |
+| [`SUPPORT.md`](SUPPORT.md) / [`SECURITY.md`](SECURITY.md) | User support and private vulnerability reporting. |
+| [`GOVERNANCE.md`](GOVERNANCE.md) / [`RELEASE.md`](RELEASE.md) / [`CHANGELOG.md`](CHANGELOG.md) | Project decisions, release checklist, and release history. |
 
 > Note: several design documents are currently written in Japanese; English translations are welcome contributions.
 
@@ -417,6 +427,18 @@ Repository layout: the root package (`subly-agent-payments`) is **private** — 
 Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup and guidelines, and please follow the [Code of Conduct](CODE_OF_CONDUCT.md). Report security vulnerabilities privately per the [Security Policy](SECURITY.md), never in a public issue.
 
 Good first contributions: English translations of the design docs, and additional custody signer transports (one file implementing `RemoteSignerTransport` + an env branch — see [`docs/agent-wallet-providers.md`](docs/agent-wallet-providers.md)).
+
+## Support
+
+For usage questions and bug reports, follow [`SUPPORT.md`](SUPPORT.md). Please remove secrets and personal data from logs. There is no guaranteed response or uptime SLA.
+
+## Governance
+
+The project is maintained by SublyFi during beta. Decision-making, release authority, and security handling are documented in [`GOVERNANCE.md`](GOVERNANCE.md).
+
+## Changelog
+
+See [`CHANGELOG.md`](CHANGELOG.md) for the release history and the current unreleased changes.
 
 ## License
 

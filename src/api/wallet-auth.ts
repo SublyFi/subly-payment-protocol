@@ -14,9 +14,9 @@
  *   x-subly-signature   base58 ed25519 signature over the message
  *
  * Signed message (single line, utf8):
- *   subly-api:{METHOD}:{path}:{sha256hex(rawBody or "")}:{signedAtMs}
+ *   subly-api:{METHOD}:{path[?query]}:{sha256hex(rawBody or "")}:{signedAtMs}
  *
- * Binding the method, path, exact body bytes, and timestamp prevents
+ * Binding the method, path including the query string, exact body bytes, and timestamp prevents
  * cross-endpoint or cross-wallet reuse; TLS prevents capture in transit.
  */
 import { createHash } from "node:crypto";

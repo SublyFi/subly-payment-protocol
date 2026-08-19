@@ -102,6 +102,12 @@ export function buildServer(
       options.trustProxy ?? process.env.SUBLY_TRUST_PROXY === "1"
   });
 
+  server.addHook("onSend", async (_request, reply) => {
+    reply.header("x-content-type-options", "nosniff");
+    reply.header("referrer-policy", "no-referrer");
+    reply.header("permissions-policy", "camera=(), microphone=(), geolocation=()");
+  });
+
   // Keep the raw body bytes: wallet-auth signatures cover the exact bytes
   // sent, so re-serializing the parsed body would not be sound.
   server.addContentTypeParser(
@@ -169,7 +175,10 @@ export function buildServer(
       signedAt: headerValue(request, WALLET_AUTH_SIGNED_AT_HEADER),
       signature: headerValue(request, WALLET_AUTH_SIGNATURE_HEADER),
       method: request.method,
-      path: new URL(request.url, "http://localhost").pathname,
+      path: (() => {
+        const url = new URL(request.url, "http://localhost");
+        return url.pathname + url.search;
+      })(),
       rawBody: request.rawBodyString ?? ""
     });
     if (!result.ok) {
@@ -816,6 +825,12 @@ export function buildServer(
     reply
       .header("content-type", "text/html; charset=utf-8")
       .header("cache-control", "no-store")
+      .header("x-frame-options", "DENY")
+      .header(
+        "content-security-policy",
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; " +
+          "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+      )
       .send(html);
 
   server.get("/setup/:sessionId", async (_request, reply) =>

@@ -14,6 +14,7 @@ import {
   mandateHashOf,
   mandatePayloadOf,
   mandateSigningMessage,
+  parseMandateEnforcementLevel,
   revokeSigningMessage,
   recoveryCancelSigningMessage
 } from "../src/domain/spending-mandate.js";
@@ -28,6 +29,14 @@ import {
 
 const VAULT = SUBLY_VAULT.address;
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+describe("mandate enforcement configuration", () => {
+  it("defaults to secure enforcement and keeps warn explicit", () => {
+    expect(parseMandateEnforcementLevel(undefined)).toBe("on");
+    expect(parseMandateEnforcementLevel("")).toBe("on");
+    expect(parseMandateEnforcementLevel("warn")).toBe("warn");
+  });
+});
 
 function buildService(params?: {
   level?: "off" | "warn" | "on";
@@ -45,6 +54,43 @@ function buildService(params?: {
     }
   });
   return { service, ledger, advance: (ms: number) => (now += ms) };
+}
+
+class BlockingMandateReadLedger extends InMemoryLedger {
+  private blockNextRead = false;
+  private enteredResolve: (() => void) | null = null;
+  private releaseResolve: (() => void) | null = null;
+  private entered: Promise<void> = Promise.resolve();
+  private released: Promise<void> = Promise.resolve();
+
+  blockNextMandateRead(): void {
+    this.blockNextRead = true;
+    this.entered = new Promise<void>((resolve) => {
+      this.enteredResolve = resolve;
+    });
+    this.released = new Promise<void>((resolve) => {
+      this.releaseResolve = resolve;
+    });
+  }
+
+  waitForBlockedMandateRead(): Promise<void> {
+    return this.entered;
+  }
+
+  releaseBlockedMandateRead(): void {
+    this.releaseResolve?.();
+  }
+
+  override async getSpendingMandate(wallet: string) {
+    const record = super.getSpendingMandate(wallet);
+    if (!this.blockNextRead) {
+      return record;
+    }
+    this.blockNextRead = false;
+    this.enteredResolve?.();
+    await this.released;
+    return record;
+  }
 }
 
 function binding(amountRawUsdc: string): PaymentBindingWire {
@@ -244,6 +290,49 @@ describe("mandate registration lifecycle", () => {
     });
     expect(replaced.initialDepositApproval).toBeNull();
     expect(await service.listApprovals(AGENT_PUB, "approved")).toHaveLength(1);
+  });
+
+  it("serializes revoke snapshots before a concurrent replacement can commit", async () => {
+    const ledger = new BlockingMandateReadLedger();
+    const { service } = buildService({ ledger });
+    const { document, result } = await registerDefaultMandate(service);
+    const replacement = buildDocument({
+      payload: { issuedAtMs: document.issuedAtMs + 1 }
+    });
+    const replacementHash = mandateHashOf(mandatePayloadOf(replacement));
+    const signedAtMs = NOW_MS + 1;
+
+    ledger.blockNextMandateRead();
+    const revokePromise = service.revokeMandate({
+      wallet: AGENT_PUB,
+      mandateHash: result.mandateHash,
+      signedAtMs,
+      signature: sign(
+        revokeSigningMessage(result.mandateHash, signedAtMs),
+        OWNER.secretKey
+      )
+    });
+    await ledger.waitForBlockedMandateRead();
+
+    let replacementFinished = false;
+    const replacementPromise = service
+      .registerMandate({ wallet: AGENT_PUB, vault: VAULT, document: replacement })
+      .then((registered) => {
+        replacementFinished = true;
+        return registered;
+      });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(replacementFinished).toBe(false);
+
+    ledger.releaseBlockedMandateRead();
+    await revokePromise;
+    const registered = await replacementPromise;
+    expect(registered.mandateHash).toBe(replacementHash);
+    expect((await ledger.getSpendingMandate(AGENT_PUB))?.mandateHash).toBe(
+      replacementHash
+    );
+    expect((await ledger.getSpendingMandate(AGENT_PUB))?.status).toBe("active");
   });
 });
 
@@ -664,6 +753,42 @@ describe("realize enforcement — mandate with approvals", () => {
         approvalId
       }),
       "approval_required"
+    );
+  });
+
+  it("caps outstanding approvals per wallet", async () => {
+    const { service } = buildService();
+    await registerDefaultMandate(service);
+
+    for (let index = 0; index < 20; index += 1) {
+      const amount = (2_000_000 + index).toString();
+      await expectCode(
+        service.authorizeRealize({
+          wallet: AGENT_PUB,
+          vault: VAULT,
+          amountRawUsdc: BigInt(amount),
+          payment: {
+            ...binding(amount),
+            resourceUrlHash: index.toString().padStart(64, "0")
+          },
+          approvalId: null
+        }),
+        "approval_required"
+      );
+    }
+
+    await expectCode(
+      service.authorizeRealize({
+        wallet: AGENT_PUB,
+        vault: VAULT,
+        amountRawUsdc: 2_000_021n,
+        payment: {
+          ...binding("2000021"),
+          resourceUrlHash: "21".repeat(32)
+        },
+        approvalId: null
+      }),
+      "too_many_pending_approvals"
     );
   });
 

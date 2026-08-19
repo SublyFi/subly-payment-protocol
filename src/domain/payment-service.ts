@@ -884,6 +884,7 @@ export class SublyService {
                 requestBindingHash,
                 seller,
                 vault,
+                farm: SUBLY_VAULT.farm,
                 shareMint: SUBLY_VAULT.shareMint,
                 asset: input.asset,
                 amountRawUsdc: rawUnitsToString(amountRawUsdc),

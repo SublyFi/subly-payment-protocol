@@ -15,6 +15,10 @@ import type {
 export type Awaitable<T> = T | Promise<T>;
 
 export interface Ledger {
+  withSpendingMandateLock<T>(
+    wallet: string,
+    callback: () => Promise<T>
+  ): Promise<T>;
   withWalletVaultLock<T>(
     wallet: string,
     vault: string,
@@ -81,6 +85,10 @@ export interface Ledger {
   listSpendingApprovalsForWallet(
     wallet: string
   ): Awaitable<SpendingApproval[]>;
+  pruneSpendingApprovals(
+    wallet: string,
+    beforeMs: number
+  ): Awaitable<number>;
   getSetupSession(sessionId: string): Awaitable<SetupSession | null>;
   saveSetupSession(session: SetupSession): Awaitable<SetupSession>;
 }
@@ -97,6 +105,13 @@ export class InMemoryLedger implements Ledger {
   private readonly spendingApprovals = new Map<string, SpendingApproval>();
   private readonly setupSessions = new Map<string, SetupSession>();
   private readonly lockTails = new Map<string, Promise<void>>();
+
+  async withSpendingMandateLock<T>(
+    wallet: string,
+    callback: () => Promise<T>
+  ): Promise<T> {
+    return this.withLock(`spending-mandate:${wallet}`, callback);
+  }
 
   async withWalletVaultLock<T>(
     wallet: string,
@@ -256,7 +271,7 @@ export class InMemoryLedger implements Ledger {
       .map((event) => ({ ...event }));
   }
 
-  getSpendingMandate(wallet: string): SpendingMandateRecord | null {
+  async getSpendingMandate(wallet: string): Promise<SpendingMandateRecord | null> {
     const record = this.spendingMandates.get(wallet) ?? null;
     return record === null ? null : structuredClone(record);
   }
@@ -286,6 +301,22 @@ export class InMemoryLedger implements Ledger {
       .filter((approval) => approval.wallet === wallet)
       .sort((a, b) => b.requestedAtMs - a.requestedAtMs)
       .map((approval) => structuredClone(approval));
+  }
+
+  pruneSpendingApprovals(wallet: string, beforeMs: number): number {
+    let removed = 0;
+    for (const [approvalId, approval] of this.spendingApprovals) {
+      const old = approval.expiresAtMs < beforeMs;
+      const terminal =
+        approval.status === "consumed" ||
+        approval.status === "denied" ||
+        approval.status === "expired";
+      if (approval.wallet === wallet && (old || terminal)) {
+        this.spendingApprovals.delete(approvalId);
+        removed += 1;
+      }
+    }
+    return removed;
   }
 
   getSetupSession(sessionId: string): SetupSession | null {

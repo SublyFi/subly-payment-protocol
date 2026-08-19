@@ -40,12 +40,14 @@ import type { WebAuthnOwnerConfig } from "./webauthn-owner.js";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const ROLLING_MONTH_MS = 30 * DAY_MS;
 const APPROVAL_TTL_MS = 15 * 60 * 1000;
+const APPROVAL_RETENTION_MS = 7 * DAY_MS;
+const MAX_PENDING_APPROVALS_PER_WALLET = 20;
 const RECOVERY_GRACE_MS = 72 * 60 * 60 * 1000;
 const SETUP_SESSION_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_MANDATE_TTL_MS = 365 * DAY_MS;
 
 export interface SpendingMandateServiceConfig {
-  /** SUBLY_MANDATE_ENFORCEMENT staged rollout: off | warn (default) | on. */
+  /** SUBLY_MANDATE_ENFORCEMENT: off | warn | on (secure default: on). */
   enforcementLevel: MandateEnforcementLevel;
   /** Base for human approve links pasted into chat; approvalId is appended. */
   approveUrlBase: string;
@@ -60,7 +62,7 @@ export interface SpendingMandateServiceConfig {
 }
 
 const DEFAULT_CONFIG: SpendingMandateServiceConfig = {
-  enforcementLevel: "warn",
+  enforcementLevel: "on",
   approveUrlBase: "https://app.subly.fi/approve/",
   setupUrlBase: "https://app.subly.fi/setup/",
   webauthn: {
@@ -146,91 +148,93 @@ export class SpendingMandateService {
       agentCosign: input.agentCosign ?? "document"
     });
 
-    return this.ledger.withWalletVaultLock(input.wallet, input.vault, async () => {
-      const existing = await this.ledger.getSpendingMandate(input.wallet);
-      const isFirstRegistration = existing === null;
+    return this.ledger.withSpendingMandateLock(input.wallet, async () =>
+      this.ledger.withWalletVaultLock(input.wallet, input.vault, async () => {
+        const existing = await this.ledger.getSpendingMandate(input.wallet);
+        const isFirstRegistration = existing === null;
 
-      if (existing !== null) {
-        // Monotonic issuedAtMs stops replaying an older (looser) mandate.
-        if (document.issuedAtMs <= existing.issuedAtMs) {
-          throw conflict(
-            "mandate_replay_rejected",
-            "a mandate with an equal or newer issuedAtMs is already registered",
-            { registeredIssuedAtMs: existing.issuedAtMs }
-          );
+        if (existing !== null) {
+          // Monotonic issuedAtMs stops replaying an older (looser) mandate.
+          if (document.issuedAtMs <= existing.issuedAtMs) {
+            throw conflict(
+              "mandate_replay_rejected",
+              "a mandate with an equal or newer issuedAtMs is already registered",
+              { registeredIssuedAtMs: existing.issuedAtMs }
+            );
+          }
+          this.assertReplaceAuthorized(existing, document, validated.mandateHash, nowMs);
         }
-        this.assertReplaceAuthorized(existing, document, validated.mandateHash, nowMs);
-      }
 
-      const record: SpendingMandateRecord = {
-        wallet: input.wallet,
-        vault: input.vault,
-        documentJson: document,
-        mandateHash: validated.mandateHash,
-        ownerAuth: document.ownerAuth,
-        ownerCredential: {
-          publicKey: document.ownerCredential.publicKey,
-          ...(document.ownerCredential.credentialId === undefined
-            ? {}
-            : { credentialId: document.ownerCredential.credentialId }),
-          ...(document.ownerCredential.algorithm === undefined
-            ? {}
-            : { algorithm: document.ownerCredential.algorithm })
-        },
-        enforcementMode: document.enforcementMode,
-        issuedAtMs: document.issuedAtMs,
-        expiresAtMs: document.expiresAtMs,
-        status: "active",
-        recoveryAtMs: null,
-        revokedAtMs: null,
-        revokeJson: null
-      };
-      await this.ledger.saveSpendingMandate(record);
-      await this.recordEvent(
-        input.wallet,
-        isFirstRegistration ? "registered" : "replaced",
-        validated.mandateHash,
-        input.provenance === undefined
-          ? document
-          : { document, provenance: input.provenance }
-      );
+        const record: SpendingMandateRecord = {
+          wallet: input.wallet,
+          vault: input.vault,
+          documentJson: document,
+          mandateHash: validated.mandateHash,
+          ownerAuth: document.ownerAuth,
+          ownerCredential: {
+            publicKey: document.ownerCredential.publicKey,
+            ...(document.ownerCredential.credentialId === undefined
+              ? {}
+              : { credentialId: document.ownerCredential.credentialId }),
+            ...(document.ownerCredential.algorithm === undefined
+              ? {}
+              : { algorithm: document.ownerCredential.algorithm })
+          },
+          enforcementMode: document.enforcementMode,
+          issuedAtMs: document.issuedAtMs,
+          expiresAtMs: document.expiresAtMs,
+          status: "active",
+          recoveryAtMs: null,
+          revokedAtMs: null,
+          revokeJson: null
+        };
+        await this.ledger.saveSpendingMandate(record);
+        await this.recordEvent(
+          input.wallet,
+          isFirstRegistration ? "registered" : "replaced",
+          validated.mandateHash,
+          input.provenance === undefined
+            ? document
+            : { document, provenance: input.provenance }
+        );
 
-      // The mandate's owner signature + agent co-sign double as the approval
-      // for the FIRST deposit (one Face ID covers both). Replacements never
-      // re-issue it — initialDeposit is onboarding-only.
-      let initialDepositApproval: SpendingApproval | null = null;
-      if (isFirstRegistration && document.initialDeposit !== undefined) {
-        initialDepositApproval = await this.issueApprovedApproval({
+        // The mandate's owner signature + agent co-sign double as the approval
+        // for the FIRST deposit (one Face ID covers both). Replacements never
+        // re-issue it — initialDeposit is onboarding-only.
+        let initialDepositApproval: SpendingApproval | null = null;
+        if (isFirstRegistration && document.initialDeposit !== undefined) {
+          initialDepositApproval = await this.issueApprovedApproval({
+            wallet: input.wallet,
+            mandateHash: validated.mandateHash,
+            binding: {
+              kind: "deposit",
+              amountRawUsdc: document.initialDeposit.amountRawUsdc
+            },
+            decisionJson: {
+              source: "mandate_initial_deposit",
+              mandateHash: validated.mandateHash
+            },
+            nowMs
+          });
+        }
+
+        return {
           wallet: input.wallet,
           mandateHash: validated.mandateHash,
-          binding: {
-            kind: "deposit",
-            amountRawUsdc: document.initialDeposit.amountRawUsdc
-          },
-          decisionJson: {
-            source: "mandate_initial_deposit",
-            mandateHash: validated.mandateHash
-          },
-          nowMs
-        });
-      }
-
-      return {
-        wallet: input.wallet,
-        mandateHash: validated.mandateHash,
-        status: record.status,
-        issuedAtMs: record.issuedAtMs,
-        expiresAtMs: record.expiresAtMs,
-        policySource: `mandate:${validated.mandateHash}`,
-        initialDepositApproval:
-          initialDepositApproval === null
-            ? null
-            : {
-                approvalId: initialDepositApproval.approvalId,
-                expiresAtMs: initialDepositApproval.expiresAtMs
-              }
-      };
-    });
+          status: record.status,
+          issuedAtMs: record.issuedAtMs,
+          expiresAtMs: record.expiresAtMs,
+          policySource: `mandate:${validated.mandateHash}`,
+          initialDepositApproval:
+            initialDepositApproval === null
+              ? null
+              : {
+                  approvalId: initialDepositApproval.approvalId,
+                  expiresAtMs: initialDepositApproval.expiresAtMs
+                }
+        };
+      })
+    );
   }
 
   async getMandate(wallet: string, vault: string) {
@@ -264,39 +268,40 @@ export class SpendingMandateService {
     signedAtMs: number;
     signature: string;
   }) {
-    const nowMs = this.now();
-    const record = await this.requireMandate(input.wallet);
-    if (record.mandateHash !== input.mandateHash) {
-      throw conflict(
-        "mandate_hash_mismatch",
-        "mandateHash does not match the registered mandate"
-      );
-    }
-    if (record.status === "revoked") {
-      return { wallet: input.wallet, mandateHash: record.mandateHash, status: "revoked" };
-    }
-    assertFreshSignedAt(input.signedAtMs, nowMs);
-    this.assertOwnerSignature(record, {
-      message: revokeSigningMessage(input.mandateHash, input.signedAtMs),
-      signature: input.signature,
-      code: "revoke_signature_invalid"
-    });
-
-    const revoked: SpendingMandateRecord = {
-      ...record,
-      status: "revoked",
-      recoveryAtMs: null,
-      revokedAtMs: nowMs,
-      revokeJson: {
-        mandateHash: input.mandateHash,
-        signedAtMs: input.signedAtMs,
-        signature: input.signature
+    return this.withCurrentMandateMutationLock(input.wallet, async (record) => {
+      const nowMs = this.now();
+      if (record.mandateHash !== input.mandateHash) {
+        throw conflict(
+          "mandate_hash_mismatch",
+          "mandateHash does not match the registered mandate"
+        );
       }
-    };
-    await this.ledger.saveSpendingMandate(revoked);
-    await this.recordEvent(input.wallet, "revoked", record.mandateHash, revoked.revokeJson);
+      if (record.status === "revoked") {
+        return { wallet: input.wallet, mandateHash: record.mandateHash, status: "revoked" };
+      }
+      assertFreshSignedAt(input.signedAtMs, nowMs);
+      this.assertOwnerSignature(record, {
+        message: revokeSigningMessage(input.mandateHash, input.signedAtMs),
+        signature: input.signature,
+        code: "revoke_signature_invalid"
+      });
 
-    return { wallet: input.wallet, mandateHash: record.mandateHash, status: "revoked" };
+      const revoked: SpendingMandateRecord = {
+        ...record,
+        status: "revoked",
+        recoveryAtMs: null,
+        revokedAtMs: nowMs,
+        revokeJson: {
+          mandateHash: input.mandateHash,
+          signedAtMs: input.signedAtMs,
+          signature: input.signature
+        }
+      };
+      await this.ledger.saveSpendingMandate(revoked);
+      await this.recordEvent(input.wallet, "revoked", record.mandateHash, revoked.revokeJson);
+
+      return { wallet: input.wallet, mandateHash: record.mandateHash, status: "revoked" };
+    });
   }
 
   /**
@@ -305,45 +310,46 @@ export class SpendingMandateService {
    * real owner can veto it. Exposed in mandate reads so the owner can see it.
    */
   async scheduleRecoveryRevoke(wallet: string) {
-    const nowMs = this.now();
-    const record = await this.requireMandate(wallet);
-    if (record.status === "revoked") {
-      throw conflict("mandate_revoked", "the mandate is already revoked");
-    }
-    if (this.effectiveStatus(record, nowMs) === "expired") {
-      // An expired mandate already behaves like "unregistered": the agent
-      // key can simply register a fresh one, no dead-man switch needed.
-      throw conflict(
-        "mandate_expired",
-        "the mandate has expired; register a new mandate instead"
-      );
-    }
-    if (record.status === "recovery_pending" && record.recoveryAtMs !== null) {
+    return this.withCurrentMandateMutationLock(wallet, async (record) => {
+      const nowMs = this.now();
+      if (record.status === "revoked") {
+        throw conflict("mandate_revoked", "the mandate is already revoked");
+      }
+      if (this.effectiveStatus(record, nowMs) === "expired") {
+        // An expired mandate already behaves like "unregistered": the agent
+        // key can simply register a fresh one, no dead-man switch needed.
+        throw conflict(
+          "mandate_expired",
+          "the mandate has expired; register a new mandate instead"
+        );
+      }
+      if (record.status === "recovery_pending" && record.recoveryAtMs !== null) {
+        return {
+          wallet,
+          mandateHash: record.mandateHash,
+          status: record.status,
+          recoveryAtMs: record.recoveryAtMs
+        };
+      }
+
+      const recoveryAtMs = nowMs + RECOVERY_GRACE_MS;
+      const updated: SpendingMandateRecord = {
+        ...record,
+        status: "recovery_pending",
+        recoveryAtMs
+      };
+      await this.ledger.saveSpendingMandate(updated);
+      await this.recordEvent(wallet, "recovery_scheduled", record.mandateHash, {
+        recoveryAtMs
+      });
+
       return {
         wallet,
         mandateHash: record.mandateHash,
-        status: record.status,
-        recoveryAtMs: record.recoveryAtMs
+        status: updated.status,
+        recoveryAtMs
       };
-    }
-
-    const recoveryAtMs = nowMs + RECOVERY_GRACE_MS;
-    const updated: SpendingMandateRecord = {
-      ...record,
-      status: "recovery_pending",
-      recoveryAtMs
-    };
-    await this.ledger.saveSpendingMandate(updated);
-    await this.recordEvent(wallet, "recovery_scheduled", record.mandateHash, {
-      recoveryAtMs
     });
-
-    return {
-      wallet,
-      mandateHash: record.mandateHash,
-      status: updated.status,
-      recoveryAtMs
-    };
   }
 
   async cancelRecoveryRevoke(input: {
@@ -352,50 +358,51 @@ export class SpendingMandateService {
     signedAtMs: number;
     signature: string;
   }) {
-    const nowMs = this.now();
-    const record = await this.requireMandate(input.wallet);
-    if (this.effectiveStatus(record, nowMs) === "expired") {
-      throw conflict(
-        "mandate_expired",
-        "the mandate has expired; there is nothing to restore"
-      );
-    }
-    if (record.status !== "recovery_pending" || record.recoveryAtMs === null) {
-      throw conflict(
-        "recovery_not_pending",
-        "no recovery-revoke is pending for this mandate"
-      );
-    }
-    if (record.recoveryAtMs <= nowMs) {
-      throw conflict(
-        "recovery_elapsed",
-        "the recovery grace window has already elapsed"
-      );
-    }
-    if (record.mandateHash !== input.mandateHash) {
-      throw conflict(
-        "mandate_hash_mismatch",
-        "mandateHash does not match the registered mandate"
-      );
-    }
-    assertFreshSignedAt(input.signedAtMs, nowMs);
-    this.assertOwnerSignature(record, {
-      message: recoveryCancelSigningMessage(input.mandateHash, input.signedAtMs),
-      signature: input.signature,
-      code: "recovery_cancel_signature_invalid"
-    });
+    return this.withCurrentMandateMutationLock(input.wallet, async (record) => {
+      const nowMs = this.now();
+      if (this.effectiveStatus(record, nowMs) === "expired") {
+        throw conflict(
+          "mandate_expired",
+          "the mandate has expired; there is nothing to restore"
+        );
+      }
+      if (record.status !== "recovery_pending" || record.recoveryAtMs === null) {
+        throw conflict(
+          "recovery_not_pending",
+          "no recovery-revoke is pending for this mandate"
+        );
+      }
+      if (record.recoveryAtMs <= nowMs) {
+        throw conflict(
+          "recovery_elapsed",
+          "the recovery grace window has already elapsed"
+        );
+      }
+      if (record.mandateHash !== input.mandateHash) {
+        throw conflict(
+          "mandate_hash_mismatch",
+          "mandateHash does not match the registered mandate"
+        );
+      }
+      assertFreshSignedAt(input.signedAtMs, nowMs);
+      this.assertOwnerSignature(record, {
+        message: recoveryCancelSigningMessage(input.mandateHash, input.signedAtMs),
+        signature: input.signature,
+        code: "recovery_cancel_signature_invalid"
+      });
 
-    const restored: SpendingMandateRecord = {
-      ...record,
-      status: "active",
-      recoveryAtMs: null
-    };
-    await this.ledger.saveSpendingMandate(restored);
-    await this.recordEvent(input.wallet, "recovery_cancelled", record.mandateHash, {
-      cancelledAtMs: nowMs
-    });
+      const restored: SpendingMandateRecord = {
+        ...record,
+        status: "active",
+        recoveryAtMs: null
+      };
+      await this.ledger.saveSpendingMandate(restored);
+      await this.recordEvent(input.wallet, "recovery_cancelled", record.mandateHash, {
+        cancelledAtMs: nowMs
+      });
 
-    return { wallet: input.wallet, mandateHash: record.mandateHash, status: "active" };
+      return { wallet: input.wallet, mandateHash: record.mandateHash, status: "active" };
+    });
   }
 
   // -------------------------------------------------------------- approvals
@@ -1220,6 +1227,13 @@ export class SpendingMandateService {
   }): Promise<SpendingApproval> {
     const bindingHash = bindingHashOf(input.binding);
 
+    // Keep capability rows bounded even when an agent repeatedly asks for
+    // distinct approvals. This runs under the caller's wallet-vault lock.
+    await this.ledger.pruneSpendingApprovals(
+      input.wallet,
+      input.nowMs - APPROVAL_RETENTION_MS
+    );
+
     if (input.approvalId !== null) {
       const provided = await this.ledger.getSpendingApproval(input.approvalId);
       if (provided !== null && provided.wallet === input.wallet) {
@@ -1241,6 +1255,20 @@ export class SpendingMandateService {
     }
 
     const pending = await this.findReusablePending(input.wallet, bindingHash, input.nowMs);
+    if (pending === null) {
+      const outstanding = (await this.ledger.listSpendingApprovalsForWallet(
+        input.wallet
+      )).filter(
+        (approval) =>
+          approval.status === "pending" && approval.expiresAtMs > input.nowMs
+      );
+      if (outstanding.length >= MAX_PENDING_APPROVALS_PER_WALLET) {
+        throw conflict(
+          "too_many_pending_approvals",
+          `This wallet already has ${MAX_PENDING_APPROVALS_PER_WALLET} pending approvals; decide or wait for existing approvals to expire`
+        );
+      }
+    }
     const approval =
       pending ??
       (await this.ledger.saveSpendingApproval({
@@ -1556,6 +1584,24 @@ export class SpendingMandateService {
       );
     }
     return record;
+  }
+
+  /**
+   * Serialize every mandate mutation under a stable wallet lock, then take
+   * the same wallet-vault lock used by vault flows. The first lock prevents a
+   * stale mandate snapshot from overwriting a concurrent registration; the
+   * second keeps mandate changes ordered with approval and position updates.
+   */
+  private async withCurrentMandateMutationLock<T>(
+    wallet: string,
+    callback: (record: SpendingMandateRecord) => Promise<T>
+  ): Promise<T> {
+    return this.ledger.withSpendingMandateLock(wallet, async () => {
+      const record = await this.requireMandate(wallet);
+      return this.ledger.withWalletVaultLock(wallet, record.vault, () =>
+        callback(record)
+      );
+    });
   }
 
   private async recordEvent(

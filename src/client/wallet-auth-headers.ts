@@ -26,7 +26,10 @@ export async function walletAuthHeaders(params: {
   const signedAtMs = String(Date.now());
   const message = walletAuthMessage({
     method: params.method,
-    path: new URL(params.url).pathname,
+    path: (() => {
+      const url = new URL(params.url);
+      return url.pathname + url.search;
+    })(),
     rawBody: params.body ?? "",
     signedAtMs
   });

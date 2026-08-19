@@ -251,6 +251,7 @@ export class VaultFlowService {
         signingIntent: {
           wallet,
           vault,
+          farm: SUBLY_VAULT.farm,
           shareMint: SUBLY_VAULT.shareMint,
           asset: SUBLY_VAULT.usdcMint,
           amountRawUsdc: rawUnitsToString(amountRawUsdc),
@@ -580,6 +581,7 @@ export class VaultFlowService {
         signingIntent: {
           wallet,
           vault,
+          farm: SUBLY_VAULT.farm,
           shareMint: SUBLY_VAULT.shareMint,
           asset: SUBLY_VAULT.usdcMint,
           destinationUsdcAta,

@@ -10,6 +10,9 @@ rail with facilitator `extra.feePayer` support (meaning the seller side
 sponsors the payment transaction's network fee — true of common facilitators
 such as PayAI and Coinbase CDP).
 
+> [!WARNING]
+> `@subly_fi/pay` is beta software and has not undergone an external security audit. It signs and submits transactions involving real Solana mainnet funds through a separate relayer and Kamino vault. The client package currently passes its production dependency audit, but this is not a guarantee of relayer, protocol, or vault safety. Use only amounts you can afford to lose and review the relayer operator and configuration before use.
+
 Ships one `pay` dispatcher bin with subcommands, all runnable with `npx` (no clone):
 
 - `pay mcp` — an MCP server (Claude Code, Cursor, any MCP client) exposing
@@ -154,7 +157,7 @@ keypair (see [Wallet](#wallet) above).
 | `SUBLY_PAY_METHOD` / `SUBLY_PAY_BODY` | no (`pay fetch` only) | `GET` / — (JSON body for POST-body sellers) |
 | `SUBLY_PAY_FORCE_NEW_PAYMENT` | no (`pay fetch` only) | unset (`1` forces a fresh payment — may double-pay) |
 | `CIRCLE_BASE_URL` / `PRIVY_BASE_URL` | no | provider API defaults |
-| `SUBLY_VAULT_ADDRESS` / `SUBLY_VAULT_SHARE_MINT` / `SUBLY_VAULT_USDC_MINT` | only with a custom-vault relayer | Subly's public vault. These are your signer's trust anchor (intents are validated against this local config, never the relayer's claims) — set them only to a vault you independently verified or control |
+| `SUBLY_VAULT_ADDRESS` / `SUBLY_VAULT_SHARE_MINT` / `SUBLY_VAULT_USDC_MINT` / `SUBLY_VAULT_FARM` | only with a custom-vault relayer | Subly's public vault and Farm. These are your signer's trust anchor (intents are validated against this local config, never the relayer's claims) — set them only to addresses you independently verified or control |
 
 Requests authenticate with a signature from your wallet key — there is no API
 token. `SUBLY_FACILITATOR_URL` is still accepted as a legacy fallback for

@@ -15,7 +15,7 @@
 # unless SUBLY_ENABLE_LEGACY_X402=1 is set in the relayer env.
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
     restart: unless-stopped
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in deploy/.env}
@@ -44,7 +44,7 @@ services:
       - "3000"
 
   caddy:
-    image: caddy:2
+    image: caddy:2@sha256:df7f1c2fb114453b951de51a98efc010db1655a92c2e86be6706714e2417a78d
     restart: unless-stopped
     ports:
       - "80:80"

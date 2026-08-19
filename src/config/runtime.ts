@@ -175,7 +175,7 @@ export async function createSublyRuntime(
 
 /**
  * Spending-mandate enforcement layer (docs/spending-mandate-design.md).
- * SUBLY_MANDATE_ENFORCEMENT stages the rollout: off | warn (default) | on.
+ * SUBLY_MANDATE_ENFORCEMENT stages the rollout: off | warn | on (default).
  */
 function buildMandateService(
   ledger: Ledger,

@@ -91,8 +91,8 @@ connection. Notes on `relayer.production.env`:
   links agents hand to owners *and* derive the WebAuthn rpId/origins — leave
   them at someone else's domain and owner passkeys will fail verification.
 - **`SUBLY_MANDATE_ENFORCEMENT=on` is the right setting for a new
-  deployment.** The `warn` default is a staged-rollout compromise; a fresh
-  operator has no legacy clients to accommodate.
+  deployment.** It is also the secure default in the current source; `warn`
+  is an explicit staged-rollout compromise for pre-existing clients.
 - `SUBLY_EXTRA_LOOKUP_TABLES` stays unset for the first boot — you create
   the table in the next section, then set it and restart.
 - `SUBLY_ADMIN_API_TOKEN` is for you, the operator. Your users never need a

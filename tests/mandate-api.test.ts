@@ -303,6 +303,10 @@ describe("setup-session API and owner pages", () => {
       const page = await server.inject({ method: "GET", url: path });
       expect(page.statusCode).toBe(200);
       expect(page.headers["content-type"]).toContain("text/html");
+      expect(page.headers["x-frame-options"]).toBe("DENY");
+      expect(page.headers["content-security-policy"]).toContain(
+        "frame-ancestors 'none'"
+      );
       expect(page.body).toContain("<!doctype html>");
       // Self-contained: nothing loads from external hosts, and the CSP
       // forbids external scripts/exfil even if markup ever slipped through.

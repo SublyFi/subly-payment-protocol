@@ -765,7 +765,8 @@ daily API cap は yield しか通らない経路の backstop であり、リス�
 - **Phase 1 — Server core (デフォルトポリシー + cap 強制 + log)**:
   canonical-json / mandate 検証、schema、prepareWithdrawal /
   prepareDeposit guard、relayer デフォルトポリシー、spending-log、
-  mandate API。`SUBLY_MANDATE_ENFORCEMENT=warn` で先行デプロイ → `on`。
+  mandate API。現在のソース既定は `on`。既存 beta 環境を移行する場合のみ
+  `SUBLY_MANDATE_ENFORCEMENT=warn` で先行確認してから `on` に上げる。
   規制対応の核 (未設定でも上限がある + 監査) がここで完成する。
 - **Phase 2 — チャット native な owner 体験 (主経路)**: setup / approve /
   revoke の web ページ (passkey + wallet 署名)、setup-session API
@@ -809,7 +810,7 @@ daily API cap は yield しか通らない経路の backstop であり、リス�
 `src/domain/spending-mandate-service.ts` / `VaultFlowService` への guard 統合 /
 mandate・approvals・spending-log・payments/report API / Postgres schema
 (`spending_mandates`, `spending_mandate_events`, `payment_approvals`) /
-`SUBLY_MANDATE_ENFORCEMENT=off|warn|on` (デフォルト warn) /
+`SUBLY_MANDATE_ENFORCEMENT=off|warn|on` (デフォルト on) /
 クライアントの payment binding pass-through (`standard-x402-payer` →
 `relayer-yield-realizer` → `vault-flows`)。テスト:
 `tests/spending-mandate*.test.ts`, `tests/mandate-api.test.ts`,

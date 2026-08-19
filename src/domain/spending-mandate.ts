@@ -37,10 +37,10 @@ export type MandateEnforcementLevel = "off" | "warn" | "on";
 export function parseMandateEnforcementLevel(
   value: string | undefined
 ): MandateEnforcementLevel {
-  if (value === undefined || value === "" || value === "warn") {
-    return "warn";
+  if (value === undefined || value === "" || value === "on") {
+    return "on";
   }
-  if (value === "off" || value === "on") {
+  if (value === "off" || value === "warn") {
     return value;
   }
   throw new Error(

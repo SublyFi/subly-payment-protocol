@@ -25,7 +25,7 @@
     "@kamino-finance/klend-sdk": "^8.0.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@solana-program/address-lookup-table": "^0.7.0",
-    "@solana-program/compute-budget": "^0.8.0",
+    "@solana-program/compute-budget": "^0.17.0",
     "@solana-program/memo": "^0.7.0",
     "@solana-program/system": "^0.7.0",
     "@solana-program/token": "^0.5.1",

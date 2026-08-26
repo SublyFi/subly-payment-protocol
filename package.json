@@ -28,7 +28,7 @@
     "@solana-program/compute-budget": "^0.8.0",
     "@solana-program/memo": "^0.7.0",
     "@solana-program/system": "^0.7.0",
-    "@solana-program/token": "^0.5.1",
+    "@solana-program/token": "^0.16.0",
     "@solana/kit": "^2.3.0",
     "bs58": "^6.0.0",
     "decimal.js": "^10.6.0",

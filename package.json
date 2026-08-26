@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@kamino-finance/farms-sdk": "3.2.24",
-    "@kamino-finance/klend-sdk": "^8.0.2",
+    "@kamino-finance/klend-sdk": "^11.0.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@solana-program/address-lookup-table": "^0.7.0",
     "@solana-program/compute-budget": "^0.8.0",

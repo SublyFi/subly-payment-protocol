@@ -21,7 +21,7 @@
     "demo:legacy:pay": "NODE_ENV=development tsx demo/pay.ts"
   },
   "dependencies": {
-    "@kamino-finance/farms-sdk": "3.2.24",
+    "@kamino-finance/farms-sdk": "4.0.0",
     "@kamino-finance/klend-sdk": "^8.0.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@solana-program/address-lookup-table": "^0.7.0",

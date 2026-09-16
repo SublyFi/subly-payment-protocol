@@ -1,3 +1,4 @@
+import type { VaultConfig } from "../config/vault.js";
 import { randomUUID } from "node:crypto";
 import {
   getSetComputeUnitLimitInstruction,
@@ -92,6 +93,7 @@ export interface SubmitFlowInput {
  * deltas prove the actual movement.
  */
 export class VaultFlowService {
+  readonly vault: Readonly<VaultConfig>;
   private readonly ledger: Ledger;
   private readonly adapter: KaminoVaultAdapter;
   private readonly engine: TransactionSubmissionEngine;
@@ -101,6 +103,7 @@ export class VaultFlowService {
   private readonly mandates: SpendingMandateService | null;
 
   constructor(params: {
+    vault?: Readonly<VaultConfig>;
     ledger: Ledger;
     adapter: KaminoVaultAdapter;
     engine: TransactionSubmissionEngine;
@@ -110,6 +113,10 @@ export class VaultFlowService {
     /** Spending-mandate enforcement layer; null skips mandate checks. */
     mandates?: SpendingMandateService | null;
   }) {
+    this.vault = Object.freeze({ ...(params.vault ?? SUBLY_VAULT) });
+    if (params.adapter.vaultAddress !== this.vault.address) {
+      throw new Error("Vault flow adapter does not match configured vault");
+    }
     this.ledger = params.ledger;
     this.adapter = params.adapter;
     this.engine = params.engine;
@@ -130,7 +137,7 @@ export class VaultFlowService {
       input.amountRawUsdc,
       "amountRawUsdc"
     );
-    const vault = SUBLY_VAULT.address;
+    const vault = this.vault.address;
 
     return this.ledger.withWalletVaultLock(wallet, vault, async () => {
       const position = await this.requireSignerReadyPosition(wallet, vault);
@@ -251,9 +258,9 @@ export class VaultFlowService {
         signingIntent: {
           wallet,
           vault,
-          farm: SUBLY_VAULT.farm,
-          shareMint: SUBLY_VAULT.shareMint,
-          asset: SUBLY_VAULT.usdcMint,
+          farm: this.vault.farm,
+          shareMint: this.vault.shareMint,
+          asset: this.vault.usdcMint,
           amountRawUsdc: rawUnitsToString(amountRawUsdc),
           feePayer: this.sponsor.address,
           expiresAt: saved.expiresAt,
@@ -265,7 +272,7 @@ export class VaultFlowService {
 
   async submitDeposit(input: SubmitFlowInput & { depositId: string }) {
     const first = await this.ledger.getDeposit(input.depositId);
-    if (first === null) {
+    if (first === null || first.vault !== this.vault.address) {
       throw notFound("deposit_not_found", "Deposit intent does not exist");
     }
 
@@ -274,7 +281,7 @@ export class VaultFlowService {
       first.vault,
       async () => {
         const intent = await this.ledger.getDeposit(input.depositId);
-        if (intent === null) {
+        if (intent === null || intent.vault !== this.vault.address) {
           throw notFound("deposit_not_found", "Deposit intent does not exist");
         }
         if (intent.status !== "prepared") {
@@ -340,7 +347,7 @@ export class VaultFlowService {
 
   async getDeposit(depositId: string) {
     const intent = await this.ledger.getDeposit(depositId);
-    if (intent === null) {
+    if (intent === null || intent.vault !== this.vault.address) {
       throw notFound("deposit_not_found", "Deposit intent does not exist");
     }
 
@@ -370,7 +377,7 @@ export class VaultFlowService {
       input.amountRawUsdc,
       "amountRawUsdc"
     );
-    const vault = SUBLY_VAULT.address;
+    const vault = this.vault.address;
 
     return this.ledger.withWalletVaultLock(wallet, vault, async () => {
       const position = await this.requireSignerReadyPosition(wallet, vault);
@@ -519,7 +526,7 @@ export class VaultFlowService {
           : requestedSharesRaw;
       const destinationUsdcAta = deriveAssociatedTokenAddress({
         owner: wallet,
-        mint: SUBLY_VAULT.usdcMint
+        mint: this.vault.usdcMint
       });
 
       const instructions: Instruction[] = [
@@ -581,9 +588,9 @@ export class VaultFlowService {
         signingIntent: {
           wallet,
           vault,
-          farm: SUBLY_VAULT.farm,
-          shareMint: SUBLY_VAULT.shareMint,
-          asset: SUBLY_VAULT.usdcMint,
+          farm: this.vault.farm,
+          shareMint: this.vault.shareMint,
+          asset: this.vault.usdcMint,
           destinationUsdcAta,
           maxSharesToRedeemRaw: rawUnitsToString(saved.maxSharesToRedeemRaw),
           allowFullExit: requestedSharesRaw >= userShares.totalSharesRaw,
@@ -597,7 +604,7 @@ export class VaultFlowService {
 
   async submitWithdrawal(input: SubmitFlowInput & { withdrawalId: string }) {
     const first = await this.ledger.getWithdrawal(input.withdrawalId);
-    if (first === null) {
+    if (first === null || first.vault !== this.vault.address) {
       throw notFound("withdrawal_not_found", "Withdrawal intent does not exist");
     }
 
@@ -606,7 +613,7 @@ export class VaultFlowService {
       first.vault,
       async () => {
         const intent = await this.ledger.getWithdrawal(input.withdrawalId);
-        if (intent === null) {
+        if (intent === null || intent.vault !== this.vault.address) {
           throw notFound(
             "withdrawal_not_found",
             "Withdrawal intent does not exist"
@@ -723,7 +730,7 @@ export class VaultFlowService {
         if (lookup.found && lookup.err === null) {
           const payToAta = deriveAssociatedTokenAddress({
             owner: intent.paymentBinding.payTo,
-            mint: SUBLY_VAULT.usdcMint
+            mint: this.vault.usdcMint
           });
           const delta = lookup.tokenBalanceDeltas.get(payToAta) ?? 0n;
           if (delta >= BigInt(intent.paymentBinding.amountRawUsdc)) {
@@ -777,7 +784,7 @@ export class VaultFlowService {
 
   async getWithdrawal(withdrawalId: string) {
     const intent = await this.ledger.getWithdrawal(withdrawalId);
-    if (intent === null) {
+    if (intent === null || intent.vault !== this.vault.address) {
       throw notFound("withdrawal_not_found", "Withdrawal intent does not exist");
     }
 
@@ -848,7 +855,7 @@ export class VaultFlowService {
 
       const agentUsdcAta = deriveAssociatedTokenAddress({
         owner: intent.wallet,
-        mint: SUBLY_VAULT.usdcMint
+        mint: this.vault.usdcMint
       });
       const usdcDelta = outcome.tokenBalanceDeltas.get(agentUsdcAta) ?? 0n;
       const actualDepositRawUsdc = usdcDelta < 0n ? -usdcDelta : 0n;

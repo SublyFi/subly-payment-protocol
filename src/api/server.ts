@@ -1,3 +1,4 @@
+import type { VaultServices } from "../domain/vault-services.js";
 import { timingSafeEqual } from "node:crypto";
 import Fastify from "fastify";
 import type { FastifyReply, FastifyRequest } from "fastify";
@@ -11,15 +12,14 @@ import { TokenBucketRateLimiter } from "../x402/rate-limit.js";
 import { ZodError } from "zod";
 import {
   PAYMENT_SCHEME,
-  SOLANA_MAINNET_NETWORK,
-  SUBLY_VAULT
+  SOLANA_MAINNET_NETWORK
 } from "../config/constants.js";
 import {
   defaultSublyService,
   isSublyError,
   type SublyService
 } from "../domain/payment-service.js";
-import { forbidden, notFound, unavailable } from "../domain/errors.js";
+import { badRequest, forbidden, notFound, unavailable } from "../domain/errors.js";
 import type { ChainWalletSyncService } from "../domain/chain-wallet-sync.js";
 import { OperationalMetrics, TRACKED_ERROR_CODES } from "../domain/metrics.js";
 import type { VaultFlowService } from "../domain/vault-flow-service.js";
@@ -56,6 +56,7 @@ export interface SponsorMonitoring {
 }
 
 export interface ServerOptions {
+  vaultServices?: ReadonlyMap<string, VaultServices>;
   sellerApiToken?: string | null;
   adminApiToken?: string | null;
   vaultFlowService?: VaultFlowService | null;
@@ -96,6 +97,23 @@ export function buildServer(
   const sponsorMonitoring = options.sponsorMonitoring ?? null;
   const mandateService = options.mandateService ?? null;
   const metrics = options.metrics ?? new OperationalMetrics();
+  const forVault = (address: string = service.vault.address, newFunds = false): VaultServices => {
+    const selected: VaultServices | undefined = options.vaultServices?.get(address) ??
+      (address === service.vault.address ? { vault: service.vault, service, vaultFlowService, chainWalletSync } : undefined);
+    if (!selected) throw badRequest("unsupported_vault", "Vault is not configured on this relayer");
+    if (newFunds && selected.vault.depositsEnabled === false) {
+      throw badRequest("vault_retired", "This vault is available for exits and reconciliation only");
+    }
+    return selected;
+  };
+  const storedVault = async (kind: "deposit" | "withdrawal" | "payment", id: string): Promise<string> => {
+    const intent = kind === "deposit" ? await service.ledger.getDeposit(id)
+      : kind === "withdrawal" ? await service.ledger.getWithdrawal(id)
+      : await service.ledger.getPayment(id);
+    if (!intent) throw notFound(`${kind}_not_found`, "Intent does not exist");
+    return intent.vault;
+  };
+
   const server = Fastify({
     logger: true,
     trustProxy:
@@ -273,6 +291,11 @@ export function buildServer(
     ok: true
   }));
 
+  server.get("/v1/vaults", async () => ({
+    defaultVault: service.vault.address,
+    vaults: [...(options.vaultServices?.values() ?? [forVault()])].map(({ vault }) => vault)
+  }));
+
   const enableLegacySellerApi =
     options.enableLegacySellerApi ??
     process.env.SUBLY_ENABLE_LEGACY_X402 === "1";
@@ -282,9 +305,9 @@ export function buildServer(
         {
           scheme: PAYMENT_SCHEME,
           network: SOLANA_MAINNET_NETWORK,
-          asset: SUBLY_VAULT.usdcMint,
-          vault: SUBLY_VAULT.address,
-          shareMint: SUBLY_VAULT.shareMint,
+          asset: service.vault.usdcMint,
+          vault: service.vault.address,
+          shareMint: service.vault.shareMint,
           maxTimeoutSeconds: 120
         }
       ]
@@ -295,7 +318,7 @@ export function buildServer(
       { preHandler: requireSellerAuth },
       async (request) => {
         const body = verifyPaymentPayloadSchema.parse(request.body);
-        return service.verifyPaymentPayload(body);
+        return forVault(await storedVault("payment", body.paymentId)).service.verifyPaymentPayload(body);
       }
     );
 
@@ -306,7 +329,7 @@ export function buildServer(
         const body = verifyPaymentPayloadSchema.parse(request.body);
         const startedAtMs = Date.now();
         try {
-          const response = await service.settlePaymentPayload(body);
+          const response = await forVault(await storedVault("payment", body.paymentId)).service.settlePaymentPayload(body);
           metrics.observeSettlementLatencyMs(Date.now() - startedAtMs);
           metrics.increment(
             isSuccessfulSettlement(response)
@@ -331,7 +354,7 @@ export function buildServer(
     async (request) => {
       const body = registerAgentWalletSchema.parse(request.body);
       assertOwnWallet(request, body.wallet);
-      return service.registerAgentWallet(body);
+      return forVault(body.vault).service.registerAgentWallet(body);
     }
   );
 
@@ -344,7 +367,7 @@ export function buildServer(
       const body = registerAgentWalletSchema
         .omit({ wallet: true })
         .parse(request.body);
-      return service.registerAgentWallet({
+      return forVault(body.vault).service.registerAgentWallet({
         wallet: request.params.wallet,
         ...body
       });
@@ -362,13 +385,14 @@ export function buildServer(
         request.body
       );
       if (chainSyncRequest.success) {
-        if (chainWalletSync === null) {
+        const selectedSync = forVault(chainSyncRequest.data.vault).chainWalletSync;
+        if (selectedSync === null) {
           throw unavailable(
             "chain_sync_unavailable",
             "On-chain wallet sync requires SOLANA_RPC_URL to be configured"
           );
         }
-        return chainWalletSync.syncFromChain({
+        return selectedSync.syncFromChain({
           wallet: request.params.wallet,
           forceConservativeReset: chainSyncRequest.data.forceConservativeReset
         });
@@ -384,7 +408,7 @@ export function buildServer(
         );
       }
       const body = syncWalletPositionSchema.parse(request.body);
-      return service.syncWalletPosition({
+      return forVault(body.vault).service.syncWalletPosition({
         wallet: request.params.wallet,
         ...body
       });
@@ -396,7 +420,7 @@ export function buildServer(
     { preHandler: requireAdminAuth },
     async (request) => {
       const body = liquidityPolicySchema.parse(request.body);
-      return service.upsertLiquidityPolicy(body);
+      return forVault(body.vault).service.upsertLiquidityPolicy(body);
     }
   );
 
@@ -414,7 +438,7 @@ export function buildServer(
     { preHandler: requireWalletOrAdminAuth },
     async (request) => {
       assertOwnWallet(request, request.params.wallet);
-      return service.getBudget(request.params.wallet, request.query.vault);
+      return forVault(request.query.vault).service.getBudget(request.params.wallet, request.query.vault);
     }
   );
 
@@ -424,7 +448,7 @@ export function buildServer(
     async (request) => {
       const body = preparePaymentSchema.parse(request.body);
       assertOwnWallet(request, body.wallet);
-      return service.preparePayment(body);
+      return forVault(body.vault, true).service.preparePayment(body);
     }
   );
 
@@ -434,7 +458,7 @@ export function buildServer(
     "/v1/payments/:paymentId",
     { preHandler: requireWalletOrAdminAuth },
     async (request) => {
-      const payment = (await service.getPayment(
+      const payment = (await forVault(await storedVault("payment", request.params.paymentId)).service.getPayment(
         request.params.paymentId
       )) as { wallet?: string };
       // Wallet-authed callers may only see their own payments; report
@@ -454,7 +478,11 @@ export function buildServer(
     { preHandler: requireAdminAuth },
     async (request) => {
       const body = recoverSettlementsSchema.parse(request.body ?? {});
-      return service.recoverPendingSettlements(body.limit);
+      const results = [];
+      for (const entry of options.vaultServices?.values() ?? [forVault()]) {
+        results.push(...(await entry.service.recoverPendingSettlements(body.limit)).results);
+      }
+      return { processed: results.length, results };
     }
   );
 
@@ -468,7 +496,7 @@ export function buildServer(
       const limit = request.query.limit === undefined
         ? undefined
         : Number.parseInt(request.query.limit, 10);
-      return service.listSyncEvents(
+      return forVault(request.query.vault).service.listSyncEvents(
         request.params.wallet,
         request.query.vault,
         limit !== undefined && Number.isSafeInteger(limit) && limit > 0
@@ -520,14 +548,15 @@ export function buildServer(
     }
   );
 
-  const requireVaultFlows = (): VaultFlowService => {
-    if (vaultFlowService === null) {
+  const requireVaultFlows = (vault?: string, newFunds = false): VaultFlowService => {
+    const selected = forVault(vault, newFunds).vaultFlowService;
+    if (selected === null) {
       throw unavailable(
         "vault_flows_unavailable",
         "Deposit and withdrawal flows require Solana RPC and sponsor signer configuration"
       );
     }
-    return vaultFlowService;
+    return selected;
   };
 
   server.post(
@@ -536,7 +565,7 @@ export function buildServer(
     async (request) => {
       const body = prepareDepositSchema.parse(request.body);
       assertOwnWallet(request, body.wallet);
-      return requireVaultFlows().prepareDeposit(body);
+      return requireVaultFlows(body.vault, true).prepareDeposit(body);
     }
   );
 
@@ -548,7 +577,7 @@ export function buildServer(
     { preHandler: requireWalletOrAdminAuth },
     async (request) => {
       const body = submitDepositSchema.parse(request.body);
-      return requireVaultFlows().submitDeposit(body);
+      return requireVaultFlows(await storedVault("deposit", body.depositId)).submitDeposit(body);
     }
   );
 
@@ -558,7 +587,7 @@ export function buildServer(
     "/v1/deposits/:depositId",
     { preHandler: requireWalletOrAdminAuth },
     async (request) => {
-      const deposit = (await requireVaultFlows().getDeposit(
+      const deposit = (await requireVaultFlows(await storedVault("deposit", request.params.depositId)).getDeposit(
         request.params.depositId
       )) as { wallet?: string };
       if (
@@ -577,7 +606,7 @@ export function buildServer(
     async (request) => {
       const body = prepareWithdrawalSchema.parse(request.body);
       assertOwnWallet(request, body.wallet);
-      return requireVaultFlows().prepareWithdrawal(body);
+      return requireVaultFlows(body.vault, body.purpose === "yield_realize").prepareWithdrawal(body);
     }
   );
 
@@ -586,7 +615,7 @@ export function buildServer(
     { preHandler: requireWalletOrAdminAuth },
     async (request) => {
       const body = submitWithdrawalSchema.parse(request.body);
-      return requireVaultFlows().submitWithdrawal(body);
+      return requireVaultFlows(await storedVault("withdrawal", body.withdrawalId)).submitWithdrawal(body);
     }
   );
 
@@ -596,7 +625,7 @@ export function buildServer(
     "/v1/withdrawals/:withdrawalId",
     { preHandler: requireWalletOrAdminAuth },
     async (request) => {
-      const withdrawal = (await requireVaultFlows().getWithdrawal(
+      const withdrawal = (await requireVaultFlows(await storedVault("withdrawal", request.params.withdrawalId)).getWithdrawal(
         request.params.withdrawalId
       )) as { wallet?: string };
       if (
@@ -635,13 +664,14 @@ export function buildServer(
     const document = registerMandateSchema.parse(request.body);
     return requireMandates().registerMandate({
       wallet: request.params.wallet,
-      vault: SUBLY_VAULT.address,
+      vault: forVault(document.vault).vault.address,
       document
     });
   });
 
   server.get<{
     Params: { wallet: string };
+    Querystring: { vault?: string };
   }>(
     "/v1/wallets/:wallet/mandate",
     { preHandler: requireWalletOrAdminAuth },
@@ -649,7 +679,7 @@ export function buildServer(
       assertOwnWallet(request, request.params.wallet);
       return requireMandates().getMandate(
         request.params.wallet,
-        SUBLY_VAULT.address
+        forVault(request.query.vault).vault.address
       );
     }
   );
@@ -668,12 +698,13 @@ export function buildServer(
   // revoke that only takes effect after the grace window the owner can veto.
   server.post<{
     Params: { wallet: string };
+    Querystring: { vault?: string };
   }>(
     "/v1/wallets/:wallet/mandate/recovery-revoke",
     { preHandler: requireWalletOrAdminAuth },
     async (request) => {
       assertOwnWallet(request, request.params.wallet);
-      return requireMandates().scheduleRecoveryRevoke(request.params.wallet);
+      return requireMandates().scheduleRecoveryRevoke(request.params.wallet, forVault(request.query.vault).vault.address);
     }
   );
 
@@ -689,7 +720,7 @@ export function buildServer(
 
   server.get<{
     Params: { wallet: string };
-    Querystring: { status?: string };
+    Querystring: { status?: string; vault?: string };
   }>(
     "/v1/wallets/:wallet/approvals",
     { preHandler: requireWalletOrAdminAuth },
@@ -698,7 +729,8 @@ export function buildServer(
       return {
         approvals: await requireMandates().listApprovals(
           request.params.wallet,
-          request.query.status
+          request.query.status,
+          forVault(request.query.vault).vault.address
         )
       };
     }
@@ -716,7 +748,7 @@ export function buildServer(
 
   server.get<{
     Params: { wallet: string };
-    Querystring: { limit?: string };
+    Querystring: { limit?: string; vault?: string };
   }>(
     "/v1/wallets/:wallet/spending-log",
     { preHandler: requireWalletOrAdminAuth },
@@ -728,7 +760,7 @@ export function buildServer(
           : Number.parseInt(request.query.limit, 10);
       return requireMandates().spendingLog(
         request.params.wallet,
-        SUBLY_VAULT.address,
+        forVault(request.query.vault).vault.address,
         limit !== undefined && Number.isSafeInteger(limit) && limit > 0
           ? Math.min(limit, 1000)
           : undefined
@@ -742,7 +774,7 @@ export function buildServer(
     async (request) => {
       const body = reportPaymentSchema.parse(request.body);
       assertOwnWallet(request, body.wallet);
-      return requireVaultFlows().reportPayment(body);
+      return requireVaultFlows(await storedVault("withdrawal", body.withdrawalId)).reportPayment(body);
     }
   );
 
@@ -764,7 +796,7 @@ export function buildServer(
       const body = createSetupSessionSchema.parse(request.body ?? {});
       return requireMandates().createSetupSession({
         wallet: request.params.wallet,
-        vault: SUBLY_VAULT.address,
+        vault: forVault(body.vault, true).vault.address,
         ...(body.policy === undefined ? {} : { policy: body.policy }),
         ...(body.enforcementMode === undefined
           ? {}
@@ -811,8 +843,9 @@ export function buildServer(
 
   server.get<{
     Params: { wallet: string };
+    Querystring: { vault?: string };
   }>("/v1/wallets/:wallet/mandate/summary", async (request) =>
-    requireMandates().getMandateSummary(request.params.wallet)
+    requireMandates().getMandateSummary(request.params.wallet, forVault(request.query.vault).vault.address)
   );
 
   // ------------------------------------------------------------ owner pages

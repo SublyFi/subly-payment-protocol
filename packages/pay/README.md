@@ -67,7 +67,7 @@ different credential than other tooling on the same machine. Note the
 exposes no signing API and cannot be used here.
 
 Send USDC (Solana mainnet) to the printed address — no SOL needed, fees are
-sponsored — then deposit (vault minimum is just over 1 USDC: share rounding
+sponsored — then deposit (the legacy default vault minimum is just over 1 USDC: share rounding
 refuses exactly 1.000000; deposit self-registers the wallet):
 
 ```bash
@@ -157,7 +157,33 @@ keypair (see [Wallet](#wallet) above).
 | `SUBLY_PAY_METHOD` / `SUBLY_PAY_BODY` | no (`pay fetch` only) | `GET` / — (JSON body for POST-body sellers) |
 | `SUBLY_PAY_FORCE_NEW_PAYMENT` | no (`pay fetch` only) | unset (`1` forces a fresh payment — may double-pay) |
 | `CIRCLE_BASE_URL` / `PRIVY_BASE_URL` | no | provider API defaults |
-| `SUBLY_VAULT_ADDRESS` / `SUBLY_VAULT_SHARE_MINT` / `SUBLY_VAULT_USDC_MINT` / `SUBLY_VAULT_FARM` | only with a custom-vault relayer | Subly's public vault and Farm. These are your signer's trust anchor (intents are validated against this local config, never the relayer's claims) — set them only to addresses you independently verified or control |
+| `SUBLY_VAULTS_FILE` | multi-vault | Path to the reviewed local USDC vault catalogue. `SUBLY_VAULT_ADDRESS` optionally overrides its default. |
+| `SUBLY_VAULT_ADDRESS` / `SUBLY_VAULT_SHARE_MINT` / `SUBLY_VAULT_USDC_MINT` / `SUBLY_VAULT_FARM` | only with a custom-vault relayer | Subly's public vault and Farm. Use the same settings as your chosen relayer. A custom address requires its share mint and explicit farm; use `11111111111111111111111111111111` for no farm. Mainnet USDC only. These are your signer's local trust anchors. |
+
+### Select a USDC vault (source build)
+
+With a multi-vault relayer, install the reviewed `vaults.json` catalogue locally
+and set `SUBLY_VAULTS_FILE=/absolute/path/to/vaults.json` in the MCP server's env.
+The operator generates it from the source checkout with:
+
+```bash
+SOLANA_RPC_URL=<rpc> npm run --silent configure:vaults -- <default-vault-address> > vaults.next.json
+```
+
+Call `list_subly_vaults`, then `select_subly_vault(vaultAddress)` to choose one.
+Selection checks matching relayer support and affects subsequent setup, deposit,
+budget, withdrawal and payment tools. It lasts until changed or MCP restarts.
+Each vault needs its own owner setup/mandate; balances and spending limits are
+separate. Switching does not move funds, combine yield, or clear protection
+against duplicate payments. To withdraw earlier funds, select their vault.
+
+For CLI commands, set `SUBLY_VAULT_ADDRESS` to a listed address before starting
+the process; otherwise the catalogue default applies. Without a catalogue,
+single-vault settings continue to work. Client metadata is pinned locally;
+`GET /v1/vaults` never replaces it. The client and relayer must both support the
+selected vault. Use a build from this checkout until these changes are released
+on npm. See the [operator guide](https://github.com/SublyFi/subly-payment-protocol/blob/main/deploy/README.md#advanced-your-own-kamino-vault)
+for deployment, supported vault configurations, and migration.
 
 Requests authenticate with a signature from your wallet key — there is no API
 token. `SUBLY_FACILITATOR_URL` is still accepted as a legacy fallback for

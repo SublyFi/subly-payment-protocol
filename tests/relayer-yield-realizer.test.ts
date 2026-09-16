@@ -51,7 +51,7 @@ describe("RelayerYieldRealizer", () => {
       if (u.endsWith("/sync")) {
         return jsonResponse(200, { position: {} });
       }
-      if (u.endsWith("/budget")) {
+      if (u.endsWith(`/budget?vault=${SUBLY_VAULT.address}`)) {
         return jsonResponse(200, {
           budget: { spendableYieldRawUsdc: "1000000" }
         });
@@ -89,7 +89,7 @@ describe("RelayerYieldRealizer", () => {
     // Syncs the ledger from chain first so freshly accrued yield is visible.
     expect(calls.map((c) => c.url)).toEqual([
       `${BASE}/v1/wallets/${WALLET}/sync`,
-      `${BASE}/v1/wallets/${WALLET}/budget`,
+      `${BASE}/v1/wallets/${WALLET}/budget?vault=${SUBLY_VAULT.address}`,
       `${BASE}/v1/withdrawals/prepare`,
       `${BASE}/v1/withdrawals/submit`
     ]);
@@ -107,7 +107,7 @@ describe("RelayerYieldRealizer", () => {
       if (u.endsWith("/sync")) {
         return jsonResponse(200, { position: {} });
       }
-      if (u.endsWith("/budget")) {
+      if (u.endsWith(`/budget?vault=${SUBLY_VAULT.address}`)) {
         return jsonResponse(200, {
           budget: { spendableYieldRawUsdc: "1000000" }
         });
@@ -145,7 +145,7 @@ describe("RelayerYieldRealizer", () => {
     });
     expect(calls).toEqual([
       `${BASE}/v1/wallets/${WALLET}/sync`,
-      `${BASE}/v1/wallets/${WALLET}/budget`,
+      `${BASE}/v1/wallets/${WALLET}/budget?vault=${SUBLY_VAULT.address}`,
       `${BASE}/v1/withdrawals/prepare`,
       `${BASE}/v1/withdrawals/submit`
     ]);
@@ -157,7 +157,7 @@ describe("RelayerYieldRealizer", () => {
       if (u.endsWith("/sync")) {
         return jsonResponse(200, { position: {} });
       }
-      if (u.endsWith("/budget")) {
+      if (u.endsWith(`/budget?vault=${SUBLY_VAULT.address}`)) {
         return jsonResponse(200, { budget: { spendableYieldRawUsdc: "5000" } });
       }
       throw new Error("should not reach withdrawal endpoints");
@@ -181,7 +181,7 @@ describe("RelayerYieldRealizer", () => {
       if (u.endsWith("/sync")) {
         return jsonResponse(200, { position: {} });
       }
-      if (u.endsWith("/budget")) {
+      if (u.endsWith(`/budget?vault=${SUBLY_VAULT.address}`)) {
         // Exactly the payment amount: gross fits, but the fee headroom
         // (2500 raw) does not — the server guard would refuse this too.
         return jsonResponse(200, { budget: { spendableYieldRawUsdc: "10000" } });
@@ -208,7 +208,7 @@ describe("RelayerYieldRealizer", () => {
           error: { code: "chain_sync_unavailable" }
         });
       }
-      if (u.endsWith("/budget")) {
+      if (u.endsWith(`/budget?vault=${SUBLY_VAULT.address}`)) {
         return jsonResponse(200, { budget: { spendableYieldRawUsdc: "5000" } });
       }
       throw new Error("should not reach withdrawal endpoints");
@@ -231,7 +231,7 @@ describe("RelayerYieldRealizer", () => {
       if (u.endsWith("/sync")) {
         return jsonResponse(200, { position: {} });
       }
-      if (u.endsWith("/budget")) {
+      if (u.endsWith(`/budget?vault=${SUBLY_VAULT.address}`)) {
         // Stale client-side view says there is enough...
         return jsonResponse(200, {
           budget: { spendableYieldRawUsdc: "1000000" }

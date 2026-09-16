@@ -84,6 +84,44 @@ function memoryStore(
 }
 
 describe("StandardX402Payer", () => {
+  it("deduplicates in-flight requests across vaults and reports against the original source", async () => {
+    let release!: (response: FetchResponseLike) => void;
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => { started = resolve; });
+    const realizer = (vault: string): YieldRealizer => ({ vault,
+      ensureUsdcAvailable: vi.fn(async () => ({ realizedRawUsdc: 10000n, txSignature: "realize", withdrawalId: vault })),
+      reportPayment: vi.fn(async () => undefined)
+    });
+    const a = realizer("vault-a"); const b = realizer("vault-b");
+    const payer = new StandardX402Payer({ realizer: a, defaultMaxAmountRawUsdc: 10000n,
+      probeFetch: async () => resp({ status: 402, headers: { [PAYMENT_REQUIRED_HEADER.toLowerCase()]: encodeX402Header(challenge()) } }),
+      x402Fetch: async () => { started(); return new Promise((resolve) => { release = resolve; }); }
+    });
+    const first = payer.pay({ url: URL }, a);
+    await entered;
+    const duplicate = payer.pay({ url: URL }, b);
+    expect(duplicate).toBe(first);
+    release(resp({ status: 200, headers: { "x-payment-response": encodeX402Header({ success: true, transaction: "pay-tx" }) } }));
+    expect((await first).fundingVault).toBe("vault-a");
+    expect(a.reportPayment).toHaveBeenCalledWith({ withdrawalId: "vault-a", paymentTxSignature: "pay-tx" });
+    expect(b.ensureUsdcAvailable).not.toHaveBeenCalled();
+    expect(b.reportPayment).not.toHaveBeenCalled();
+  });
+
+  it("retains unknown payment protection after switching vaults and restarting", async () => {
+    const a = okRealizer(); const b = okRealizer(); const stateStore = memoryStore();
+    const config = { realizer: a, stateStore, defaultMaxAmountRawUsdc: 10000n,
+      probeFetch: async () => resp({ status: 402, headers: { [PAYMENT_REQUIRED_HEADER.toLowerCase()]: encodeX402Header(challenge()) } }),
+      x402Fetch: async () => { throw new Error("connection lost"); }
+    };
+    const payer = new StandardX402Payer(config);
+    await expect(payer.pay({ url: URL }, a)).rejects.toMatchObject({ reason: "payment_outcome_unknown" });
+    await expect(payer.pay({ url: URL }, b)).rejects.toMatchObject({ reason: "payment_outcome_unknown" });
+    await expect(new StandardX402Payer(config).pay({ url: URL }, b)).rejects.toMatchObject({ reason: "payment_outcome_unknown" });
+    expect(a.ensureUsdcAvailable).toHaveBeenCalledTimes(1);
+    expect(b.ensureUsdcAvailable).not.toHaveBeenCalled();
+  });
+
   it("maps a mandate approval_required refusal to a structured retry step", async () => {
     const realizer: YieldRealizer = {
       ensureUsdcAvailable: vi.fn(async (input: { approvalId?: string }) => {

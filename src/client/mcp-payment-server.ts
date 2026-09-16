@@ -1,3 +1,4 @@
+import type { McpVaultSelection } from "./vault-selection.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -28,7 +29,11 @@ const SETUP_STATUS_TOOL_NAME = "check_subly_setup";
 const SERVER_INSTRUCTIONS = `Subly lets an agent pay standard x402 (HTTP 402) \
 paid APIs that offer a Solana USDC exact rail with facilitator feePayer support \
 from its wallet's Kamino vault YIELD — the deposited principal is never spent, \
-and the seller needs no Subly integration.
+and the seller needs no Subly integration. With a configured vault catalog, call \
+list_subly_vaults and select_subly_vault(vaultAddress) for the user's choice \
+before owner setup. All subsequent tools use that vault until changed. \
+Selection never moves existing funds; set up a separate mandate for each vault. \
+Never select or switch vaults automatically based on APY.
 
 One-time setup: the operator needs a Solana agent wallet. Subly does NOT \
 create wallets; either make a local keypair with \`solana-keygen new -o \
@@ -56,7 +61,7 @@ first deposit is picked up automatically).
 
 From there the agent can do everything with these tools:
 1. deposit_to_subly_vault(amountRawUsdc) puts wallet USDC into the vault \
-(minimum just over 1 USDC, e.g. 1010000 raw) so it starts earning yield. \
+(the minimum depends on the selected vault) so it starts earning yield. \
 If it returns approvalRequired, paste the approveUrl to the user and retry \
 with the approvalId after they approve; if it returns setupRequired, run \
 the owner onboarding above first.
@@ -76,7 +81,8 @@ mandate requires withdrawal approval it returns approvalRequired — same \
 paste-approveUrl-then-retry flow as deposits.`;
 
 export interface McpPaymentServerConfig {
-  payer: StandardX402Payer;
+  payer: Pick<StandardX402Payer, "pay">;
+  vaultSelection?: McpVaultSelection;
   signer: AgentWalletSigner;
   /** Subly relayer API base URL; `SUBLY_FACILITATOR_URL` remains a legacy env fallback. */
   relayerBaseUrl: string;
@@ -90,10 +96,10 @@ export interface McpPaymentServerConfig {
   serverVersion?: string;
 }
 
-export async function runMcpPaymentServer(
+export function createMcpPaymentServer(
   config: McpPaymentServerConfig
-): Promise<void> {
-  const { payer, signer, relayerBaseUrl, defaultMaxAmountRawUsdc } = config;
+): Server {
+  const { signer, relayerBaseUrl, defaultMaxAmountRawUsdc } = config;
   const vaultFlows = config.vaultFlows ?? null;
 
   const server = new Server(
@@ -125,7 +131,7 @@ export async function runMcpPaymentServer(
                   type: "string",
                   description:
                     "First deposit bundled into the owner's single Face ID " +
-                    "(raw USDC, 6 decimals; just over 1 USDC minimum, e.g. " +
+                    "(raw USDC, 6 decimals; the minimum depends on the vault, e.g. " +
                     "\"1010000\"). Strongly recommended: without it the " +
                     "first deposit needs a separate approval."
                 },
@@ -294,6 +300,20 @@ export async function runMcpPaymentServer(
 
   server.setRequestHandler(ListToolsRequestSchema, () => ({
     tools: [
+      ...(config.vaultSelection === undefined ? [] : [
+        {
+          name: "list_subly_vaults",
+          description: "List locally configured USDC Kamino vaults and the currently selected vault. Names come from on-chain metadata and may differ from Kamino's website.",
+          inputSchema: { type: "object", properties: {} },
+          annotations: { readOnlyHint: true, destructiveHint: false }
+        },
+        {
+          name: "select_subly_vault",
+          description: "Choose a vault from the local catalog for subsequent setup, deposit, budget, withdrawal, and payment tools. Checks the relayer supports the same vault. Does not move existing funds. Use the vault the user chose; never switch automatically based on APY.",
+          inputSchema: { type: "object", properties: { vaultAddress: { type: "string" } }, required: ["vaultAddress"] },
+          annotations: { readOnlyHint: false, destructiveHint: false }
+        }
+      ]),
       ...vaultTools,
       {
         name: TOOL_NAME,
@@ -445,6 +465,21 @@ export async function runMcpPaymentServer(
   };
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    if (config.vaultSelection && request.params.name === "list_subly_vaults") {
+      return textResult(config.vaultSelection.list());
+    }
+    if (config.vaultSelection && request.params.name === "select_subly_vault") {
+      const address = request.params.arguments?.vaultAddress;
+      if (typeof address !== "string") return textResult({ message: "vaultAddress is required" }, true);
+      try { return textResult(await config.vaultSelection.select(address, relayerBaseUrl)); }
+      catch (error) { return vaultFlowFailure(error); }
+    }
+    // Capture once so a concurrent selection cannot redirect an in-flight operation.
+    const session = config.vaultSelection?.current();
+    const signer = session?.signer ?? config.signer;
+    const vaultFlows = session?.vaultFlows ?? config.vaultFlows ?? null;
+    const payer = session?.payer ?? config.payer;
+
     const vaultToolNames: string[] = [
       BUDGET_TOOL_NAME,
       DEPOSIT_TOOL_NAME,
@@ -747,6 +782,13 @@ export async function runMcpPaymentServer(
       };
     }
   });
+
+  return server;
+}
+
+export async function runMcpPaymentServer(config: McpPaymentServerConfig): Promise<void> {
+  const server = createMcpPaymentServer(config);
+  const { signer, relayerBaseUrl, defaultMaxAmountRawUsdc } = config;
 
   // Self-serve onboarding: register + activate + chain-sync this wallet so the
   // realize relayer can serve budget reads and sponsored withdrawals.

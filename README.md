@@ -86,7 +86,7 @@ sequenceDiagram
 
 Throughout this document, the **relayer** is Subly's buyer-side server (the vault / budget / yield-realize API) — it is *not* the seller's x402 facilitator; sellers keep their own.
 
-1. **Deposit.** The agent wallet deposits USDC into the Subly vault on Kamino. The relayer records the *principal basis*.
+1. **Deposit.** The agent wallet deposits USDC into its selected Kamino vault. The relayer records the *principal basis*.
 2. **Yield accrues.** Vault share value grows against the basis; the difference is *spendable yield*.
 3. **402 challenge.** The agent calls a paid API without an API key and receives a standard x402 challenge. Subly selects the `scheme=exact` / `network=solana` / `asset=USDC` requirement.
 4. **Yield realize.** The relayer prepares a withdrawal capped to spendable yield (`purpose: "yield_realize"`) — a server-side guard rejects anything that would dip into principal. The sponsor pays gas.
@@ -117,7 +117,7 @@ Send USDC (Solana mainnet) to the printed address. No SOL — every transaction 
 
 ### 3. Deposit into the yield vault
 
-Amounts are **raw USDC units** (6 decimals): `1 USDC = 1_000_000`. The vault minimum is just over 1 USDC (exactly `1000000` is refused by share rounding — use `1010000` or more):
+Amounts are **raw USDC units** (6 decimals): `1 USDC = 1_000_000`. The default vault minimum is just over 1 USDC (exactly `1000000` is refused by share rounding — use `1010000` or more). Other vaults have their own minimums:
 
 ```bash
 npx -y @subly_fi/pay deposit 1010000   # 1.01 USDC
@@ -171,6 +171,7 @@ Claude Desktop does not inherit your shell environment: put every variable in th
 | --- | --- |
 | `create_subly_setup_link` | Creates a one-time owner setup link (spending mandate + pre-approved first deposit — one Face ID covers both). |
 | `check_subly_setup` | Polls a setup session (`pending` / `completed` / `expired`). |
+| `list_subly_vaults` / `select_subly_vault` | List configured USDC vaults and choose one for subsequent tools. |
 | `deposit_to_subly_vault` | Deposits USDC into the vault (gas sponsored). |
 | `get_subly_yield_budget` | Reports principal basis, position value, gross yield, and spendable yield. |
 | `fetch_with_subly_payment` | Fetches a URL; on a 402 it realizes yield and pays via standard x402. |
@@ -222,7 +223,8 @@ All configuration is via environment variables (there are no config files and no
 | `SUBLY_MCP_MAX_AMOUNT_RAW_USDC` | `10000` (0.01 USDC) | Client-side per-payment cap for `pay mcp` and `pay fetch`. |
 | `SUBLY_MCP_STATE_PATH` | `~/.subly/standard-x402-pending.json` | Local store of pending payments (double-payment protection). |
 | `SUBLY_PAY_METHOD` / `SUBLY_PAY_BODY` | `GET` / — | `pay fetch` only: HTTP method / JSON body for POST-body sellers. |
-| `SUBLY_VAULT_ADDRESS` / `SUBLY_VAULT_SHARE_MINT` / `SUBLY_VAULT_USDC_MINT` / `SUBLY_VAULT_FARM` | Subly's public vault and Farm | Only when your relayer settles against a custom Kamino vault — see [Running it as your own service](#running-it-as-your-own-service). These are your signer's trust anchors: set them only to addresses you independently verified or control. |
+| `SUBLY_VAULTS_FILE` | unset (single-vault fallback) | Local reviewed USDC vault catalogue; configure on both relayer and MCP/CLI. |
+| `SUBLY_VAULT_ADDRESS` | catalogue default or legacy Subly vault | Initial selection; must be listed when using a catalogue. Without a catalogue, a custom address also requires `SUBLY_VAULT_SHARE_MINT` and `SUBLY_VAULT_FARM`. |
 
 ### Custody signers (Circle / Privy)
 
@@ -257,7 +259,7 @@ Subly separates the **agent** (holds the wallet key, spends yield) from the **ow
 
 - **Setup links** bundle mandate signing with a pre-approved first deposit, so onboarding is a single Face ID tap. Links expire in 10 minutes and are single-use; the pre-approved deposit id is valid ~15 minutes.
 - **Approvals** are single-use, bound to the exact payment (payee + amount + resource), and expire in 15 minutes. The agent surfaces an `approveUrl` the owner opens on their phone.
-- **Kill switch:** the owner can revoke the mandate at any time; revocation blocks all spending immediately. A 72-hour agent-initiated recovery-revoke exists for owner-loss deadlock (the owner can veto during the window).
+- **Kill switch:** the owner can revoke the mandate at any time; revocation blocks agent operations for that vault immediately. A 72-hour agent-initiated recovery-revoke exists for owner-loss deadlock (the owner can veto during the window).
 - **Audit:** `GET /v1/wallets/:wallet/spending-log` gives one row per payment with the decision (`auto_within_policy` / `owner_approved:apr_...`) and the mandate hash.
 
 **Honest boundary:** these controls are enforced at the relayer, not by an on-chain program. `SUBLY_MANDATE_ENFORCEMENT=off|warn|on` is available for staged rollout, but the source default is now **`on`**; `warn` only logs and stamps violations without blocking. **The hosted beta relayer may still run `warn`** — treat caps as advisory there until its operator confirms `on`. See [`docs/spending-mandate-design.md`](docs/spending-mandate-design.md).
@@ -291,7 +293,7 @@ docker compose up -d --build
 curl -s https://<your-domain>/healthz                      # {"ok":true}
 ```
 
-There is no migration step — the Postgres schema auto-creates on first connection. Full instructions (updates via `git archive`, monitoring cron): [`deploy/README.md`](deploy/README.md).
+The Postgres schema auto-creates on a fresh database. Existing deployments must follow the [mandate migration notes](deploy/README.md#existing-deployments-and-retiring-vaults). Full instructions (updates via `git archive`, monitoring cron): [`deploy/README.md`](deploy/README.md).
 
 ### Running it as your own service
 
@@ -307,7 +309,29 @@ The operator checklist, in order (details in [`deploy/README.md`](deploy/README.
 
 **Economics, honestly:** sponsored gas is recorded as `feeDebt` against each user's position and reduces their spendable yield, but no USDC ever flows back to the operator — there is no fee-collection mechanism in the code today. Treat gas as an operating cost and bring your own revenue model ([`docs/business-model.md`](docs/business-model.md) describes the intended one).
 
-**Your own vault (advanced):** deployments settle against Subly's public Kamino USDC vault by default, which third parties can use freely (shares sit under each agent wallet's own authority). To run your own Kamino vault instead, set `SUBLY_VAULT_ADDRESS` / `SUBLY_VAULT_SHARE_MINT` / `SUBLY_VAULT_USDC_MINT` / `SUBLY_VAULT_FARM` on **both** the relayer and every client — the client deliberately validates transactions against its local vault and Farm config, never the relayer's claims. Published npm clients up to 0.6.1 have the defaults compiled in, so custom-vault setups need a client built from this repo until the next release.
+**Let users choose a USDC Kamino vault:** one relayer can serve multiple vaults,
+with a reviewed local catalogue shared by the relayer and MCP clients. Generate
+it from the official listed USDC vaults and on-chain metadata:
+
+```bash
+SOLANA_RPC_URL=<rpc> npm run --silent configure:vaults -- <default-vault-address> > vaults.next.json
+```
+
+Review the result, then set `SUBLY_VAULTS_FILE=/absolute/path/to/vaults.json` on
+both sides. For Docker, use the [multi-vault Compose override](deploy/docker-compose.vaults.yml).
+MCP users call `list_subly_vaults`, then `select_subly_vault(vaultAddress)` before
+owner setup. Subsequent tools use that vault; switching never moves existing
+funds. Mandates, approvals, spending limits and balances are separate per vault.
+Payment deduplication remains shared across selections.
+
+The read-only generator requires no wallet. It supports mainnet USDC Earn
+vaults using SPL Token and 6 decimal token/share units; vault fees, minimums and
+liquidity vary. See the [operator guide](deploy/README.md#advanced-your-own-kamino-vault)
+for client setup, lookup tables, API selection, existing database migration and
+retiring vaults without removing exits. Build clients from this checkout for
+this feature. Single-vault environment settings remain supported when no
+catalogue file is configured.
+
 
 ### Key server environment
 
@@ -321,13 +345,15 @@ The operator checklist, in order (details in [`deploy/README.md`](deploy/README.
 | `SUBLY_MANDATE_ENFORCEMENT` | no (default `on`) | `off` \| `warn` \| `on` — `warn` is for an explicitly staged rollout; `on` blocks policy violations. |
 | `SUBLY_TRUST_PROXY` | behind a proxy | Required behind Caddy/LB so per-IP rate limiting keys on the real client IP. |
 | `SUBLY_APPROVE_URL_BASE` / `SUBLY_SETUP_URL_BASE` | for mandates | Where owner approve/setup pages are served (WebAuthn rpId derives from these). |
-| `SUBLY_VAULT_ADDRESS` / `SUBLY_VAULT_SHARE_MINT` / `SUBLY_VAULT_USDC_MINT` / `SUBLY_VAULT_FARM` | no (defaults: Subly's public vault) | Settle against a different Kamino vault and Farm. Must match on relayer *and* clients; independently verify every address. |
+| `SUBLY_VAULTS_FILE` | multi-vault: yes | Reviewed catalogue path; same metadata on relayer and clients. Optional `SUBLY_VAULT_ADDRESS` selects the initial default. |
 | `SUBLY_ENABLE_LEGACY_X402` | no (default off) | Re-enables the retired seller-side `subly-yield-exact` endpoints. Leave off. |
 
 ### Operational scripts
 
 | Script | Purpose |
 | --- | --- |
+| `npm run configure:vaults -- <default-address>` | Generate a reviewed catalogue candidate from official listed USDC Earn vaults and chain metadata; read-only. |
+| `npm run configure:vault -- <address>` | Read a selected USDC Earn vault from chain and print shared relayer/client settings. No wallet or transaction required. |
 | `scripts/create-settlement-lut.ts` | One-time: create the settlement lookup table (keeps vault transactions under Solana's size limit). Re-runs create a *new* table — append it to `SUBLY_EXTRA_LOOKUP_TABLES`. |
 | `scripts/invest-vault.ts` | Crank idle vault USDC into Kamino reserves so yield actually accrues. |
 | `npm run validate:mainnet` | Read-only mainnet validation harness — simulates the full settlement path, moves no funds. |
@@ -355,7 +381,7 @@ The operator checklist, in order (details in [`deploy/README.md`](deploy/README.
 - **[`demo/`](demo)** — runnable deposit/withdraw clients (`npm run demo:deposit -- <raw>`), plus legacy `subly-yield-exact` demos kept for history (`demo:legacy:*`).
 - **[`deploy/`](deploy)** — production Docker Compose stack.
 - **[`docs/`](docs)** — design documents ([index](docs/README.md); several are written in Japanese).
-- **[`tests/`](tests)** — 28 Vitest suites covering the x402 payer, vault flows, mandates, wallet auth, fee estimation, and more.
+- **[`tests/`](tests)** — Vitest suites covering the x402 payer, vault flows, mandates, wallet auth, fee estimation, and more.
 
 ## Security & trust model
 
@@ -397,7 +423,7 @@ Repository layout: the root package (`subly-agent-payments`) is **private** — 
 
 ## Roadmap
 
-- Vault yield optimization and a multi-venue TVL ladder (single-vault today)
+- Vault yield optimization and a multi-venue TVL ladder (automatic selection is not implemented)
 - Vault health monitor with automatic deposit/realize halt on anomalies (designed, not implemented — withdrawals are never halted)
 - Program security audit
 - Additional payment rails (Base, further x402 schemes)

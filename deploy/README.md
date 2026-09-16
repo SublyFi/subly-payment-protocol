@@ -50,8 +50,7 @@ secrets/sponsor.json    <- sponsor key (host only, never baked into the image)
   The sponsor is a hot wallet — the server signs with it. Keep only working
   capital on it, never large funds.
 
-> Planning to run your **own Kamino vault** instead of the default public
-> one? Read [Advanced: your own Kamino vault](#advanced-your-own-kamino-vault)
+> Planning to offer **multiple USDC Kamino vaults** or change the default? Read [Advanced: your own Kamino vault](#advanced-your-own-kamino-vault)
 > *before* the one-time on-chain setup — the settlement lookup table is
 > vault-specific.
 
@@ -82,8 +81,8 @@ docker compose up -d --build
 curl -s https://<your-domain>/healthz                       # {"ok":true}
 ```
 
-There is no migration step — the Postgres schema auto-creates on first
-connection. Notes on `relayer.production.env`:
+On a fresh database, the schema auto-creates on first connection. For an
+existing deployment, read the migration notes under [vault configuration](#existing-deployments-and-retiring-vaults). Notes on `relayer.production.env`:
 
 - **`SUBLY_APPROVE_URL_BASE` / `SUBLY_SETUP_URL_BASE` must point at your own
   domain.** The relayer itself serves the owner pages (`/setup/:id`,
@@ -236,46 +235,150 @@ performance fee on realized yield, per
 
 ## Advanced: your own Kamino vault
 
-By default every deployment settles against Subly's public Kamino USDC vault
-(`5kfkpQZ6AkQgizHVThqkxD4J3db2i7pE3mHdPNRbx7jr`). That is fine for third
-parties — vault shares sit under each agent wallet's own authority and
-nothing about the vault is operator-exclusive — but an independent business
-may want its own vault (its own curator, allocation weights, and fee
-switches).
+One relayer can serve **multiple mainnet USDC Kamino Earn vaults**. Operators
+configure a local catalogue; users choose a vault in MCP for setup, deposits,
+budget reads, withdrawals, and API payments. You can use existing public vaults
+managed by other curators. Creating or owning a vault is not required.
 
-Set the vault via environment variables (defaults are Subly's vault):
+### 1. Generate and review the USDC catalogue
+
+From the repository root, with `npm ci` completed:
 
 ```bash
-SUBLY_VAULT_ADDRESS=<your kvault address>
-SUBLY_VAULT_SHARE_MINT=<its share mint>
-SUBLY_VAULT_USDC_MINT=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+SOLANA_RPC_URL=<rpc> npm run --silent configure:vaults -- <default-vault-address> > vaults.next.json
 ```
 
-Things to know:
+Choose the default address from [Kamino Earn / Lend](https://kamino.com/earn/lend).
+The command uses Kamino's [official listed-vault API](https://kamino.com/docs/build/api-reference/earn/vault-data/vaults-list)
+(`type=live`), filters mainnet USDC, then fetches each account from chain to verify
+the Kamino program/discriminator, SPL Token program, and 6 decimal token/share
+units. It reads metadata only and requires no wallet or transaction.
 
-- **Decide before the one-time on-chain setup**, and export these variables
-  in the shell whenever you run `create-settlement-lut.ts` or
-  `invest-vault.ts` — the scripts read process env, not
-  `relayer.production.env`. A lookup table created against the default vault
-  is useless for yours; create a new one with the variables set.
-- The same variables must be set on **both** the relayer and every client
-  process, present in the environment *before* the process starts (shell
-  env / MCP `env` block — not a late `dotenv.config()`). The client's intent
-  validation deliberately checks prepared transactions against its *local*
-  vault config — it never trusts the relayer's word on which vault its
-  shares leave. Users should therefore only ever set these to a vault they
-  independently verified or control: a relayer asking them to change these
-  variables is asking them to move their validator's trust anchor.
-- A wrong share/USDC mint does not fail at boot — it surfaces at request
-  time as `share_mint_mismatch` / `asset_mismatch` intent rejections.
-- npm releases of `@subly_fi/pay` up to and including 0.6.1 have the
-  defaults compiled in without the env override, so custom-vault deployments
-  need a client built from this repo (or the next release published to npm).
+Review the generated file and remove vaults you do not intend to offer. The
+`defaultVault` must remain in the list. The file is a snapshot: nothing
+silently adds future vaults or changes a user's selection. Names come from
+on-chain metadata and can differ from the website. APY is not stored or used
+for automatic selection.
 
-You (or your curator) manage the vault's reserve allocation on Kamino;
-creating and operating a kvault is Kamino-side work outside this repo.
+[`vaults.example.json`](vaults.example.json) is a public metadata example,
+verified on 2026-09-16 (11 USDC entries); its default is an example, not a vault
+recommendation. Regenerate and verify before using it. Configuration checks
+are not deposit/withdrawal execution tests or a measure of curator risk.
+SOL/USDT, Token-2022 vaults, other share decimals, and Kamino Liquidity strategies
+are outside this integration.
+
+### 2. Install on the relayer and clients
+
+After review, install the file as `deploy/vaults.json`. For Docker Compose:
+
+```bash
+cd deploy
+docker compose -f docker-compose.yml -f docker-compose.vaults.yml up -d --build
+```
+
+The override mounts the file read-only and sets `SUBLY_VAULTS_FILE` inside the
+container. Use **both Compose files** for subsequent updates as well. For a
+process running directly, set `SUBLY_VAULTS_FILE=/absolute/path/to/vaults.json`.
+The mainnet relayer validates every configured vault against chain at startup
+and again when refreshing its state. Detached development mode serves only
+the default vault and has no on-chain flows.
+
+Copy the reviewed catalogue to each MCP/CLI machine and add these to the MCP
+server's `env` block alongside its wallet credentials:
+
+```json
+{
+  "SUBLY_RELAYER_URL": "https://your-relayer.example.com",
+  "SUBLY_VAULTS_FILE": "/absolute/path/to/vaults.json"
+}
+```
+
+Both processes need configuration. The relayer uses it to build transactions;
+the client uses its own copy to validate exactly which vault/share mint/farm
+it signs for. `GET /v1/vaults` advertises relayer support; it does not install
+or replace the signer's local trust anchors. Client catalogues can be a subset,
+but metadata must match for every selected vault. Restart processes after
+changing files. Use a client **built from this checkout**; installing the
+currently published npm package does not install unshipped source changes.
+
+### 3. Let the user choose
+
+MCP now exposes:
+
+- `list_subly_vaults`: show the local candidates and current selection.
+- `select_subly_vault(vaultAddress)`: check matching relayer support and choose
+  the vault for subsequent tools. Selection lasts until changed or MCP restarts.
+- Existing setup, deposit, budget, withdrawal and payment tools use that selection.
+  In-flight operations retain their original vault. Payment deduplication and
+  unknown-outcome protection remain shared across all selections.
+
+The user chooses the vault, then creates an owner setup link for that vault.
+Mandates, spending limits, approvals, principal basis, fee debt and yield are
+separate per `(wallet, vault)`. Revoking one vault's mandate affects that vault.
+Selecting another vault does not transfer funds or combine yield balances.
+To exit an earlier vault, select it again. The client does not switch based on
+APY, and selection alone does not deposit funds.
+
+For one-shot CLI/scripts, `SUBLY_VAULT_ADDRESS=<listed-address>` overrides the
+catalogue's default before process startup; it must name a catalogue entry.
+The file supplies the matching share mint and farm. `create-settlement-lut.ts`
+and `invest-vault.ts` use the same selection: export `SUBLY_VAULTS_FILE` and
+`SUBLY_VAULT_ADDRESS` in the shell. Lookup tables can differ per vault; store
+additional addresses in that entry's `extraLookupTables` array. The global
+`SUBLY_EXTRA_LOOKUP_TABLES` remains supported. Vault limits, withdrawal fees,
+reserve routes and available liquidity vary and require per-vault validation.
+
+### API selection
+
+| Operation | Vault selection |
+| --- | --- |
+| Register wallet, signing policy, chain/manual sync, prepare deposit/withdrawal/payment, create setup session | Optional `vault` in the JSON body; defaults to the relayer's configured default |
+| Budget, sync events, mandate, mandate summary, approvals, spending log, recovery revoke | Optional `?vault=<address>` query |
+| Register mandate | The vault inside the owner-signed document |
+| Submit/poll/reconcile an intent, report a payment | The original vault stored with the intent ID |
+| Owner approval, setup completion, revoke/cancel | The vault bound to the stored session or mandate hash |
+
+The owner kill-switch URL is `/revoke/<wallet>?vault=<address>`. Unknown vaults
+are refused. A caller cannot reroute a prepared transaction by passing another
+vault at submission.
+
+### Existing deployments and retiring vaults
+
+Back up Postgres and stop old relayer instances before upgrading. On first
+connection this version creates `vault_spending_mandates` with a compound
+wallet/vault key and copies legacy `spending_mandates` records into their signed
+vaults. The legacy table is retained; later starts do not overwrite migrated
+records. New writes go to the new table. Do not mix old/new server versions or
+roll back without a data migration: the old table is no longer kept current.
+Other position and intent records already carry their vault and stay in place.
+
+Keep every vault with existing funds or pending operations in the catalogue.
+To stop new deposits and new payment realizations, set `depositsEnabled: false`
+on that entry. Normal withdrawals, status checks and submission/reconciliation
+of already prepared operations remain available, subject to the owner's
+mandate and chain liquidity. Regenerating the official list can omit older
+vaults: merge these retired entries into the new file instead of overwriting
+an operating catalogue. Never copy principal basis or yield between vaults.
+
+### Single-vault compatibility
+
+Without `SUBLY_VAULTS_FILE`, the legacy Subly vault remains the default. A
+single custom vault still works with:
+
+```bash
+SOLANA_RPC_URL=<rpc> npm run --silent configure:vault -- <vault-address> > vault.env
+```
+
+Set the generated `SUBLY_VAULT_ADDRESS`, `SUBLY_VAULT_SHARE_MINT`,
+`SUBLY_VAULT_USDC_MINT`, and `SUBLY_VAULT_FARM` on relayer and clients. A custom
+address requires an explicit share mint and farm; the no-farm value is
+`11111111111111111111111111111111`. When a catalogue is configured its metadata
+takes precedence over those individual mint/farm variables.
 
 ## Updating a running deployment
+
+For multi-vault deployments, include `-f docker-compose.yml -f docker-compose.vaults.yml`
+in the Compose commands below.
 
 Ship a fresh tarball exactly as in
 [Get the code onto the host](#get-the-code-onto-the-host), then rebuild:

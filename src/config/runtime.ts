@@ -19,7 +19,8 @@ import { KaminoVaultAdapter } from "../kamino/vault-adapter.js";
 import { loadKeyPairSigner } from "../solana/keys.js";
 import { createRpcFromEnv } from "../solana/rpc.js";
 import { TransactionSubmissionEngine } from "../solana/submission.js";
-import { SUBLY_VAULT } from "./constants.js";
+import { vaultCatalogFromEnv } from "./vault-catalog.js";
+import type { VaultServices } from "../domain/vault-services.js";
 
 export interface SublyRuntime {
   service: SublyService;
@@ -78,75 +79,52 @@ export async function createSublyRuntime(
     );
   }
 
-  const adapter = new KaminoVaultAdapter({
-    rpc,
-    vaultAddress: SUBLY_VAULT.address,
-    ...(env.SUBLY_EXTRA_LOOKUP_TABLES === undefined
-      ? {}
-      : {
-          extraLookupTables: env.SUBLY_EXTRA_LOOKUP_TABLES.split(",")
-            .map((value) => value.trim())
-            .filter((value) => value.length > 0)
-        })
-  });
+  const catalog = vaultCatalogFromEnv(env);
   const engine = new TransactionSubmissionEngine(rpc);
-
-  const computeUnitLimit =
-    env.SUBLY_CU_LIMIT === undefined ? undefined : Number(env.SUBLY_CU_LIMIT);
-  const computeUnitPriceMicroLamports =
-    env.SUBLY_CU_PRICE_MICROLAMPORTS === undefined
-      ? undefined
-      : BigInt(env.SUBLY_CU_PRICE_MICROLAMPORTS);
-
-  const transactionBuilder = new KaminoCanonicalTransactionBuilder({
-    rpc,
-    adapter,
-    config: {
-      ...(computeUnitLimit === undefined ? {} : { computeUnitLimit }),
-      ...(computeUnitPriceMicroLamports === undefined
-        ? {}
-        : { computeUnitPriceMicroLamports })
-    }
-  });
-
+  const computeUnitLimit = env.SUBLY_CU_LIMIT === undefined ? undefined : Number(env.SUBLY_CU_LIMIT);
+  const computeUnitPriceMicroLamports = env.SUBLY_CU_PRICE_MICROLAMPORTS === undefined
+    ? undefined : BigInt(env.SUBLY_CU_PRICE_MICROLAMPORTS);
+  const chainConfig = {
+    ...(computeUnitLimit === undefined ? {} : { computeUnitLimit }),
+    ...(computeUnitPriceMicroLamports === undefined ? {} : { computeUnitPriceMicroLamports })
+  };
   const { feeEstimator, feeLamportsToUsdc } = buildFeeEstimator(env);
   const settlementSubmitter = new KaminoSettlementSubmitter({
-    engine,
-    sponsor,
+    engine, sponsor,
     ...(feeLamportsToUsdc === null ? {} : { feeLamportsToUsdc })
   });
-
-  const service = new SublyService({
-    transactionBuilder,
-    feeEstimator,
-    settlementSubmitter,
-    config: {
-      sponsorFeePayer: sponsor.address
-    }
-  });
-
-  const mandateService = buildMandateService(service.ledger, env, logger);
-
-  const vaultFlowService = new VaultFlowService({
-    ledger: service.ledger,
-    adapter,
-    engine,
-    sponsor,
-    config: {
-      ...(computeUnitLimit === undefined ? {} : { computeUnitLimit }),
-      ...(computeUnitPriceMicroLamports === undefined
-        ? {}
-        : { computeUnitPriceMicroLamports })
-    },
-    ...(feeLamportsToUsdc === null ? {} : { feeLamportsToUsdc }),
-    mandates: mandateService
-  });
-
-  const chainWalletSync = new ChainWalletSyncService({
-    adapter,
-    service,
-    apiClient: new KaminoApiClient(env.SUBLY_KAMINO_API_BASE)
-  });
+  const vaultServices = new Map<string, VaultServices>();
+  let sharedLedger: Ledger | undefined;
+  let mandateService: SpendingMandateService | undefined;
+  for (const vault of catalog.vaults) {
+    const adapter = new KaminoVaultAdapter({
+      rpc, vaultAddress: vault.address, vaultConfig: vault,
+      extraLookupTables: [
+        ...(vault.extraLookupTables ?? []),
+        ...(env.SUBLY_EXTRA_LOOKUP_TABLES ?? "").split(",").map((s) => s.trim()).filter(Boolean)
+      ]
+    });
+    await adapter.validateConfiguration();
+    const transactionBuilder = new KaminoCanonicalTransactionBuilder({ rpc, adapter, config: chainConfig });
+    const vaultService = new SublyService({
+      vault, transactionBuilder, feeEstimator, settlementSubmitter,
+      ...(sharedLedger === undefined ? {} : { ledger: sharedLedger }),
+      config: { sponsorFeePayer: sponsor.address }
+    });
+    sharedLedger = vaultService.ledger;
+    mandateService ??= buildMandateService(sharedLedger, env, logger);
+    const vaultFlowService = new VaultFlowService({
+      vault, ledger: sharedLedger, adapter, engine, sponsor, config: chainConfig,
+      ...(feeLamportsToUsdc === null ? {} : { feeLamportsToUsdc }),
+      mandates: mandateService
+    });
+    const chainWalletSync = new ChainWalletSyncService({
+      adapter, service: vaultService, apiClient: new KaminoApiClient(env.SUBLY_KAMINO_API_BASE)
+    });
+    vaultServices.set(vault.address, { vault, service: vaultService, vaultFlowService, chainWalletSync });
+  }
+  const selected = vaultServices.get(catalog.defaultVault)!;
+  const { service, vaultFlowService, chainWalletSync } = selected;
 
   const minSponsorBalanceLamports =
     env.SUBLY_MIN_SPONSOR_BALANCE_LAMPORTS === undefined
@@ -167,7 +145,8 @@ export async function createSublyRuntime(
       vaultFlowService,
       chainWalletSync,
       sponsorMonitoring,
-      mandateService
+      vaultServices,
+      mandateService: mandateService!
     },
     mode: "mainnet"
   };

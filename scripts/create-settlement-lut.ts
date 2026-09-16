@@ -64,7 +64,12 @@ async function main() {
 
   const adapter = new KaminoVaultAdapter({
     rpc,
-    vaultAddress: SUBLY_VAULT.address
+    vaultAddress: SUBLY_VAULT.address,
+    vaultConfig: SUBLY_VAULT,
+    extraLookupTables: [
+      ...(SUBLY_VAULT.extraLookupTables ?? []),
+      ...(process.env.SUBLY_EXTRA_LOOKUP_TABLES ?? "").split(",").map((s) => s.trim()).filter(Boolean)
+    ]
   });
   const context = await adapter.loadContext();
 

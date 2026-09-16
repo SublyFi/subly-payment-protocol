@@ -1,5 +1,14 @@
 # Subly Spending Mandate Design — 委任署名・閾値承認・Kill Switch
 
+> **実装更新（2026-09-16）:** 複数のUSDC Kamino Vaultを選択可能。
+> 現行の契約キーは `(wallet, vault)` で、Postgresは
+> `vault_spending_mandates` に保存する。旧 `spending_mandates` は起動時に
+> 対応Vaultへコピーして保持し、以後は更新しない。承認の再利用・決定は
+> 現在の契約hashに限定し、別Vault・置き換え前の契約の承認は流用できない。
+> 残高・支出上限・解除はVaultごと、MCPの支払い重複防止はVault選択をまたいで共有。
+> 導入と移行は [operator guide](../deploy/README.md#advanced-your-own-kamino-vault) を参照。
+
+
 作成: 2026-07-04 JST / Status: **Phase 1 実装済み** (server core、2026-07-04。
 実装ノートは末尾「Implementation Notes — Phase 1」参照)。Phase 2 (web
 setup/approve ページ + passkey) は未実装。

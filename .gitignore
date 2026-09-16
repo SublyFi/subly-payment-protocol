@@ -13,3 +13,9 @@ coverage/
 demo/env/mcp-pending-payments.json
 packages/pay/dist/
 packages/pay/*.tgz
+
+# Host-only deployment configuration and keys (examples remain public).
+deploy/relayer.production.env
+deploy/secrets/
+deploy/Caddyfile
+deploy/vaults.json

@@ -11,3 +11,9 @@ docs
 demo/env/keys
 demo/env/*.env
 demo/env/mcp-pending-payments.json
+
+.env
+deploy/relayer.production.env
+deploy/secrets
+deploy/Caddyfile
+deploy/vaults.json

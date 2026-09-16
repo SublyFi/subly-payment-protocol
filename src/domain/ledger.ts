@@ -1,3 +1,4 @@
+import { SUBLY_VAULT } from "../config/constants.js";
 import type {
   DepositIntent,
   PaymentIntent,
@@ -38,7 +39,8 @@ export interface Ledger {
   ): Awaitable<PaymentIntent[]>;
   listPaymentsByStatus(
     statuses: PaymentStatus[],
-    limit?: number
+    limit?: number,
+    vault?: string
   ): Awaitable<PaymentIntent[]>;
   findPaymentBySellerRequest(
     seller: string,
@@ -71,7 +73,8 @@ export interface Ledger {
     vault: string,
     limit?: number
   ): Awaitable<SyncEvent[]>;
-  getSpendingMandate(wallet: string): Awaitable<SpendingMandateRecord | null>;
+  getSpendingMandate(wallet: string, vault?: string): Awaitable<SpendingMandateRecord | null>;
+  getSpendingMandateByHash(wallet: string, hash: string): Awaitable<SpendingMandateRecord | null>;
   saveSpendingMandate(
     record: SpendingMandateRecord
   ): Awaitable<SpendingMandateRecord>;
@@ -173,10 +176,10 @@ export class InMemoryLedger implements Ledger {
       .map((intent) => clonePayment(intent)!);
   }
 
-  listPaymentsByStatus(statuses: PaymentStatus[], limit = 100): PaymentIntent[] {
+  listPaymentsByStatus(statuses: PaymentStatus[], limit = 100, vault?: string): PaymentIntent[] {
     const statusSet = new Set(statuses);
     return [...this.payments.values()]
-      .filter((intent) => statusSet.has(intent.status))
+      .filter((intent) => statusSet.has(intent.status) && (vault === undefined || intent.vault === vault))
       .slice(0, limit)
       .map((intent) => clonePayment(intent)!);
   }
@@ -271,13 +274,18 @@ export class InMemoryLedger implements Ledger {
       .map((event) => ({ ...event }));
   }
 
-  async getSpendingMandate(wallet: string): Promise<SpendingMandateRecord | null> {
-    const record = this.spendingMandates.get(wallet) ?? null;
+  async getSpendingMandate(wallet: string, vault: string = SUBLY_VAULT.address): Promise<SpendingMandateRecord | null> {
+    const record = this.spendingMandates.get(positionKey(wallet, vault)) ?? null;
     return record === null ? null : structuredClone(record);
   }
 
+  async getSpendingMandateByHash(wallet: string, hash: string): Promise<SpendingMandateRecord | null> {
+    const record = [...this.spendingMandates.values()].find((r) => r.wallet === wallet && r.mandateHash === hash);
+    return record ? this.getSpendingMandate(wallet, record.vault) : null;
+  }
+
   saveSpendingMandate(record: SpendingMandateRecord): SpendingMandateRecord {
-    this.spendingMandates.set(record.wallet, structuredClone(record));
+    this.spendingMandates.set(positionKey(record.wallet, record.vault), structuredClone(record));
     return structuredClone(record);
   }
 

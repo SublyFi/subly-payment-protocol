@@ -1,3 +1,4 @@
+import { SUBLY_VAULT } from "../config/constants.js";
 import { randomUUID } from "node:crypto";
 import { canonicalJson } from "../lib/canonical-json.js";
 import { rawUnitsToString } from "../lib/raw-units.js";
@@ -150,7 +151,7 @@ export class SpendingMandateService {
 
     return this.ledger.withSpendingMandateLock(input.wallet, async () =>
       this.ledger.withWalletVaultLock(input.wallet, input.vault, async () => {
-        const existing = await this.ledger.getSpendingMandate(input.wallet);
+        const existing = await this.ledger.getSpendingMandate(input.wallet, input.vault);
         const isFirstRegistration = existing === null;
 
         if (existing !== null) {
@@ -238,7 +239,7 @@ export class SpendingMandateService {
   }
 
   async getMandate(wallet: string, vault: string) {
-    const record = await this.ledger.getSpendingMandate(wallet);
+    const record = await this.ledger.getSpendingMandate(wallet, vault);
     if (record === null) {
       throw notFound("mandate_not_found", "No spending mandate is registered for this wallet");
     }
@@ -301,7 +302,7 @@ export class SpendingMandateService {
       await this.recordEvent(input.wallet, "revoked", record.mandateHash, revoked.revokeJson);
 
       return { wallet: input.wallet, mandateHash: record.mandateHash, status: "revoked" };
-    });
+    }, input.mandateHash);
   }
 
   /**
@@ -309,7 +310,7 @@ export class SpendingMandateService {
    * revoke that only takes effect after a 72h grace window, during which the
    * real owner can veto it. Exposed in mandate reads so the owner can see it.
    */
-  async scheduleRecoveryRevoke(wallet: string) {
+  async scheduleRecoveryRevoke(wallet: string, vault: string = SUBLY_VAULT.address) {
     return this.withCurrentMandateMutationLock(wallet, async (record) => {
       const nowMs = this.now();
       if (record.status === "revoked") {
@@ -349,7 +350,7 @@ export class SpendingMandateService {
         status: updated.status,
         recoveryAtMs
       };
-    });
+    }, undefined, vault);
   }
 
   async cancelRecoveryRevoke(input: {
@@ -402,7 +403,7 @@ export class SpendingMandateService {
       });
 
       return { wallet: input.wallet, mandateHash: record.mandateHash, status: "active" };
-    });
+    }, input.mandateHash);
   }
 
   // -------------------------------------------------------------- approvals
@@ -417,7 +418,7 @@ export class SpendingMandateService {
     if (located === null) {
       throw notFound("approval_not_found", "Approval does not exist");
     }
-    const lockVault = (await this.requireMandate(located.wallet)).vault;
+    const lockVault = (await this.requireMandateByHash(located.wallet, located.mandateHash)).vault;
 
     // Same wallet-vault lock as prepareWithdrawal: decisions must not
     // interleave with the prepare-side approval reads and expiry writes.
@@ -425,7 +426,7 @@ export class SpendingMandateService {
       const nowMs = this.now();
       // Re-read under the lock: a concurrent replace/revoke may have changed
       // the owner credential the decision must verify against.
-      const record = await this.requireMandate(located.wallet);
+      const record = await this.requireMandateByHash(located.wallet, located.mandateHash);
       const approval = await this.ledger.getSpendingApproval(input.approvalId);
       if (approval === null) {
         throw notFound("approval_not_found", "Approval does not exist");
@@ -479,13 +480,15 @@ export class SpendingMandateService {
     });
   }
 
-  async listApprovals(wallet: string, status?: string) {
+  async listApprovals(wallet: string, status?: string, vault?: string) {
     const nowMs = this.now();
     const approvals = await this.ledger.listSpendingApprovalsForWallet(wallet);
     // Read-only expiry view: GETs never write. Persistent expiry happens on
     // the state-transition paths (decideApproval / requirePaymentApproval),
     // which run under the wallet-vault lock.
+    const selected = vault === undefined ? null : await this.ledger.getSpendingMandate(wallet, vault);
     return approvals
+      .filter((approval) => vault === undefined || approval.mandateHash === selected?.mandateHash)
       .map((approval) => expiredView(approval, nowMs))
       .filter((approval) => status === undefined || approval.status === status)
       .map(serializeApproval);
@@ -643,7 +646,7 @@ export class SpendingMandateService {
     // A live/revoked mandate can only be replaced by its CURRENT owner
     // credential; the page uses this to explain (and disable the passkey
     // path) BEFORE the human signs anything that would be refused.
-    const existing = await this.ledger.getSpendingMandate(session.wallet);
+    const existing = await this.ledger.getSpendingMandate(session.wallet, session.vault);
     return {
       sessionId: session.sessionId,
       status: "pending" as const,
@@ -740,11 +743,12 @@ export class SpendingMandateService {
     if (approval === null) {
       throw notFound("approval_not_found", "Approval does not exist");
     }
-    const record = await this.ledger.getSpendingMandate(approval.wallet);
+    const record = await this.ledger.getSpendingMandateByHash(approval.wallet, approval.mandateHash);
     const viewed = expiredView(approval, this.now());
     return {
       approvalId: viewed.approvalId,
       wallet: viewed.wallet,
+      vault: record?.vault ?? null,
       binding: viewed.bindingJson,
       bindingHash: viewed.bindingHash,
       mandateHash: viewed.mandateHash,
@@ -766,10 +770,11 @@ export class SpendingMandateService {
    * Public summary for the revoke (kill switch) page: just enough to build
    * and sign the revoke message. No policy contents are exposed.
    */
-  async getMandateSummary(wallet: string) {
-    const record = await this.requireMandate(wallet);
+  async getMandateSummary(wallet: string, vault: string = SUBLY_VAULT.address) {
+    const record = await this.requireMandate(wallet, vault);
     return {
       wallet: record.wallet,
+      vault: record.vault,
       mandateHash: record.mandateHash,
       status: this.effectiveStatus(record, this.now()),
       ownerAuth: record.ownerAuth,
@@ -803,7 +808,7 @@ export class SpendingMandateService {
     }
 
     const nowMs = this.now();
-    const effective = await this.resolvePolicy(input.wallet, nowMs);
+    const effective = await this.resolvePolicy(input.wallet, nowMs, input.vault);
 
     // 1. Kill switch: enforced even in "warn" mode. Warn exists so legacy
     //    binding-less clients keep working during rollout; a revocation only
@@ -979,7 +984,7 @@ export class SpendingMandateService {
     }
 
     const nowMs = this.now();
-    const effective = await this.resolvePolicy(input.wallet, nowMs);
+    const effective = await this.resolvePolicy(input.wallet, nowMs, input.vault);
     // Kill switch — enforced even in "warn" (see authorizeRealize).
     if (effective.revoked) {
       throw conflict(
@@ -1090,7 +1095,7 @@ export class SpendingMandateService {
     }
 
     const nowMs = this.now();
-    const effective = await this.resolvePolicy(input.wallet, nowMs);
+    const effective = await this.resolvePolicy(input.wallet, nowMs, input.vault);
     // Kill switch — enforced even in "warn" (see authorizeRealize).
     if (effective.revoked) {
       throw conflict(
@@ -1240,6 +1245,7 @@ export class SpendingMandateService {
         const current = await this.expireIfStale(provided, input.nowMs);
         if (
           current.status === "approved" &&
+          current.mandateHash === input.mandateHash &&
           current.bindingHash === bindingHash &&
           !(await this.approvalInFlight(
             current.approvalId,
@@ -1254,7 +1260,7 @@ export class SpendingMandateService {
       }
     }
 
-    const pending = await this.findReusablePending(input.wallet, bindingHash, input.nowMs);
+    const pending = await this.findReusablePending(input.wallet, input.mandateHash, bindingHash, input.nowMs);
     if (pending === null) {
       const outstanding = (await this.ledger.listSpendingApprovalsForWallet(
         input.wallet
@@ -1360,6 +1366,7 @@ export class SpendingMandateService {
 
   private async findReusablePending(
     wallet: string,
+    mandateHash: string,
     bindingHash: string,
     nowMs: number
   ): Promise<SpendingApproval | null> {
@@ -1367,6 +1374,7 @@ export class SpendingMandateService {
     for (const approval of approvals) {
       if (
         approval.bindingHash === bindingHash &&
+        approval.mandateHash === mandateHash &&
         approval.status === "pending" &&
         approval.expiresAtMs > nowMs
       ) {
@@ -1413,9 +1421,10 @@ export class SpendingMandateService {
 
   private async resolvePolicy(
     wallet: string,
-    nowMs: number
+    nowMs: number,
+    vault: string
   ): Promise<EffectivePolicy> {
-    const record = await this.ledger.getSpendingMandate(wallet);
+    const record = await this.ledger.getSpendingMandate(wallet, vault);
     if (record === null) {
       return {
         policy: DEFAULT_RELAYER_POLICY,
@@ -1575,8 +1584,14 @@ export class SpendingMandateService {
     }
   }
 
-  private async requireMandate(wallet: string): Promise<SpendingMandateRecord> {
-    const record = await this.ledger.getSpendingMandate(wallet);
+  private async requireMandateByHash(wallet: string, hash: string): Promise<SpendingMandateRecord> {
+    const record = await this.ledger.getSpendingMandateByHash(wallet, hash);
+    if (record === null) throw notFound("mandate_not_found", "No current mandate matches this approval or action");
+    return record;
+  }
+
+  private async requireMandate(wallet: string, vault: string = SUBLY_VAULT.address): Promise<SpendingMandateRecord> {
+    const record = await this.ledger.getSpendingMandate(wallet, vault);
     if (record === null) {
       throw notFound(
         "mandate_not_found",
@@ -1594,10 +1609,14 @@ export class SpendingMandateService {
    */
   private async withCurrentMandateMutationLock<T>(
     wallet: string,
-    callback: (record: SpendingMandateRecord) => Promise<T>
+    callback: (record: SpendingMandateRecord) => Promise<T>,
+    mandateHash?: string,
+    vault: string = SUBLY_VAULT.address
   ): Promise<T> {
     return this.ledger.withSpendingMandateLock(wallet, async () => {
-      const record = await this.requireMandate(wallet);
+      const record = mandateHash === undefined
+        ? await this.requireMandate(wallet, vault)
+        : await this.requireMandateByHash(wallet, mandateHash);
       return this.ledger.withWalletVaultLock(wallet, record.vault, () =>
         callback(record)
       );

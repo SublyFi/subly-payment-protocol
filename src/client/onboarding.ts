@@ -1,3 +1,4 @@
+import { SUBLY_VAULT } from "../config/constants.js";
 /**
  * Self-serve wallet onboarding: registers (and activates) the agent wallet
  * at the Subly relayer and syncs its position from chain. Requests are
@@ -25,6 +26,7 @@ export async function ensureWalletOnboarded(params: {
   /** Subly relayer API base URL; `SUBLY_FACILITATOR_URL` remains a legacy env fallback. */
   relayerBaseUrl: string;
   signer: AgentWalletSigner;
+  vault?: string;
   fetchImpl?: typeof fetch;
 }): Promise<void> {
   const fetchImpl = params.fetchImpl ?? fetch;
@@ -66,13 +68,15 @@ export async function ensureWalletOnboarded(params: {
   };
 
   const wallet = params.signer.walletAddress;
+  const vault = params.vault ?? params.signer.vault?.address ?? SUBLY_VAULT.address;
   await post("register", "/v1/wallets/agent", {
     wallet,
+    vault,
     signingPolicyId: SELF_SERVE_POLICY_ID,
     signingMode: "non_interactive",
     signerValidationMode: params.signer.validationMode,
     signerProvider: params.signer.provider ?? "local-keypair",
     activateForPayments: true
   });
-  await post("sync", `/v1/wallets/${wallet}/sync`, { source: "chain" });
+  await post("sync", `/v1/wallets/${wallet}/sync`, { source: "chain", vault });
 }

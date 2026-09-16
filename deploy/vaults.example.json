@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "defaultVault": "HDsayqAsDWy3QvANGqh2yNraqcD8Fnjgh73Mhb3WRS5E",
+  "vaults": [
+    {
+      "address": "HJFEPRRRLBfJBfSJaC69r3nMYskViL9Yy1QLLAqjvnW",
+      "programId": "KvauGMspG5k6rtzrqqn7WNn3oZdyKqLKwK2XWQ8FLjd",
+      "usdcMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "shareMint": "BVPfgxUyzw8xYSq9ZvuKnRpr3Czoixnz5pCK5Xj69WEh",
+      "farm": "22h29DGXBfPFMUt9VFtVJT74VJVTHomEB6dJQK6ahM4s",
+      "name": "Plume x Re7 USDC",
+      "depositsEnabled": true
+    },
+    {
+      "address": "67dqmR76uAbjX6e81A1ganKv3ou31WUMEdeWJkwVfeXy",
+      "programId": "KvauGMspG5k6rtzrqqn7WNn3oZdyKqLKwK2XWQ8FLjd",
+      "usdcMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "shareMint": "8AdtvdRN5s5CGrZEFx9E3ncrnjaUNo5K26uqv83NsGxr",
+      "farm": "8a3R6RsnjsbW2C1yEsUJQNoduqhi81AyuhMUD5A6wcgr",
+      "name": "Neutral Trade USDC Max Yield",
+      "depositsEnabled": true
+    },
+    {
+      "address": "7p5PczFqftBcyfgWkozHiVEQEtK9yeDXbXwQFkxenh7C",
+      "programId": "KvauGMspG5k6rtzrqqn7WNn3oZdyKqLKwK2XWQ8FLjd",
+      "usdcMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "shareMint": "8kcHF7dwRixGSLqyRskX41CFvu8TC1oSTZ5sCXrGR7RB",
+      "farm": "BfiNgJGubheaGpafAmBPcHjPAM3b54VfHtkUYMNgPhrB",
+      "name": "Hyperithm USDC Apex",
+      "depositsEnabled": true
+    },
+    {
+      "address": "9E69U4GzWhryRaPe8DYpco6Z9vTZY6gg8w6W2QsBACEj",
+      "programId": "KvauGMspG5k6rtzrqqn7WNn3oZdyKqLKwK2XWQ8FLjd",
+      "usdcMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "shareMint": "9YHNzyKwsdZ54GirTp6wSMweL9twT6sxF9RJPeE6aXem",
+      "farm": "6XmZCys8MMyMZuUGcMJGSDjXRfTxHNkK6xHNn9RmwJK8",
+      "name": "USDC Prime",
+      "depositsEnabled": true
+    },
+    {
+      "address": "A1USdzqDHmw5oz97AkqAGLxEQZfFjASZFuy4T6Qdvnpo",
+      "programId": "KvauGMspG5k6rtzrqqn7WNn3oZdyKqLKwK2XWQ8FLjd",
+      "usdcMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "shareMint": "BDh5h1uqhdL3pdCcTB1AEc2dyRsorDx9fF8Y72H1XZu8",
+      "farm": "CFeJb2yzZJBuqLyZuXMfv1CRUpif7E8HgfwXqHD7Ubea",
+      "name": "Allez USDC",
+      "depositsEnabled": true
+    },
+    {
+      "address": "A3hTCWdnfV6uiQLxRmnv17EpiEtmc93v1AGQnWy44Mup",
+      "programId": "KvauGMspG5k6rtzrqqn7WNn3oZdyKqLKwK2XWQ8FLjd",
+      "usdcMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "shareMint": "EzqBwrAebfhRNZw6nxFK4vaEhKCSeQPL36FZeUB9PsJA",
+      "farm": "4Vaj46fS3gqqf4d3dVtatAdbMEvaaCYWhYGKmkCBvtHf",
+      "name": "Elemental USDC Turbo",
+      "depositsEnabled": true
+    },
+    {
+      "address": "BEEfo7xwgK2ZP13Pxo7qqTPzAteKJmXjVWtMWcXSvbn2",
+      "programId": "KvauGMspG5k6rtzrqqn7WNn3oZdyKqLKwK2XWQ8FLjd",
+      "usdcMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "shareMint": "FU2tGk7tFHEhZiZ516TKgpPqPwXYXHTeRHqvuDwa56UV",
+      "farm": "AfHyEfJxNsFoqzcaczHhyxz6Hbmpjh7Qpk71SLD753Ny",
+      "name": "Steakhouse High Yield USDC",
+      "depositsEnabled": true
+    },
+    {
+      "address": "DWSXb18xZApz29vnQpgR2m6MynCT7PznaXt7Ut7M7KaP",
+      "programId": "KvauGMspG5k6rtzrqqn7WNn3oZdyKqLKwK2XWQ8FLjd",
+      "usdcMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "shareMint": "DgHN3q3dSYAchNX7V3D4aYiTWMx8RHTgHbfPiwiqBkE9",
+      "farm": "ArwyAHmnFmbKbUxC2fnK5VUEpspHrnoFtJ22bvEyriKk",
+      "name": "RWA USDC",
+      "depositsEnabled": true
+    },
+    {
+      "address": "EPC2N3AAv84P9TKsnDt2x41p6T7c5vTewBhQbh4RVx4r",
+      "programId": "KvauGMspG5k6rtzrqqn7WNn3oZdyKqLKwK2XWQ8FLjd",
+      "usdcMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "shareMint": "22BPAEBqi9gdwoxoV787P5MGVCaRvafmy8nVPnhVSkjK",
+      "farm": "2jD71qq6QDjLY7oKBUm8Px162nU19fGZHiAfVkdiLtbn",
+      "name": "MEV Capital USDC",
+      "depositsEnabled": true
+    },
+    {
+      "address": "GFiW6edsrtHZd4Vnz2qTSurVasRrgKrXE1ouHNtCVsft",
+      "programId": "KvauGMspG5k6rtzrqqn7WNn3oZdyKqLKwK2XWQ8FLjd",
+      "usdcMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "shareMint": "7oPz5dFNUgVtWNChqJW4ud8fhECVq5m75BN1t4WMLpxA",
+      "farm": "88gDWD6B8F4xESmrSXS7hgxn83J77Gip3VuQoCKiB6Lv",
+      "name": "Gauntlet Frontier",
+      "depositsEnabled": true
+    },
+    {
+      "address": "HDsayqAsDWy3QvANGqh2yNraqcD8Fnjgh73Mhb3WRS5E",
+      "programId": "KvauGMspG5k6rtzrqqn7WNn3oZdyKqLKwK2XWQ8FLjd",
+      "usdcMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "shareMint": "7D8C5pDFxug58L9zkwK7bCiDg4kD4AygzbcZUmf5usHS",
+      "farm": "9FVjHqduhDPMVqvu3cXiEBjU6nvxvGdCCLRwd9WpVRZj",
+      "name": "Steakhouse USDC",
+      "depositsEnabled": true
+    }
+  ]
+}

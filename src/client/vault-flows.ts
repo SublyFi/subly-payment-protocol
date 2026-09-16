@@ -1,3 +1,5 @@
+import { SUBLY_VAULT } from "../config/constants.js";
+import type { VaultConfig } from "../config/vault.js";
 import type { SolanaRpc } from "../solana/rpc.js";
 import type { AgentWalletSigner } from "./agent-wallet-signer.js";
 import { fetchLookupTablesForTransaction } from "./lookup-tables.js";
@@ -33,6 +35,7 @@ export interface VaultFlowClientConfig {
   /** Subly relayer API base URL; `SUBLY_FACILITATOR_URL` remains a legacy env fallback. */
   relayerBaseUrl: string;
   signer: AgentWalletSigner;
+  vault?: Readonly<VaultConfig>;
   /** Used only to resolve lookup tables for structured-intent validation. */
   rpc: SolanaRpc;
   fetchImpl?: typeof fetch;
@@ -64,6 +67,7 @@ export interface VaultWithdrawalOutcome {
 
 export interface VaultBudgetView {
   wallet: string;
+  vault?: string;
   principalBasisRawUsdc: string;
   positionValueRawUsdc: string;
   grossYieldRawUsdc: string;
@@ -119,6 +123,7 @@ interface PreparedWithdrawal {
 }
 
 export class VaultFlowClient {
+  readonly vault: Readonly<VaultConfig>;
   private readonly baseUrl: string;
   private readonly signer: AgentWalletSigner;
   private readonly fetchImpl: typeof fetch;
@@ -129,6 +134,10 @@ export class VaultFlowClient {
   private readonly pollIntervalMs: number;
 
   constructor(config: VaultFlowClientConfig) {
+    this.vault = config.vault ?? config.signer.vault ?? SUBLY_VAULT;
+    if (config.signer.vault && config.signer.vault.address !== this.vault.address) {
+      throw new Error("Vault flow client and signer must select the same vault");
+    }
     this.baseUrl = config.relayerBaseUrl.replace(/\/$/, "");
     this.signer = config.signer;
     this.fetchImpl = config.fetchImpl ?? fetch;
@@ -157,6 +166,7 @@ export class VaultFlowClient {
     try {
       prepared = (await this.postJson("prepare", "/v1/deposits/prepare", {
         wallet: this.signer.walletAddress,
+        vault: this.vault.address,
         amountRawUsdc: input.amountRawUsdc.toString(),
         ...(approvalId === undefined ? {} : { approvalId })
       })) as PreparedDeposit;
@@ -174,6 +184,7 @@ export class VaultFlowClient {
       }
       prepared = (await this.postJson("prepare", "/v1/deposits/prepare", {
         wallet: this.signer.walletAddress,
+        vault: this.vault.address,
         amountRawUsdc: input.amountRawUsdc.toString(),
         approvalId
       })) as PreparedDeposit;
@@ -236,6 +247,7 @@ export class VaultFlowClient {
       "/v1/withdrawals/prepare",
       {
         wallet: this.signer.walletAddress,
+        vault: this.vault.address,
         amountRawUsdc: input.amountRawUsdc.toString(),
         ...(input.purpose === undefined ? {} : { purpose: input.purpose }),
         ...(input.payment === undefined ? {} : { payment: input.payment }),
@@ -286,14 +298,14 @@ export class VaultFlowClient {
         await this.postJson(
           "sync",
           `/v1/wallets/${this.signer.walletAddress}/sync`,
-          { source: "chain" }
+          { source: "chain", vault: this.vault.address }
         );
       } catch {
         // Fall back to the last-synced ledger view.
       }
     }
 
-    const url = `${this.baseUrl}/v1/wallets/${this.signer.walletAddress}/budget`;
+    const url = `${this.baseUrl}/v1/wallets/${this.signer.walletAddress}/budget?vault=${this.vault.address}`;
     const response = await this.fetchImpl(url, {
       headers: await walletAuthHeaders({
         signer: this.signer,
@@ -319,15 +331,19 @@ export class VaultFlowClient {
       );
     }
     const body = parsed as {
-      position?: { principalBasisRawUsdc?: string };
+      position?: { vault?: string; principalBasisRawUsdc?: string };
       budget?: {
         positionValueRawUsdc?: string;
         grossYieldRawUsdc?: string;
         spendableYieldRawUsdc?: string;
       };
     };
+    if (body.position?.vault !== undefined && body.position.vault !== this.vault.address) {
+      throw new VaultFlowClientError("budget", "Relayer returned the budget for a different vault");
+    }
     return {
       wallet: this.signer.walletAddress,
+      vault: this.vault.address,
       principalBasisRawUsdc: body.position?.principalBasisRawUsdc ?? "0",
       positionValueRawUsdc: body.budget?.positionValueRawUsdc ?? "0",
       grossYieldRawUsdc: body.budget?.grossYieldRawUsdc ?? "0",
@@ -351,7 +367,7 @@ export class VaultFlowClient {
   async listApprovals(status?: string): Promise<ApprovalView[]> {
     const body = (await this.getJson(
       `/v1/wallets/${this.signer.walletAddress}/approvals${
-        status === undefined ? "" : `?status=${encodeURIComponent(status)}`
+        `?vault=${this.vault.address}${status === undefined ? "" : `&status=${encodeURIComponent(status)}`}`
       }`
     )) as { approvals?: ApprovalView[] };
     return body.approvals ?? [];
@@ -367,10 +383,11 @@ export class VaultFlowClient {
     mandateTtlDays?: number;
     initialDepositRawUsdc?: string;
   }): Promise<SetupSessionCreated> {
-    return (await this.postJson(
+    const session = (await this.postJson(
       "prepare",
       `/v1/wallets/${this.signer.walletAddress}/setup-sessions`,
       {
+        vault: this.vault.address,
         ...(input.policy === undefined ? {} : { policy: input.policy }),
         ...(input.enforcementMode === undefined
           ? {}
@@ -383,6 +400,10 @@ export class VaultFlowClient {
           : { initialDepositRawUsdc: input.initialDepositRawUsdc })
       }
     )) as SetupSessionCreated;
+    if (session.vault !== this.vault.address || session.wallet !== this.signer.walletAddress) {
+      throw new VaultFlowClientError("prepare", "Relayer returned a setup session for a different wallet or vault");
+    }
+    return session;
   }
 
   /** Polls a setup session (public capability URL — no auth needed). */

@@ -1,3 +1,4 @@
+import { SUBLY_VAULT } from "../config/constants.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { Pool, type PoolClient, type PoolConfig } from "pg";
 import type { Ledger } from "./ledger.js";
@@ -136,15 +137,16 @@ export class PostgresLedger implements Ledger {
 
   async listPaymentsByStatus(
     statuses: PaymentStatus[],
-    limit = 100
+    limit = 100,
+    vault?: string
   ): Promise<PaymentIntent[]> {
     await this.ensureSchema();
     const result = await this.query(
       `select data from payment_intents
-       where status = any($1::text[])
+       where status = any($1::text[]) and ($3::text is null or vault = $3)
        order by updated_at asc
        limit $2`,
-      [statuses, limit]
+      [statuses, limit, vault ?? null]
     );
 
     return result.rows.map((row) => hydratePaymentIntent(row.data));
@@ -379,12 +381,13 @@ export class PostgresLedger implements Ledger {
   }
 
   async getSpendingMandate(
-    wallet: string
+    wallet: string,
+    vault: string = SUBLY_VAULT.address
   ): Promise<SpendingMandateRecord | null> {
     await this.ensureSchema();
     const result = await this.query(
-      "select data from spending_mandates where wallet = $1",
-      [wallet]
+      "select data from vault_spending_mandates where wallet = $1 and vault = $2",
+      [wallet, vault]
     );
 
     return result.rows[0]?.data === undefined
@@ -392,21 +395,30 @@ export class PostgresLedger implements Ledger {
       : (result.rows[0].data as SpendingMandateRecord);
   }
 
+  async getSpendingMandateByHash(wallet: string, hash: string): Promise<SpendingMandateRecord | null> {
+    await this.ensureSchema();
+    const result = await this.query(
+      "select data from vault_spending_mandates where wallet = $1 and mandate_hash = $2",
+      [wallet, hash]
+    );
+    return result.rows[0]?.data ?? null;
+  }
+
   async saveSpendingMandate(
     record: SpendingMandateRecord
   ): Promise<SpendingMandateRecord> {
     await this.ensureSchema();
     const saved = await this.query(
-      `insert into spending_mandates (wallet, status, mandate_hash, data, updated_at)
-       values ($1, $2, $3, $4::jsonb, now())
-       on conflict (wallet)
+      `insert into vault_spending_mandates (wallet, vault, status, mandate_hash, data, updated_at)
+       values ($1, $2, $3, $4, $5::jsonb, now())
+       on conflict (wallet, vault)
        do update set
          status = excluded.status,
          mandate_hash = excluded.mandate_hash,
          data = excluded.data,
          updated_at = now()
        returning data`,
-      [record.wallet, record.status, record.mandateHash, JSON.stringify(record)]
+      [record.wallet, record.vault, record.status, record.mandateHash, JSON.stringify(record)]
     );
 
     return saved.rows[0].data as SpendingMandateRecord;
@@ -669,6 +681,23 @@ create table if not exists spending_mandates (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+-- Additive migration: preserve the legacy table and copy each existing mandate
+-- into its signed vault. Subsequent writes use the compound wallet/vault key.
+create table if not exists vault_spending_mandates (
+  wallet text not null,
+  vault text not null,
+  status text not null,
+  mandate_hash text not null,
+  data jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (wallet, vault)
+);
+insert into vault_spending_mandates (wallet, vault, status, mandate_hash, data, created_at, updated_at)
+  select wallet, data->>'vault', status, mandate_hash, data, created_at, updated_at
+  from spending_mandates
+  on conflict (wallet, vault) do nothing;
 
 create table if not exists spending_mandate_events (
   event_id text primary key,

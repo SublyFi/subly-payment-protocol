@@ -44,6 +44,7 @@ export interface RealizePaymentBinding {
 
 /** Ensures the agent USDC ATA can cover a payment, realizing yield as needed. */
 export interface YieldRealizer {
+  readonly vault?: string;
   ensureUsdcAvailable(input: {
     amountRawUsdc: bigint;
     payment?: RealizePaymentBinding;
@@ -139,6 +140,7 @@ export interface StandardX402PayerConfig {
 }
 
 export interface StandardPayResult {
+  fundingVault?: string;
   paid: boolean;
   status: number;
   body: string;
@@ -200,7 +202,7 @@ export class StandardX402Payer {
     }
   }
 
-  pay(input: StandardPayInput): Promise<StandardPayResult> {
+  pay(input: StandardPayInput, realizer: YieldRealizer = this.realizer): Promise<StandardPayResult> {
     const method = (input.method ?? "GET").toUpperCase();
     const requestBodyHash = requestBodyHashFor(input.body ?? null);
     const pendingKey = pendingPaymentKey({
@@ -217,7 +219,7 @@ export class StandardX402Payer {
       method,
       requestBodyHash,
       pendingKey
-    }).finally(() => {
+    }, realizer).finally(() => {
       this.inFlight.delete(pendingKey);
     });
     this.inFlight.set(pendingKey, flow);
@@ -226,7 +228,8 @@ export class StandardX402Payer {
 
   private async run(
     input: StandardPayInput,
-    computed: { method: string; requestBodyHash: string; pendingKey: string }
+    computed: { method: string; requestBodyHash: string; pendingKey: string },
+    realizer: YieldRealizer
   ): Promise<StandardPayResult> {
     const { method, requestBodyHash, pendingKey } = computed;
     const existingPending = this.pending.get(pendingKey);
@@ -281,7 +284,7 @@ export class StandardX402Payer {
       withdrawalId?: string | null;
     };
     try {
-      realized = await this.realizer.ensureUsdcAvailable({
+      realized = await realizer.ensureUsdcAvailable({
         amountRawUsdc: selected.amountRawUsdc,
         payment: {
           payTo: selected.payTo,
@@ -378,10 +381,10 @@ export class StandardX402Payer {
     if (
       paymentTxSignature !== null &&
       typeof realized.withdrawalId === "string" &&
-      this.realizer.reportPayment !== undefined
+      realizer.reportPayment !== undefined
     ) {
       try {
-        await this.realizer.reportPayment({
+        await realizer.reportPayment({
           withdrawalId: realized.withdrawalId,
           paymentTxSignature
         });
@@ -396,6 +399,7 @@ export class StandardX402Payer {
 
     return {
       paid: true,
+      ...(realizer.vault === undefined ? {} : { fundingVault: realizer.vault }),
       status: response.status,
       body: bodyText,
       payment: {

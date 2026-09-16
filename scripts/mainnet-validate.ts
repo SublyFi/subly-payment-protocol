@@ -32,13 +32,11 @@ async function main() {
   const adapter = new KaminoVaultAdapter({
     rpc,
     vaultAddress: SUBLY_VAULT.address,
-    ...(process.env.SUBLY_EXTRA_LOOKUP_TABLES === undefined
-      ? {}
-      : {
-          extraLookupTables: process.env.SUBLY_EXTRA_LOOKUP_TABLES.split(",")
-            .map((value) => value.trim())
-            .filter((value) => value.length > 0)
-        })
+    vaultConfig: SUBLY_VAULT,
+    extraLookupTables: [
+      ...(SUBLY_VAULT.extraLookupTables ?? []),
+      ...(process.env.SUBLY_EXTRA_LOOKUP_TABLES ?? "").split(",").map((s) => s.trim()).filter(Boolean)
+    ]
   });
 
   console.log("=== 1. Vault context ===");

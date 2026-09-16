@@ -1,3 +1,4 @@
+import type { VaultConfig } from "../config/vault.js";
 /**
  * Env-driven agent signer selection for the CLI/MCP entry points. One switch
  * picks where the agent wallet key lives:
@@ -111,4 +112,15 @@ export async function agentWalletSignerFromEnv(
   throw new Error(
     `unknown SUBLY_SIGNER_PROVIDER "${provider}" (expected local, circle, or privy)`
   );
+}
+
+/** Reuse the wallet backend while pinning one selected vault per signer instance. */
+export async function signerBundleForVault(
+  bundle: AgentSignerBundle,
+  vault: Readonly<VaultConfig>
+): Promise<AgentSignerBundle> {
+  const signer = bundle.provider === "local"
+    ? new LocalKeypairAgentWalletSigner(await createKeyPairSignerFromBytes(bundle.localSecretKey), { vault })
+    : new RemoteAgentWalletSigner(bundle.transport, { vault });
+  return { ...bundle, signer };
 }

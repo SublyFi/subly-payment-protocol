@@ -1,0 +1,8 @@
+# Optional multi-vault configuration. Review/create deploy/vaults.json first.
+# docker compose -f docker-compose.yml -f docker-compose.vaults.yml up -d --build
+services:
+  relayer:
+    environment:
+      SUBLY_VAULTS_FILE: /run/subly/vaults.json
+    volumes:
+      - ./vaults.json:/run/subly/vaults.json:ro

@@ -126,10 +126,9 @@ describe("API server auth", () => {
       }
     });
 
-    // Auth passes; the request fails later because no vault flow service is
-    // wired in this test (501), not with a 401.
-    expect(response.statusCode).toBe(501);
-    expect(response.json().error.code).toBe("vault_flows_unavailable");
+    // Auth passes; the unknown intent returns 404 instead of 401.
+    expect(response.statusCode).toBe(404);
+    expect(response.json().error.code).toBe("deposit_not_found");
     await server.close();
   });
 

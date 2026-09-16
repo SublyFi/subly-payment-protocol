@@ -1,3 +1,6 @@
+import { vaultCatalogFromEnv } from "../../../src/config/vault-catalog.js";
+import { McpVaultSelection, type McpVaultSession } from "../../../src/client/vault-selection.js";
+import { RelayerYieldRealizer } from "../../../src/client/relayer-yield-realizer.js";
 /**
  * Subly MCP server (published @subly_fi/pay build). Same tool surface as the
  * repo demo, but the x402 payment is built by the OFFICIAL x402 Foundation
@@ -15,7 +18,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { runMcpPaymentServer } from "../../../src/client/mcp-payment-server.js";
 import { createRelayerX402Payer } from "../../../src/client/relayer-payer.js";
-import { agentWalletSignerFromEnv } from "../../../src/client/signer-env.js";
+import { agentWalletSignerFromEnv, signerBundleForVault } from "../../../src/client/signer-env.js";
 import { fileStandardX402StateStore } from "../../../src/client/standard-x402-state-store.js";
 import { VaultFlowClient } from "../../../src/client/vault-flows.js";
 import { createRpc } from "../../../src/solana/rpc.js";
@@ -52,14 +55,26 @@ const payer = createRelayerX402Payer({
   stateStore: fileStandardX402StateStore(pendingStatePath)
 });
 
+const catalog = vaultCatalogFromEnv();
+const sessions: McpVaultSession[] = [];
+for (const vault of catalog.vaults) {
+  const selectedBundle = await signerBundleForVault(bundle, vault);
+  const vaultSigner = selectedBundle.signer;
+  const realizer = new RelayerYieldRealizer({ relayerBaseUrl, signer: vaultSigner, rpc });
+  sessions.push({
+    vault, signer: vaultSigner,
+    // One payer owns deduplication and pending state across ALL vault selections.
+    payer: { pay: (input) => payer.pay(input, realizer) },
+    vaultFlows: new VaultFlowClient({ relayerBaseUrl, signer: vaultSigner, rpc })
+  });
+}
+const vaultSelection = new McpVaultSelection(sessions, catalog.defaultVault);
+const selected = vaultSelection.current();
 await runMcpPaymentServer({
-  payer,
-  signer,
+  payer: selected.payer,
+  signer: selected.signer,
   relayerBaseUrl,
   defaultMaxAmountRawUsdc,
-  vaultFlows: new VaultFlowClient({
-    relayerBaseUrl,
-    signer,
-    rpc
-  })
+  vaultFlows: selected.vaultFlows,
+  vaultSelection
 });

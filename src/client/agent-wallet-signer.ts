@@ -1,3 +1,5 @@
+import type { VaultConfig } from "../config/vault.js";
+import { SUBLY_VAULT } from "../config/constants.js";
 import { signBytes, type KeyPairSigner } from "@solana/kit";
 import bs58 from "bs58";
 import nacl from "tweetnacl";
@@ -33,6 +35,7 @@ export interface SignedAgentTransaction {
  * signing; blind signing of prepared bytes is not launch-ready.
  */
 export interface AgentWalletSigner {
+  readonly vault?: Readonly<VaultConfig>;
   readonly walletAddress: string;
   /**
    * Provider slug reported to the relayer at registration (e.g.
@@ -72,11 +75,13 @@ export interface AgentWalletSigner {
  * (`sign`) and the api-message signer.
  */
 abstract class IntentValidatingAgentWalletSigner implements AgentWalletSigner {
+  readonly vault: Readonly<VaultConfig>;
   readonly validationMode = "structured_intent_transaction" as const;
   private readonly validationPolicy: IntentValidationPolicy | undefined;
 
   protected constructor(validationPolicy: IntentValidationPolicy | undefined) {
-    this.validationPolicy = validationPolicy;
+    this.vault = Object.freeze({ ...(validationPolicy?.vault ?? SUBLY_VAULT) });
+    this.validationPolicy = { ...validationPolicy, vault: this.vault };
   }
 
   abstract readonly walletAddress: string;

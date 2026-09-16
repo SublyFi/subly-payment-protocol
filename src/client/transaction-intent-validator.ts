@@ -1,3 +1,4 @@
+import type { VaultConfig } from "../config/vault.js";
 import bs58 from "bs58";
 import { getCompiledTransactionMessageDecoder } from "@solana/kit";
 import {
@@ -117,12 +118,15 @@ export interface DecodedIntentTransaction {
 }
 
 export interface IntentValidationPolicy {
+  /** Pinned by the client, independently of the relayer. */
+  vault?: Readonly<VaultConfig>;
   maxComputeUnitLimit?: number | undefined;
   maxComputeUnitPriceMicroLamports?: bigint | undefined;
   maxTemporaryAccountLamports?: bigint | undefined;
 }
 
 interface ResolvedIntentValidationPolicy {
+  vault: Readonly<VaultConfig>;
   maxComputeUnitLimit: number;
   maxComputeUnitPriceMicroLamports: bigint;
   maxTemporaryAccountLamports: bigint;
@@ -255,16 +259,16 @@ export function validatePaymentIntentTransaction(params: {
   if (intent.network !== SOLANA_MAINNET_NETWORK) {
     reject("network_mismatch", "Unsupported network");
   }
-  if (intent.vault !== SUBLY_VAULT.address) {
+  if (intent.vault !== policy.vault.address) {
     reject("vault_mismatch", "Unsupported vault");
   }
-  if (intent.shareMint !== SUBLY_VAULT.shareMint) {
+  if (intent.shareMint !== policy.vault.shareMint) {
     reject("share_mint_mismatch", "Unsupported share mint");
   }
-  if (intent.farm !== SUBLY_VAULT.farm) {
+  if (intent.farm !== policy.vault.farm) {
     reject("farm_mismatch", "Unsupported Kamino farm");
   }
-  if (intent.asset !== SUBLY_VAULT.usdcMint) {
+  if (intent.asset !== policy.vault.usdcMint) {
     reject("asset_mismatch", "Only USDC payments are supported");
   }
   if (intent.memo !== intent.paymentId) {
@@ -400,7 +404,7 @@ export function validateDepositIntentTransaction(params: {
   if (new Date(intent.expiresAt).getTime() <= now) {
     reject("expired", "Deposit intent has expired");
   }
-  assertVaultIntentTargets(intent);
+  assertVaultIntentTargets(intent, policy.vault);
 
   const decoded = decodeIntentTransaction({
     serializedTransaction: params.serializedTransaction,
@@ -484,7 +488,7 @@ export function validateWithdrawalIntentTransaction(params: {
   if (new Date(intent.expiresAt).getTime() <= now) {
     reject("expired", "Withdrawal intent has expired");
   }
-  assertVaultIntentTargets(intent);
+  assertVaultIntentTargets(intent, policy.vault);
   const expectedDestination = deriveAssociatedTokenAddress({
     owner: intent.wallet,
     mint: intent.asset
@@ -593,17 +597,17 @@ function assertVaultIntentTargets(intent: {
   farm: string;
   shareMint: string;
   asset: string;
-}): void {
-  if (intent.vault !== SUBLY_VAULT.address) {
+}, vault: Readonly<VaultConfig>): void {
+  if (intent.vault !== vault.address) {
     reject("vault_mismatch", "Unsupported vault");
   }
-  if (intent.shareMint !== SUBLY_VAULT.shareMint) {
+  if (intent.shareMint !== vault.shareMint) {
     reject("share_mint_mismatch", "Unsupported share mint");
   }
-  if (intent.farm !== SUBLY_VAULT.farm) {
+  if (intent.farm !== vault.farm) {
     reject("farm_mismatch", "Unsupported Kamino farm");
   }
-  if (intent.asset !== SUBLY_VAULT.usdcMint) {
+  if (intent.asset !== vault.usdcMint) {
     reject("asset_mismatch", "Only USDC is supported");
   }
 }
@@ -612,6 +616,7 @@ function resolveIntentValidationPolicy(
   policy: IntentValidationPolicy | undefined
 ): ResolvedIntentValidationPolicy {
   const resolved = {
+    vault: policy?.vault ?? SUBLY_VAULT,
     maxComputeUnitLimit:
       policy?.maxComputeUnitLimit ?? DEFAULT_MAX_COMPUTE_UNIT_LIMIT,
     maxComputeUnitPriceMicroLamports:

@@ -1,3 +1,4 @@
+import type { VaultConfig } from "../config/vault.js";
 import { randomUUID } from "node:crypto";
 import { isProductionEnv } from "../config/env.js";
 import {
@@ -136,6 +137,7 @@ export interface VerifyPaymentPayloadInput extends SignedPaymentPayload {
 }
 
 export class SublyService {
+  readonly vault: Readonly<VaultConfig>;
   readonly ledger: Ledger;
   private readonly transactionBuilder: CanonicalTransactionBuilder;
   private readonly feeEstimator: FeeEstimator;
@@ -144,6 +146,7 @@ export class SublyService {
   private readonly config: SublyServiceConfig;
 
   constructor(params?: {
+    vault?: Readonly<VaultConfig>;
     ledger?: Ledger;
     transactionBuilder?: CanonicalTransactionBuilder;
     feeEstimator?: FeeEstimator;
@@ -151,6 +154,7 @@ export class SublyService {
     settlementSubmitter?: SettlementSubmitter;
     config?: Partial<SublyServiceConfig>;
   }) {
+    this.vault = Object.freeze({ ...(params?.vault ?? SUBLY_VAULT) });
     this.config = {
       defaultEstimatedFeeDebtRawUsdc: DEFAULT_ESTIMATED_FEE_DEBT_RAW_USDC,
       defaultEstimatedFeeLamports: 0n,
@@ -185,8 +189,8 @@ export class SublyService {
   async registerAgentWallet(input: RegisterAgentWalletInput) {
     const wallet = requireSolanaAddress(input.wallet, "wallet");
 
-    return this.ledger.withWalletVaultLock(wallet, SUBLY_VAULT.address, async () => {
-      const existing = await this.ledger.getPosition(wallet, SUBLY_VAULT.address);
+    return this.ledger.withWalletVaultLock(wallet, this.vault.address, async () => {
+      const existing = await this.ledger.getPosition(wallet, this.vault.address);
       const safetyBufferRawUsdc =
         input.safetyBufferRawUsdc === undefined
           ? existing?.safetyBufferRawUsdc ?? 0n
@@ -225,7 +229,7 @@ export class SublyService {
         existing === null
           ? {
               wallet,
-              vault: SUBLY_VAULT.address,
+              vault: this.vault.address,
               signingPolicyId: input.signingPolicyId,
               signingMode: initialSigningMode,
               signerValidationMode: input.signerValidationMode ?? "unverified",
@@ -272,8 +276,8 @@ export class SublyService {
 
   async syncWalletPosition(input: SyncWalletPositionInput) {
     const wallet = requireSolanaAddress(input.wallet, "wallet");
-    const vault = input.vault ?? SUBLY_VAULT.address;
-    if (vault !== SUBLY_VAULT.address) {
+    const vault = input.vault ?? this.vault.address;
+    if (vault !== this.vault.address) {
       throw badRequest("unsupported_vault", "Only the Subly alpha vault is supported");
     }
 
@@ -441,7 +445,7 @@ export class SublyService {
 
   async listSyncEvents(
     walletInput: string,
-    vault: string = SUBLY_VAULT.address,
+    vault: string = this.vault.address,
     limit = 100
   ) {
     const wallet = requireSolanaAddress(walletInput, "wallet");
@@ -478,9 +482,9 @@ export class SublyService {
     await this.ledger.saveSyncEvent(event);
   }
 
-  async getBudget(walletInput: string, vault: string = SUBLY_VAULT.address) {
+  async getBudget(walletInput: string, vault: string = this.vault.address) {
     const wallet = requireSolanaAddress(walletInput, "wallet");
-    if (vault !== SUBLY_VAULT.address) {
+    if (vault !== this.vault.address) {
       throw badRequest("unsupported_vault", "Only the Subly alpha vault is supported");
     }
 
@@ -500,10 +504,10 @@ export class SublyService {
 
   async preparePayment(input: PreparePaymentInput) {
     const wallet = requireSolanaAddress(input.wallet, "wallet");
-    const vault = input.vault ?? SUBLY_VAULT.address;
+    const vault = input.vault ?? this.vault.address;
     const scheme = input.scheme ?? PAYMENT_SCHEME;
     const network = input.network ?? SOLANA_MAINNET_NETWORK;
-    const shareMint = input.shareMint ?? SUBLY_VAULT.shareMint;
+    const shareMint = input.shareMint ?? this.vault.shareMint;
     const requestBodyHash = normalizeRequestBodyHash(input.requestBodyHash);
     const amountRawUsdc = parsePositiveRawUnits(
       input.amountRawUsdc,
@@ -518,7 +522,7 @@ export class SublyService {
       asset: input.asset,
       requestBodyHash,
       canonicalResourceUrl: input.canonicalResourceUrl
-    });
+    }, this.vault);
 
     const seller = requireSolanaAddress(input.seller, "seller");
     const payTo = requireSolanaAddress(input.payTo, "payTo");
@@ -534,7 +538,7 @@ export class SublyService {
     const sellerUsdcAta = requireSolanaAddress(input.sellerUsdcAta, "sellerUsdcAta");
     const expectedSellerUsdcAta = deriveAssociatedTokenAddress({
       owner: payTo,
-      mint: SUBLY_VAULT.usdcMint
+      mint: this.vault.usdcMint
     });
     if (sellerUsdcAta !== expectedSellerUsdcAta) {
       throw badRequest(
@@ -553,7 +557,7 @@ export class SublyService {
     );
     const expectedDustRecipientUsdcAta = deriveAssociatedTokenAddress({
       owner: wallet,
-      mint: SUBLY_VAULT.usdcMint
+      mint: this.vault.usdcMint
     });
     if (dustRecipientUsdcAta !== expectedDustRecipientUsdcAta) {
       throw badRequest(
@@ -794,8 +798,8 @@ export class SublyService {
             paymentId,
             wallet,
             vault,
-            shareMint: SUBLY_VAULT.shareMint,
-            usdcMint: SUBLY_VAULT.usdcMint,
+            shareMint: this.vault.shareMint,
+            usdcMint: this.vault.usdcMint,
             feePayer: this.config.sponsorFeePayer,
             seller,
             sellerRequestId: input.sellerRequestId,
@@ -884,8 +888,8 @@ export class SublyService {
                 requestBindingHash,
                 seller,
                 vault,
-                farm: SUBLY_VAULT.farm,
-                shareMint: SUBLY_VAULT.shareMint,
+                farm: this.vault.farm,
+                shareMint: this.vault.shareMint,
                 asset: input.asset,
                 amountRawUsdc: rawUnitsToString(amountRawUsdc),
                 payTo,
@@ -1276,8 +1280,8 @@ export class SublyService {
     targetBudgetIlliquidRate: number;
     status?: "active" | "disabled" | undefined;
   }) {
-    const vault = input.vault ?? SUBLY_VAULT.address;
-    if (vault !== SUBLY_VAULT.address) {
+    const vault = input.vault ?? this.vault.address;
+    if (vault !== this.vault.address) {
       throw badRequest("unsupported_vault", "Only the Subly alpha vault is supported");
     }
     if (
@@ -1321,11 +1325,13 @@ export class SublyService {
 
     const intents = await this.ledger.listPaymentsByStatus(
       ["submission_prepared", "submitted"],
-      limit
+      limit,
+      this.vault.address
     );
     const results = [];
 
     for (const intent of intents) {
+      if (intent.vault !== this.vault.address) continue;
       const payload = storedSettlementPayloadForIntent(intent);
       if (payload === null) {
         results.push({
@@ -2189,7 +2195,7 @@ function assertExpectedPaymentRequirement(input: {
   asset: string;
   requestBodyHash: string;
   canonicalResourceUrl: string;
-}) {
+}, expectedVault: Readonly<VaultConfig>) {
   if (input.scheme !== PAYMENT_SCHEME) {
     throw badRequest("unsupported_scheme", `scheme must be ${PAYMENT_SCHEME}`);
   }
@@ -2199,13 +2205,13 @@ function assertExpectedPaymentRequirement(input: {
       `network must be ${SOLANA_MAINNET_NETWORK}`
     );
   }
-  if (input.vault !== SUBLY_VAULT.address) {
+  if (input.vault !== expectedVault.address) {
     throw badRequest("unsupported_vault", "Unsupported Kamino vault");
   }
-  if (input.shareMint !== SUBLY_VAULT.shareMint) {
+  if (input.shareMint !== expectedVault.shareMint) {
     throw badRequest("unsupported_share_mint", "Unsupported vault share mint");
   }
-  if (input.asset !== SUBLY_VAULT.usdcMint) {
+  if (input.asset !== expectedVault.usdcMint) {
     throw badRequest("unsupported_asset", "Only USDC is supported");
   }
   if (!/^sha256-([a-f0-9]{64}|empty)$/.test(input.requestBodyHash)) {

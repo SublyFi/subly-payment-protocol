@@ -68,6 +68,7 @@ export interface RelayerYieldRealizerConfig {
 }
 
 export class RelayerYieldRealizer implements YieldRealizer {
+  get vault(): string { return this.vaultFlows.vault.address; }
   private readonly vaultFlows: VaultFlowClient;
 
   constructor(config: RelayerYieldRealizerConfig) {

@@ -1,3 +1,4 @@
+import { SUBLY_VAULT } from "../src/config/constants.js";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentWalletSigner } from "../src/client/agent-wallet-signer.js";
 import {
@@ -104,8 +105,8 @@ describe("VaultFlowClient", () => {
     ).deposit({ amountRawUsdc: 500_000_000n });
     expect(outcome.status).toBe("confirmed");
     expect(prepareBodies).toEqual([
-      { wallet: WALLET, amountRawUsdc: "500000000" },
-      { wallet: WALLET, amountRawUsdc: "500000000", approvalId: "apr_initial" }
+      { wallet: WALLET, vault: SUBLY_VAULT.address, amountRawUsdc: "500000000" },
+      { wallet: WALLET, vault: SUBLY_VAULT.address, amountRawUsdc: "500000000", approvalId: "apr_initial" }
     ]);
   });
 
@@ -254,7 +255,7 @@ describe("VaultFlowClient", () => {
       if (u.endsWith("/sync")) {
         return jsonResponse(200, { position: {} });
       }
-      if (u.endsWith("/budget")) {
+      if (u.endsWith(`/budget?vault=${SUBLY_VAULT.address}`)) {
         return jsonResponse(200, {
           position: { principalBasisRawUsdc: "100000000" },
           budget: {
@@ -273,6 +274,7 @@ describe("VaultFlowClient", () => {
 
     expect(budget).toEqual({
       wallet: WALLET,
+      vault: SUBLY_VAULT.address,
       principalBasisRawUsdc: "100000000",
       positionValueRawUsdc: "101000000",
       grossYieldRawUsdc: "1000000",
@@ -280,7 +282,7 @@ describe("VaultFlowClient", () => {
     });
     expect(calls).toEqual([
       `${BASE}/v1/wallets/${WALLET}/sync`,
-      `${BASE}/v1/wallets/${WALLET}/budget`
+      `${BASE}/v1/wallets/${WALLET}/budget?vault=${SUBLY_VAULT.address}`
     ]);
   });
 
@@ -290,7 +292,7 @@ describe("VaultFlowClient", () => {
       if (u.endsWith("/sync")) {
         return jsonResponse(503, { error: { code: "chain_sync_unavailable" } });
       }
-      if (u.endsWith("/budget")) {
+      if (u.endsWith(`/budget?vault=${SUBLY_VAULT.address}`)) {
         return jsonResponse(200, {
           position: { principalBasisRawUsdc: "0" },
           budget: {
@@ -307,6 +309,19 @@ describe("VaultFlowClient", () => {
       fetchImpl as unknown as typeof fetch
     ).getBudget();
     expect(budget.spendableYieldRawUsdc).toBe("0");
+  });
+
+  it("refuses to label another vault's budget or owner setup as the selected vault", async () => {
+    const foreignVault = "HDsayqAsDWy3QvANGqh2yNraqcD8Fnjgh73Mhb3WRS5E";
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).includes("/budget")) return jsonResponse(200, {
+        position: { vault: foreignVault }, budget: { spendableYieldRawUsdc: "999999999" }
+      });
+      return jsonResponse(200, { wallet: WALLET, vault: foreignVault, setupUrl: "https://relayer.test/setup/wrong" });
+    });
+    const client = buildClient(fetchImpl);
+    await expect(client.getBudget({ refreshFromChain: false })).rejects.toThrow("different vault");
+    await expect(client.createSetupSession({})).rejects.toThrow("different wallet or vault");
   });
 
   it("surfaces prepare failures with the step and server detail", async () => {

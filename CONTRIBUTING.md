@@ -44,6 +44,14 @@ npm run build         # esbuild bundle to dist/
 
 `npm run validate:mainnet` is an optional read-only harness that simulates the full settlement path against mainnet (requires `SOLANA_RPC_URL`; moves no funds).
 
+### Optional PostgreSQL integration tests
+
+`SUBLY_TEST_POSTGRES_URL=<disposable-postgres-url> npm test` also runs the
+multi-vault mandate migration tests. They create and remove their own temporary
+schemas and cover legacy backfill, per-vault records, and repeated startup.
+Without that variable, those tests are skipped; the rest of the suite uses an
+in-memory ledger.
+
 ### Repository layout
 
 | Path | Contents |

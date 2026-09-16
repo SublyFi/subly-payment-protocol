@@ -19,7 +19,7 @@ import {
   type Base64EncodedWireTransaction,
   type Instruction
 } from "@solana/kit";
-import { RATE_SCALE, SUBLY_VAULT, USDC_DECIMALS } from "../config/constants.js";
+import { RATE_SCALE, USDC_DECIMALS } from "../config/constants.js";
 import {
   KaminoVaultAdapter,
   VaultLiquidityError,
@@ -89,7 +89,7 @@ export class KaminoCanonicalTransactionBuilder
   async quoteSettlementWithdraw(
     input: SettlementWithdrawQuoteInput
   ): Promise<SettlementQuote> {
-    if (input.vault !== SUBLY_VAULT.address) {
+    if (input.vault !== this.adapter.vaultAddress) {
       throw conflict("unsupported_vault", "Unsupported Kamino vault");
     }
 

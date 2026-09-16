@@ -31,6 +31,11 @@ import {
 import { RATE_SCALE, SHARE_DECIMALS, USDC_DECIMALS } from "../config/constants.js";
 import { ceilDiv } from "../lib/raw-units.js";
 import type { SolanaRpc } from "../solana/rpc.js";
+import type { VaultConfig } from "../config/vault.js";
+import {
+  assertSupportedVaultState,
+  assertVaultConfigMatchesState
+} from "./vault-config.js";
 
 const SYSVAR_INSTRUCTIONS_ADDRESS = address(
   "Sysvar1nstructions1111111111111111111111111"
@@ -98,10 +103,13 @@ export class KaminoVaultAdapter {
   private readonly rpc: SolanaRpc;
   private readonly client: KaminoVaultClient;
   private readonly extraLookupTables: Address[];
+  private readonly expectedVaultConfig: Readonly<VaultConfig> | undefined;
 
   constructor(params: {
     rpc: SolanaRpc;
     vaultAddress: string;
+    /** Locally pinned metadata; verified against chain at boot and on refresh. */
+    vaultConfig?: Readonly<VaultConfig>;
     /**
      * Additional lookup tables (e.g. a Subly-managed table with the vault
      * reserves and farm accounts) used to keep the settlement transaction
@@ -111,6 +119,13 @@ export class KaminoVaultAdapter {
   }) {
     this.rpc = params.rpc;
     this.vaultAddress = address(params.vaultAddress);
+    this.expectedVaultConfig = params.vaultConfig;
+    if (
+      params.vaultConfig !== undefined &&
+      params.vaultConfig.address !== params.vaultAddress
+    ) {
+      throw new Error("Vault adapter address does not match its pinned configuration");
+    }
     this.extraLookupTables = (params.extraLookupTables ?? []).map((value) =>
       address(value)
     );
@@ -126,6 +141,18 @@ export class KaminoVaultAdapter {
     return new KaminoVault(this.rpc, this.vaultAddress, state, kaminoVaultId);
   }
 
+  async validateConfiguration(): Promise<void> {
+    this.validateState(await this.vaultHandle().getState());
+  }
+
+  private validateState(state: VaultState): void {
+    if (this.expectedVaultConfig !== undefined) {
+      assertVaultConfigMatchesState(this.expectedVaultConfig, state);
+    } else {
+      assertSupportedVaultState(state);
+    }
+  }
+
   async loadContext(): Promise<VaultContext> {
     const vault = this.vaultHandle();
     const [vaultState, slot, latestBlockhash, globalConfig] = await Promise.all([
@@ -134,6 +161,7 @@ export class KaminoVaultAdapter {
       this.rpc.getLatestBlockhash({ commitment: "confirmed" }).send(),
       this.client.loadKVaultGlobalConfig()
     ]);
+    this.validateState(vaultState);
     const [reservesMap, farmState] = await Promise.all([
       this.client.loadVaultReserves(vaultState),
       this.client.loadVaultFarmState(vaultState)

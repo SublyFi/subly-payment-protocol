@@ -252,6 +252,7 @@ export function setupPageHtml(): string {
     function render() {
       const p = session.policy;
       $("details").innerHTML =
+        row("Vault", session.vault, true) +
         row("Agent wallet", short(session.wallet, 8, 8), true) +
         row("Auto-pay up to (per payment)", capUsdc(p.approvalThresholdRawUsdc)) +
         row("Absolute per-payment cap", usdc(p.perPaymentCapRawUsdc)) +
@@ -279,14 +280,14 @@ export function setupPageHtml(): string {
         existing.status !== "recovery_elapsed";
       if (blocking && existing.ownerAuth === "passkey") {
         setStatus("err",
-          "This agent wallet already has a passkey owner (mandate " +
+          "This vault already has a passkey owner for this wallet (mandate " +
           existing.status + "). A new owner can only be appointed after the " +
           "mandate expires or via the agent's recovery flow.");
         return;
       }
       if (blocking) {
         setStatus("err",
-          "This agent wallet already has a registered owner (mandate " +
+          "This vault already has a registered owner for this wallet (mandate " +
           existing.status + "). Only that same owner wallet can re-sign — " +
           "use the Solana wallet option with the original owner wallet.");
       } else {
@@ -436,7 +437,8 @@ export function approvePageHtml(): string {
       } else {
         rows = row("Amount", usdc(b.amountRawUsdc)) + row("Kind", b.kind || "—");
       }
-      rows += row("Agent wallet", short(view.wallet, 8, 8), true) +
+      rows += row("Vault", view.vault || "Unknown", true) +
+        row("Agent wallet", short(view.wallet, 8, 8), true) +
         row("Request expires", new Date(view.expiresAtMs).toLocaleTimeString());
       $("details").innerHTML = rows;
       $("btn-approve").hidden = false;
@@ -508,9 +510,11 @@ export function revokePageHtml(): string {
 
     (async () => {
       try {
-        summary = await api("/v1/wallets/" + wallet + "/mandate/summary");
+        const vault = new URLSearchParams(location.search).get("vault");
+        summary = await api("/v1/wallets/" + wallet + "/mandate/summary" + (vault ? "?vault=" + encodeURIComponent(vault) : ""));
         $("details").innerHTML =
           row("Agent wallet", short(summary.wallet, 8, 8), true) +
+          row("Vault", summary.vault, true) +
           row("Mandate", short(summary.mandateHash, 10, 6), true) +
           row("Status", summary.status);
         if (summary.status === "revoked") {
@@ -536,7 +540,7 @@ export function revokePageHtml(): string {
         await postJson("/v1/wallets/" + wallet + "/mandate/revoke",
           { mandateHash: summary.mandateHash, signedAtMs, signature });
         $("btn-revoke").hidden = true;
-        setStatus("ok", "Revoked. All agent payments, deposits and withdrawals are now blocked.");
+        setStatus("ok", "Revoked. Agent operations for this vault are now blocked.");
       } catch (error) { fail(error); }
       finally { $("btn-revoke").disabled = false; }
     });

@@ -5,6 +5,7 @@ export const positiveRawIntegerString = z.string().regex(/^[1-9]\d*$/);
 export const solanaAddressString = z.string().min(32).max(44);
 
 export const registerAgentWalletSchema = z.object({
+  vault: solanaAddressString.optional(),
   wallet: solanaAddressString,
   signingPolicyId: z.string().min(1),
   signingMode: z.enum(["non_interactive", "observed_only"]).optional(),
@@ -38,11 +39,13 @@ export const syncWalletPositionSchema = z.object({
 });
 
 export const chainSyncWalletPositionSchema = z.object({
+  vault: solanaAddressString.optional(),
   source: z.literal("chain"),
   forceConservativeReset: z.boolean().optional()
 });
 
 export const prepareDepositSchema = z.object({
+  vault: solanaAddressString.optional(),
   wallet: solanaAddressString,
   amountRawUsdc: positiveRawIntegerString,
   /** Owner approval id (depositPolicy "owner_approval_required"). */
@@ -68,6 +71,7 @@ export const paymentBindingSchema = z
   .strict();
 
 export const prepareWithdrawalSchema = z.object({
+  vault: solanaAddressString.optional(),
   wallet: solanaAddressString,
   amountRawUsdc: positiveRawIntegerString,
   /**
@@ -202,6 +206,7 @@ export const approvalDecisionSchema = z.object({
 
 export const createSetupSessionSchema = z
   .object({
+    vault: solanaAddressString.optional(),
     /** Chat-agreed overrides merged over the relayer default policy. */
     policy: mandatePolicySchema.partial().optional(),
     enforcementMode: z.enum(["subly", "wallet_infra"]).optional(),

@@ -1,3 +1,4 @@
+import type { VaultConfig } from "../src/config/vault.js";
 import { describe, expect, it } from "vitest";
 import {
   getEventAuthorityPda,
@@ -70,6 +71,7 @@ async function actors(): Promise<Actors> {
 }
 
 interface BuildOverrides {
+  vault?: VaultConfig;
   sellerTransferDestination?: string;
   sellerTransferAmount?: bigint;
   sharesAmount?: bigint;
@@ -87,18 +89,19 @@ interface BuildOverrides {
 
 async function buildSettlement(overrides: BuildOverrides = {}) {
   const a = await actors();
-  const usdcMint = address(SUBLY_VAULT.usdcMint);
+  const vault = overrides.vault ?? SUBLY_VAULT;
+  const usdcMint = address(vault.usdcMint);
   const sellerUsdcAta = deriveAssociatedTokenAddress({
     owner: a.seller.address,
-    mint: SUBLY_VAULT.usdcMint
+    mint: vault.usdcMint
   });
   const dustRecipientUsdcAta = deriveAssociatedTokenAddress({
     owner: a.agent.address,
-    mint: SUBLY_VAULT.usdcMint
+    mint: vault.usdcMint
   });
   const userSharesAta = deriveAssociatedTokenAddress({
     owner: a.agent.address,
-    mint: SUBLY_VAULT.shareMint
+    mint: vault.shareMint
   });
   const amount = overrides.sellerTransferAmount ?? 10_000n;
   const shares = overrides.sharesAmount ?? 11_000n;
@@ -109,14 +112,14 @@ async function buildSettlement(overrides: BuildOverrides = {}) {
     { sharesAmount: new BN(shares.toString()) },
     {
       user: agentNoop,
-      vaultState: address(SUBLY_VAULT.address),
+      vaultState: address(vault.address),
       globalConfig: await getKvaultGlobalConfigPda(kaminoVaultId),
       tokenVault: a.tokenVault,
       baseVaultAuthority: a.baseVaultAuthority,
       userTokenAta: a.temp.address,
       tokenMint: usdcMint,
       userSharesAta: address(userSharesAta),
-      sharesMint: address(SUBLY_VAULT.shareMint),
+      sharesMint: address(vault.shareMint),
       tokenProgram: TOKEN_PROGRAM_ADDRESS,
       sharesTokenProgram: TOKEN_PROGRAM_ADDRESS,
       klendProgram: KLEND_PROGRAM_ID,
@@ -227,10 +230,10 @@ async function buildSettlement(overrides: BuildOverrides = {}) {
     requestBodyHash: "sha256-empty",
     requestBindingHash: "",
     seller: a.seller.address,
-    vault: SUBLY_VAULT.address,
-    farm: SUBLY_VAULT.farm,
-    shareMint: SUBLY_VAULT.shareMint,
-    asset: SUBLY_VAULT.usdcMint,
+    vault: vault.address,
+    farm: vault.farm,
+    shareMint: vault.shareMint,
+    asset: vault.usdcMint,
     amountRawUsdc: "10000",
     payTo: a.seller.address,
     sellerUsdcAta,
@@ -272,6 +275,19 @@ function expectRejection(
 }
 
 describe("validatePaymentIntentTransaction", () => {
+  it("accepts another pinned vault and rejects the same transaction under the default policy", async () => {
+    const vault = { ...SUBLY_VAULT, address: (await actors()).attacker.address,
+      shareMint: (await actors()).tokenVault };
+    const tx = await buildSettlement({ vault });
+    expect(() => validatePaymentIntentTransaction({ ...tx, policy: { vault } })).not.toThrow();
+    expect(() => validatePaymentIntentTransaction(tx)).toThrow();
+    for (const field of ["shareMint", "farm"] as const) {
+      expect(() => validatePaymentIntentTransaction({ ...tx,
+        intent: { ...tx.intent, [field]: "11111111111111111111111111111111" }, policy: { vault }
+      })).toThrow();
+    }
+  });
+
   it("accepts the canonical settlement transaction", async () => {
     const { intent, serializedTransaction } = await buildSettlement();
     expect(() =>

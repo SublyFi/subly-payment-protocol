@@ -13,6 +13,8 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
+    "configure:vault": "tsx scripts/configure-vault.ts",
+    "configure:vaults": "tsx scripts/configure-vaults.ts",
     "validate:mainnet": "tsx scripts/mainnet-validate.ts",
     "demo:legacy:seller": "NODE_ENV=development tsx demo/seller.ts",
     "demo:legacy:buyer": "NODE_ENV=development tsx demo/buyer.ts",

@@ -22,6 +22,14 @@ git push origin pay-v0.7.0
 
 The publisher checks tag/version equality and uses `npm publish --access public --provenance`. If publication fails, inspect the workflow and npm trusted-publisher settings; do not move an existing public tag. Re-run the failed job after fixing configuration. Publishing the same npm version twice is not possible.
 
+To verify the saved trusted publisher without publishing another version, manually run this same workflow on `main`:
+
+```bash
+gh workflow run release-pay.yml --ref main
+```
+
+Manual runs only perform the GitHub-to-npm OIDC token exchange for `@subly_fi/pay`; the publish job is restricted to release tag pushes. A successful exchange proves npm accepts this workflow's identity. The short-lived token is discarded without being logged or saved. Upload acceptance and provenance still need verification on an actual version release. `npm whoami` and `npm publish --dry-run` do not establish this trust.
+
 An authorized local maintainer can use `npm publish --access public` after the same checks and any required registry authentication. GitHub provenance cannot be generated from a normal local shell; never claim provenance for that fallback. Record the publication method in release notes.
 
 After publication verify `npm view @subly_fi/pay version dist-tags dist.attestations --json`, install the exact registry version in a clean directory, and check `--version`, `--help` and MCP initialization. Create a GitHub release for the immutable matching tag with release notes and optional npm tarball/checksum.

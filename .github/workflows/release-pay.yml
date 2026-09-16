@@ -1,6 +1,8 @@
 name: Release @subly_fi/pay
 
 on:
+  # Manual runs verify npm trust without publishing a new package version.
+  workflow_dispatch:
   push:
     tags:
       - "pay-v*"
@@ -10,8 +12,27 @@ permissions:
 
 jobs:
   verify:
+    if: github.event_name == 'push'
     uses: ./.github/workflows/ci.yml
+  verify-trust:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    name: Verify npm trusted publisher (no publish)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: node scripts/verify-npm-trust.mjs
   publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/pay-v')
     needs: verify
     name: Publish client package
     runs-on: ubuntu-latest

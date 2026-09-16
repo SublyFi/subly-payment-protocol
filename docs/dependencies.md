@@ -1,4 +1,4 @@
-# Dependency status — 0.7.0
+# Dependency status — 0.7.1
 
 Reviewed 2026-09-16 against the committed npm lockfiles. Registry advisories can change after this date. The client and relayer use separate dependency graphs and Solana Kit versions; do not assume a successful client audit covers the server.
 

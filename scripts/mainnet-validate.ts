@@ -18,7 +18,7 @@
 import { address } from "@solana/kit";
 import { SUBLY_VAULT } from "../src/config/constants.js";
 import { KaminoCanonicalTransactionBuilder } from "../src/domain/kamino-transaction-builder.js";
-import { PythHermesFeeEstimator } from "../src/domain/pyth-fee-estimator.js";
+import { PythHermesFeeEstimator, pythHermesConnectionFromEnv } from "../src/domain/pyth-fee-estimator.js";
 import { KaminoApiClient } from "../src/kamino/api-client.js";
 import { KaminoVaultAdapter, rawToUsdcDecimal } from "../src/kamino/vault-adapter.js";
 import { deriveAssociatedTokenAddress } from "../src/lib/associated-token-account.js";
@@ -130,8 +130,7 @@ async function main() {
     }
   }
   if (wallet === null) {
-    console.log("No share-holding wallet found; set SUBLY_VALIDATE_WALLET. Stopping.");
-    return;
+    throw new Error("No share-holding wallet found; set SUBLY_VALIDATE_WALLET. Validation is incomplete.");
   }
   const userShares = await adapter.getUserSharesRaw(wallet, context);
   console.log("wallet", wallet);
@@ -151,8 +150,7 @@ async function main() {
   console.log("sharesToRedeemRaw", quote.sharesToRedeemRaw.toString());
   console.log("withdrawalPenaltyRawUsdc", quote.withdrawalPenaltyRawUsdc.toString());
   if (quote.userTotalSharesRaw === 0n) {
-    console.log("Wallet has no shares; cannot build settlement. Stopping.");
-    return;
+    throw new Error("Wallet has no shares; cannot build settlement. Validation is incomplete.");
   }
 
   console.log("\n=== 4. Canonical settlement transaction (simulation only) ===");
@@ -208,6 +206,7 @@ async function main() {
           "funded sponsor keypair and set SUBLY_EXTRA_LOOKUP_TABLES, or sync " +
           "the curator vault LUT from the Kamino SDK, then re-run this harness."
       );
+      process.exitCode = 1;
       return;
     }
     throw error;
@@ -250,6 +249,7 @@ async function main() {
         JSON.stringify(result.value.err),
         (result.value.logs ?? []).slice(-5)
       );
+      process.exitCode = 1;
     }
   }
 
@@ -266,7 +266,7 @@ async function main() {
   );
 
   console.log("\n=== 7. Fee oracle ===");
-  const estimator = new PythHermesFeeEstimator();
+  const estimator = new PythHermesFeeEstimator(pythHermesConnectionFromEnv());
   const fee = await estimator.estimatePaymentFee({
     wallet,
     seller,
@@ -276,7 +276,7 @@ async function main() {
   console.log("estimatedFeeDebtRawUsdc", fee.estimatedFeeDebtRawUsdc.toString());
   console.log("source", fee.source, "observedAt", fee.observedAt);
 
-  console.log("\nAll read-only validations completed.");
+  console.log(process.exitCode ? "\nValidation failed; see checks above." : "\nAll read-only validations completed.");
 }
 
 main().catch((error) => {

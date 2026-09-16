@@ -1,7 +1,7 @@
 ---
 name: subly-pay
 description: Fetch a paywalled (HTTP 402) URL and pay for it automatically from the agent wallet's Kamino vault yield, within the relayer's recorded yield budget. Also manages the Subly vault (deposit/withdraw) and the human owner's spending mandate (setup link, Face ID approvals). Use when a request returns 402, when the user asks to buy/access a paid API or resource, or mentions Subly / x402 / yield-funded payment.
-version: 0.7.0
+version: 0.7.1
 metadata:
   openclaw:
     requires:
@@ -42,7 +42,7 @@ the Subly relayer refuses any payment the spendable yield cannot cover.
 
 ## One-time wallet setup (if not done yet)
 
-Use Node.js 24+. Set SUBLY_RELAYER_URL explicitly, run `npx -y @subly_fi/pay@0.7.0 doctor`, and review the vault before depositing. This is beta software without an external audit; principal value is not guaranteed.
+Use Node.js 24+. Set SUBLY_RELAYER_URL explicitly, run `npx -y @subly_fi/pay@0.7.1 doctor`, and review the vault before depositing. This is beta software without an external audit; principal value is not guaranteed.
 
 Subly does NOT create wallets — bring your own Solana keypair. If
 `SUBLY_DEMO_AGENT_KEYPAIR_PATH` is not set or the wallet has no vault
@@ -57,14 +57,14 @@ balance, guide the user through this once:
 4. Appoint the human owner and make the first deposit (one Face ID covers
    both). Agree the spending limits and the first deposit amount in chat,
    then create the setup link (the example is 1.01 USDC; minimums depend on the selected vault):
-   `npx -y @subly_fi/pay@0.7.0 setup-link --initial-deposit 1010000`
+   `npx -y @subly_fi/pay@0.7.1 setup-link --initial-deposit 1010000`
    Paste the printed `setupUrl` to the user VERBATIM — it expires in 10
    minutes and works once. The human opens it on their phone, reviews the
    limits, and confirms with Face ID (passkey) or a Solana wallet signature.
    After they say they finished, verify and deposit:
-   `npx -y @subly_fi/pay@0.7.0 setup-status <sessionId>` (the pasted setupUrl
+   `npx -y @subly_fi/pay@0.7.1 setup-status <sessionId>` (the pasted setupUrl
    works as the argument too) → status "completed"
-   `npx -y @subly_fi/pay@0.7.0 deposit 1010000` (the pre-approved first deposit
+   `npx -y @subly_fi/pay@0.7.1 deposit 1010000` (the pre-approved first deposit
    is picked up automatically; deposit also self-registers the wallet).
 5. Yield accrues over time; a payment needs the price plus the selected vault fees and relayer headroom in
    spendable yield.
@@ -75,13 +75,13 @@ Run the one-shot pay command (no clone — uses the published package via npx)
 with the resource URL:
 
 ```bash
-npx -y @subly_fi/pay@0.7.0 fetch "<url>"
+npx -y @subly_fi/pay@0.7.1 fetch "<url>"
 ```
 
 To set a tighter per-call cap (raw USDC, 6 decimals — e.g. 100 = 0.0001 USDC):
 
 ```bash
-npx -y @subly_fi/pay@0.7.0 fetch "<url>" 100
+npx -y @subly_fi/pay@0.7.1 fetch "<url>" 100
 ```
 
 The command prints a single JSON object on stdout. On success it contains
@@ -108,14 +108,14 @@ body and the receipt to the user.
     exactly as printed. It repeats the SAME cap — approval-needing prices
     exceed the default cap, so dropping it would refuse with
     `amount_exceeds_client_cap`:
-    `npx -y @subly_fi/pay@0.7.0 fetch "<url>" <sameMaxAmountRawUsdc> apr_<approvalId>`
+    `npx -y @subly_fi/pay@0.7.1 fetch "<url>" <sameMaxAmountRawUsdc> apr_<approvalId>`
   - `state_persist_failed` → the local pending-payment marker could not be
     stored. Do not retry until the state path/disk issue is fixed.
 
 ## Deposits and withdrawals
 
-- `npx -y @subly_fi/pay@0.7.0 deposit <amountRawUsdc> [apr_<approvalId>]`
-- `npx -y @subly_fi/pay@0.7.0 withdraw <amountRawUsdc> [apr_<approvalId>]`
+- `npx -y @subly_fi/pay@0.7.1 deposit <amountRawUsdc> [apr_<approvalId>]`
+- `npx -y @subly_fi/pay@0.7.1 withdraw <amountRawUsdc> [apr_<approvalId>]`
 
 Deposits move principal into DeFi risk, so they require the human owner's
 approval. If the output contains `"approvalRequired": true`, paste the

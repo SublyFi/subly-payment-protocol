@@ -9,6 +9,7 @@ All notable changes to the repository and the published client are recorded here
 - Support authenticated Pyth Hermes fee pricing after the August 2026 API upgrade. Operators set `SUBLY_HERMES_API_KEY` (or `PYTH_API_KEY`); credentials require HTTPS and redirects are rejected.
 - Return a failing exit status when mainnet validation is incomplete or a delayed simulation fails. Use the same oracle connection settings as the relayer.
 - Keep the relayer alive when an idle PostgreSQL connection drops, reconnect on the next query, and bound pool connection waits. Avoid dumping connection internals in unhandled error logs.
+- Fix client `doctor` to compare the full mainnet genesis hash instead of the truncated x402 chain reference, and check database readiness instead of liveness alone.
 - Add a manual GitHub Actions check for npm Trusted Publisher authentication without publishing a package. Tag releases still run full CI before publication.
 - Update operator configuration and troubleshooting guidance. Client payment behavior and database schema are unchanged.
 

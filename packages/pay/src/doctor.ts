@@ -27,18 +27,20 @@ await check("relayer and vault", async () => {
   const url = new URL(env.SUBLY_RELAYER_URL);
   if (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))) throw new Error("Use HTTPS (HTTP is allowed only for local development)");
   const catalog = vaultCatalogFromEnv(); const local = defaultCatalogVault(catalog);
-  const health = await fetch(`${url.toString().replace(/\/$/, "")}/healthz`, { signal: AbortSignal.timeout(10000) });
-  if (!health.ok || (await health.json() as {ok?:boolean}).ok !== true) throw new Error("Relayer health check failed");
+  const health = await fetch(`${url.toString().replace(/\/$/, "")}/readyz`, { signal: AbortSignal.timeout(10000) });
+  if (!health.ok || (await health.json() as {ok?:boolean}).ok !== true) throw new Error("Relayer readiness check failed");
   const response = await fetch(`${url.toString().replace(/\/$/, "")}/v1/vaults`, { signal: AbortSignal.timeout(10000) });
   if (!response.ok) throw new Error("Relayer vault catalogue unavailable");
   const remote = (await response.json() as {vaults?: Record<string, unknown>[]}).vaults?.find(v => v.address === local.address);
   if (!remote || ["programId", "usdcMint", "shareMint", "farm"].some(key => remote[key] !== local[key as keyof typeof local])) throw new Error("Selected local vault trust anchors differ from the relayer; review the operator catalogue before changing configuration");
-  return `Healthy; selected vault ${local.address} matches local trust anchors`;
+  return `Ready; selected vault ${local.address} matches local trust anchors`;
 });
 await check("Solana RPC", async () => {
   const response = await fetch(env.SOLANA_RPC_URL ?? "https://api.mainnet-beta.solana.com", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({jsonrpc:"2.0",id:1,method:"getGenesisHash"}), signal: AbortSignal.timeout(10000) });
   const body = await response.json() as {result?:string};
-  if (!response.ok || body.result !== "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp") throw new Error("RPC is unavailable or is not Solana mainnet-beta");
+  // getGenesisHash returns the full base58 hash; x402's CAIP-2 reference is
+  // truncated to 32 characters and cannot be compared directly with this RPC.
+  if (!response.ok || body.result !== "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d") throw new Error("RPC is unavailable or is not Solana mainnet-beta");
   return "Mainnet-beta RPC reachable";
 });
 const ok = checks.every(c => c.ok);

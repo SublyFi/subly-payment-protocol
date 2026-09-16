@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, statSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -43,4 +43,19 @@ describe("fileStandardX402StateStore", () => {
     writeFileSync(path, "{not-json");
     expect(() => fileStandardX402StateStore(path).load()).toThrow();
   });
+});
+
+
+it("serializes separate clients sharing a state file and releases a lock after failure", async () => {
+  const path = statePath();
+  const a = fileStandardX402StateStore(path);
+  const b = fileStandardX402StateStore(path);
+  await expect(a.withExclusiveLock!(async () => {
+    await expect(b.withExclusiveLock!(async () => b.save([]))).rejects.toThrow("Payment state is locked");
+    a.save([record()]);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    throw new Error("client crashed");
+  })).rejects.toThrow("client crashed");
+  expect(existsSync(`${path}.lock`)).toBe(false);
+  await b.withExclusiveLock!(async () => expect(b.load()).toEqual([record()]));
 });

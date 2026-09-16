@@ -642,3 +642,40 @@ describe("VaultFlowService payment report-back", () => {
     ).rejects.toMatchObject({ code: "realize_not_confirmed" });
   });
 });
+
+
+describe("prepared flow authorization at submit", () => {
+  it.each(["deposit", "withdrawal"] as const)("refuses a prepared %s after owner revocation before inspecting signatures", async (kind) => {
+    const ledger = new InMemoryLedger();
+    const mandates = new SpendingMandateService({ ledger, config: { enforcementLevel: "on" } });
+    await mandates.registerMandate({ wallet: WALLET, vault: SUBLY_VAULT.address,
+      document: buildDocument({ agentKeys: WALLET_KEYS, policy: { depositPolicy: "agent_allowed" } }) });
+    const { service } = buildService({ ledger, mandates });
+    await registerPosition(ledger);
+    const prepared = kind === "deposit"
+      ? await service.prepareDeposit({ wallet: WALLET, amountRawUsdc: "1010000" })
+      : await service.prepareWithdrawal({ wallet: WALLET, amountRawUsdc: "1010000" });
+    const record = await ledger.getSpendingMandate(WALLET, SUBLY_VAULT.address);
+    await ledger.saveSpendingMandate({ ...record!, status: "revoked", revokedAtMs: Date.now() });
+    const input = { wallet: WALLET, serializedTransaction: "not signed", agentSignature: "not signed" };
+    const submit = "depositId" in prepared
+      ? service.submitDeposit({ ...input, depositId: prepared.depositId })
+      : service.submitWithdrawal({ ...input, withdrawalId: prepared.withdrawalId });
+    await expect(submit).rejects.toMatchObject({ code: "mandate_revoked" });
+  });
+
+  it("invalidates authorizations after mandate replacement or expiry", async () => {
+    let now = Date.now();
+    const ledger = new InMemoryLedger();
+    const service = new SpendingMandateService({ ledger, config: { enforcementLevel: "on", nowMs: () => now } });
+    const old = await service.registerMandate({ wallet: WALLET, vault: SUBLY_VAULT.address,
+      document: buildDocument({ agentKeys: WALLET_KEYS, payload: { issuedAtMs: now - 1000, expiresAtMs: now + 10000 } }) });
+    const input = { wallet: WALLET, vault: SUBLY_VAULT.address, mandateHash: old.mandateHash, approvalId: null };
+    await expect(service.assertPreparedAuthorization(input)).resolves.toBeUndefined();
+    now += 10001;
+    await expect(service.assertPreparedAuthorization(input)).rejects.toMatchObject({ code: "mandate_changed" });
+    await service.registerMandate({ wallet: WALLET, vault: SUBLY_VAULT.address,
+      document: buildDocument({ agentKeys: WALLET_KEYS, payload: { issuedAtMs: now, expiresAtMs: now + 10000 } }) });
+    await expect(service.assertPreparedAuthorization(input)).rejects.toMatchObject({ code: "mandate_changed" });
+  });
+});

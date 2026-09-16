@@ -1,5 +1,5 @@
 // Bundles the client entry points (from the repo's demo/) into the
-// @sublyfi/pay package. The repo's own TypeScript is inlined; the six runtime
+// @subly_fi/pay package. The repo's own TypeScript is inlined; the runtime
 // npm deps stay external (declared in package.json), so the published package
 // contains only client code — no facilitator, seller, Kamino SDK, or database
 // dependencies. A small hand-written dispatcher (cli.mjs) is the single bin.
@@ -20,7 +20,10 @@ const entries = {
   deposit: join(repoRoot, "demo", "deposit.ts"),
   withdraw: join(repoRoot, "demo", "withdraw.ts"),
   "setup-link": join(here, "src", "setup-link.ts"),
-  "setup-status": join(here, "src", "setup-status.ts")
+  "setup-status": join(here, "src", "setup-status.ts"),
+  doctor: join(here, "src", "doctor.ts"),
+  budget: join(here, "src", "budget.ts"),
+  vaults: join(here, "src", "vaults.ts")
 };
 
 await build({
@@ -29,11 +32,11 @@ await build({
   bundle: true,
   platform: "node",
   format: "esm",
-  target: "node20",
+  target: "node24",
   packages: "external",
   logLevel: "info"
 });
 
 copyFileSync(join(here, "cli.mjs"), join(here, "dist", "cli.js"));
 chmodSync(join(here, "dist", "cli.js"), 0o755);
-console.log("built", Object.keys(entries).join(", "), "+ cli dispatcher");
+console.error("built", Object.keys(entries).join(", "), "+ cli dispatcher");

@@ -296,6 +296,8 @@ export class VaultFlowService {
           };
         }
 
+        await this.mandates?.assertPreparedAuthorization(intent);
+
         this.verifyAgentSignedFlowTransaction({
           expectedMessageHash: intent.preparedMessageHash,
           wallet: intent.wallet,
@@ -630,6 +632,8 @@ export class VaultFlowService {
             )
           };
         }
+
+        await this.mandates?.assertPreparedAuthorization(intent);
 
         this.verifyAgentSignedFlowTransaction({
           expectedMessageHash: intent.preparedMessageHash,

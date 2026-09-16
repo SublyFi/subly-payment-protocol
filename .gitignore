@@ -19,3 +19,10 @@ deploy/relayer.production.env
 deploy/secrets/
 deploy/Caddyfile
 deploy/vaults.json
+
+# Local experiments and payment state
+tmp/
+*.tgz
+.subly/
+*.env
+!*.env.example

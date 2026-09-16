@@ -1,7 +1,7 @@
 ---
 name: subly-pay
-description: Fetch a paywalled (HTTP 402) URL and pay for it automatically from the agent wallet's Kamino vault yield, without spending the principal. Also manages the Subly vault (deposit/withdraw) and the human owner's spending mandate (setup link, Face ID approvals). Use when a request returns 402, when the user asks to buy/access a paid API or resource, or mentions Subly / x402 / yield-funded payment.
-version: 0.2.1
+description: Fetch a paywalled (HTTP 402) URL and pay for it automatically from the agent wallet's Kamino vault yield, within the relayer's recorded yield budget. Also manages the Subly vault (deposit/withdraw) and the human owner's spending mandate (setup link, Face ID approvals). Use when a request returns 402, when the user asks to buy/access a paid API or resource, or mentions Subly / x402 / yield-funded payment.
+version: 0.7.0
 metadata:
   openclaw:
     requires:
@@ -12,10 +12,10 @@ metadata:
     envVars:
       - name: SUBLY_DEMO_AGENT_KEYPAIR_PATH
         required: true
-        description: Path to the agent wallet keypair JSON (create with solana-keygen). The private key never leaves this file.
+        description: Path to the agent wallet keypair JSON (create with solana-keygen). The client loads the key locally; never share it.
       - name: SUBLY_RELAYER_URL
-        required: false
-        description: Subly relayer API base URL. Defaults to https://api.demo.sublyfi.com.
+        required: true
+        description: HTTPS URL of a relayer operator the user trusts.
       - name: SOLANA_RPC_URL
         required: false
         description: Solana RPC endpoint. Defaults to the public mainnet RPC.
@@ -30,7 +30,7 @@ metadata:
 
 This skill lets you fetch a paid HTTP resource and settle a standard x402
 Solana USDC `exact` 402 challenge automatically. Payment comes from the agent
-wallet's Kamino vault **yield** — the deposited principal is never spent, and
+wallet's Kamino vault **yield**, as accounted for by the chosen relayer, and
 the Subly relayer refuses any payment the spendable yield cannot cover.
 
 ## When to use
@@ -42,6 +42,8 @@ the Subly relayer refuses any payment the spendable yield cannot cover.
 
 ## One-time wallet setup (if not done yet)
 
+Use Node.js 24+. Set SUBLY_RELAYER_URL explicitly, run `npx -y @subly_fi/pay@0.7.0 doctor`, and review the vault before depositing. This is beta software without an external audit; principal value is not guaranteed.
+
 Subly does NOT create wallets — bring your own Solana keypair. If
 `SUBLY_DEMO_AGENT_KEYPAIR_PATH` is not set or the wallet has no vault
 balance, guide the user through this once:
@@ -51,23 +53,20 @@ balance, guide the user through this once:
    The printed public key is the agent wallet address. The private key
    stays in that file — never share or print it.
 2. Point the skill at it: `export SUBLY_DEMO_AGENT_KEYPAIR_PATH=~/.subly/agent.json`
-3. Send USDC (Solana mainnet) to that address. No SOL is needed — fees are
-   sponsored.
+3. Send USDC (Solana mainnet) to that address. Vault fees require a funded relayer sponsor; seller payment fees require its facilitator.
 4. Appoint the human owner and make the first deposit (one Face ID covers
    both). Agree the spending limits and the first deposit amount in chat,
-   then create the setup link (minimum deposit is just over 1 USDC — the
-   vault's share rounding refuses exactly 1.000000):
-   `npx -y @subly_fi/pay setup-link --initial-deposit 1010000`
+   then create the setup link (the example is 1.01 USDC; minimums depend on the selected vault):
+   `npx -y @subly_fi/pay@0.7.0 setup-link --initial-deposit 1010000`
    Paste the printed `setupUrl` to the user VERBATIM — it expires in 10
    minutes and works once. The human opens it on their phone, reviews the
    limits, and confirms with Face ID (passkey) or a Solana wallet signature.
    After they say they finished, verify and deposit:
-   `npx -y @subly_fi/pay setup-status <sessionId>` (the pasted setupUrl
+   `npx -y @subly_fi/pay@0.7.0 setup-status <sessionId>` (the pasted setupUrl
    works as the argument too) → status "completed"
-   `npx -y @subly_fi/pay deposit 1010000` (the pre-approved first deposit
+   `npx -y @subly_fi/pay@0.7.0 deposit 1010000` (the pre-approved first deposit
    is picked up automatically; deposit also self-registers the wallet).
-5. Yield accrues over time; a payment needs the price plus a fixed overhead
-   (~0.0035 USDC: 0.001 vault withdrawal penalty + 0.0025 fee headroom) of
+5. Yield accrues over time; a payment needs the price plus the selected vault fees and relayer headroom in
    spendable yield.
 
 ## How to run
@@ -76,13 +75,13 @@ Run the one-shot pay command (no clone — uses the published package via npx)
 with the resource URL:
 
 ```bash
-npx -y @subly_fi/pay fetch "<url>"
+npx -y @subly_fi/pay@0.7.0 fetch "<url>"
 ```
 
 To set a tighter per-call cap (raw USDC, 6 decimals — e.g. 100 = 0.0001 USDC):
 
 ```bash
-npx -y @subly_fi/pay fetch "<url>" 100
+npx -y @subly_fi/pay@0.7.0 fetch "<url>" 100
 ```
 
 The command prints a single JSON object on stdout. On success it contains
@@ -109,14 +108,14 @@ body and the receipt to the user.
     exactly as printed. It repeats the SAME cap — approval-needing prices
     exceed the default cap, so dropping it would refuse with
     `amount_exceeds_client_cap`:
-    `npx -y @subly_fi/pay fetch "<url>" <sameMaxAmountRawUsdc> apr_<approvalId>`
+    `npx -y @subly_fi/pay@0.7.0 fetch "<url>" <sameMaxAmountRawUsdc> apr_<approvalId>`
   - `state_persist_failed` → the local pending-payment marker could not be
     stored. Do not retry until the state path/disk issue is fixed.
 
 ## Deposits and withdrawals
 
-- `npx -y @subly_fi/pay deposit <amountRawUsdc> [apr_<approvalId>]`
-- `npx -y @subly_fi/pay withdraw <amountRawUsdc> [apr_<approvalId>]`
+- `npx -y @subly_fi/pay@0.7.0 deposit <amountRawUsdc> [apr_<approvalId>]`
+- `npx -y @subly_fi/pay@0.7.0 withdraw <amountRawUsdc> [apr_<approvalId>]`
 
 Deposits move principal into DeFi risk, so they require the human owner's
 approval. If the output contains `"approvalRequired": true`, paste the
@@ -135,3 +134,5 @@ applies only when the owner's mandate opts into withdrawal approval.
 - Paste setup/approve links exactly as printed; never alter the values the
   human is asked to confirm, and never claim an approval happened — always
   verify via setup-status or by retrying with the approval id.
+
+Preserve `SUBLY_MCP_STATE_PATH` across processes and restarts. An unknown payment outcome blocks retries. A stale `.lock` may be removed only after all clients using it stop; never delete pending-state JSON to retry.

@@ -102,6 +102,8 @@ export interface StandardX402PendingPaymentRecord {
 }
 
 export interface StandardX402StateStore {
+  /** Serialize all read/modify/payment/write work across clients sharing a store. */
+  withExclusiveLock?<T>(operation: () => Promise<T>): Promise<T>;
   load(): StandardX402PendingPaymentRecord[];
   save(records: StandardX402PendingPaymentRecord[]): void;
 }
@@ -215,11 +217,15 @@ export class StandardX402Payer {
       return existingFlow;
     }
 
-    const flow = this.run(input, {
-      method,
-      requestBodyHash,
-      pendingKey
-    }, realizer).finally(() => {
+    const run = async () => {
+      if (this.stateStore?.withExclusiveLock) {
+        this.pending.clear();
+        for (const record of this.stateStore.load()) this.pending.set(record.key, record);
+      }
+      return this.run(input, { method, requestBodyHash, pendingKey }, realizer);
+    };
+    const flow = (this.stateStore?.withExclusiveLock
+      ? this.stateStore.withExclusiveLock(run) : run()).finally(() => {
       this.inFlight.delete(pendingKey);
     });
     this.inFlight.set(pendingKey, flow);

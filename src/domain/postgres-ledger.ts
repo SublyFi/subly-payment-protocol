@@ -1,3 +1,4 @@
+import { ApprovalRequiredError } from "./errors.js";
 import { SUBLY_VAULT } from "../config/constants.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { Pool, type PoolClient, type PoolConfig } from "pg";
@@ -537,6 +538,11 @@ export class PostgresLedger implements Ledger {
     return saved.rows[0].data as SetupSession;
   }
 
+  async checkHealth(): Promise<void> {
+    await this.ensureSchema();
+    await this.pool.query("select 1");
+  }
+
   async close(): Promise<void> {
     await this.pool.end();
   }
@@ -574,7 +580,10 @@ export class PostgresLedger implements Ledger {
       await client.query("commit");
       return result;
     } catch (error) {
-      await client.query("rollback");
+      // An approval-required response is a committed domain outcome: its
+      // capability row must survive so the owner can open the returned URL.
+      // All unexpected failures retain ordinary transaction rollback.
+      await client.query(error instanceof ApprovalRequiredError ? "commit" : "rollback");
       throw error;
     } finally {
       client.release();

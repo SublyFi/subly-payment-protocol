@@ -1,11 +1,11 @@
 {
   "name": "subly-agent-payments",
-  "version": "0.1.0",
+  "version": "0.7.0",
   "private": true,
   "license": "MIT",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "scripts": {
     "dev": "NODE_ENV=development tsx watch src/index.ts",
@@ -20,7 +20,10 @@
     "demo:legacy:buyer": "NODE_ENV=development tsx demo/buyer.ts",
     "demo:deposit": "NODE_ENV=development tsx demo/deposit.ts",
     "demo:withdraw": "NODE_ENV=development tsx demo/withdraw.ts",
-    "demo:legacy:pay": "NODE_ENV=development tsx demo/pay.ts"
+    "demo:legacy:pay": "NODE_ENV=development tsx demo/pay.ts",
+    "check": "npm run typecheck && npm test && npm run build && npm run docs:check",
+    "docs:check": "node scripts/check-docs.mjs",
+    "test:package": "node scripts/test-package.mjs"
   },
   "dependencies": {
     "@kamino-finance/farms-sdk": "3.2.24",

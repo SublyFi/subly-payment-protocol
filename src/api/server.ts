@@ -228,7 +228,7 @@ export function buildServer(
       refillPerSecond: apiRatePerMinute / 60
     });
     server.addHook("onRequest", async (request, reply) => {
-      if (request.url === "/healthz") {
+      if ((request.url === "/healthz" || request.url === "/readyz")) {
         return;
       }
       if (!apiLimiter.tryTake(request.ip)) {
@@ -290,6 +290,11 @@ export function buildServer(
   server.get("/healthz", async () => ({
     ok: true
   }));
+
+  server.get("/readyz", async (_request, reply) => {
+    try { await service.ledger.checkHealth?.(); return { ok: true }; }
+    catch { return reply.code(503).send({ ok: false }); }
+  });
 
   server.get("/v1/vaults", async () => ({
     defaultVault: service.vault.address,

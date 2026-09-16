@@ -9,7 +9,10 @@ permissions:
   contents: read
 
 jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
   publish:
+    needs: verify
     name: Publish client package
     runs-on: ubuntu-latest
     permissions:
@@ -25,9 +28,9 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             packages/pay/package-lock.json
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       # The package build inlines shared demo/src code from the repository.
-      - run: npm ci
+      - run: npm ci --ignore-scripts
         working-directory: packages/pay
       - name: Verify release tag matches package version
         env:

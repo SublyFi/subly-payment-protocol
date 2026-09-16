@@ -30,6 +30,13 @@ services:
 
   relayer:
     build: ..
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 60s
     restart: unless-stopped
     env_file: relayer.production.env
     environment:
@@ -54,7 +61,8 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      - relayer
+      relayer:
+        condition: service_healthy
 
 volumes:
   pgdata:

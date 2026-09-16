@@ -1,3 +1,4 @@
+import { previewRpc } from "./helpers/withdrawal-preview.js";
 import { describe, expect, it, vi } from "vitest";
 import { SUBLY_VAULT } from "../src/config/constants.js";
 import type { AgentWalletSigner } from "../src/client/agent-wallet-signer.js";
@@ -27,6 +28,7 @@ function fakeSigner(): AgentWalletSigner {
 /** rpc.getTokenAccountBalance().send() -> { value: { amount } }. */
 function fakeRpc(ataAmount: bigint): SolanaRpc {
   return {
+    ...previewRpc(WALLET, 10_000n),
     getTokenAccountBalance: () => ({
       send: async () => ({ value: { amount: ataAmount.toString() } })
     })
@@ -61,7 +63,8 @@ describe("RelayerYieldRealizer", () => {
           withdrawalId: "wd_1",
           serializedTransaction: "preparedTxB64",
           destinationUsdcAta: "ata",
-          signingIntent: { wallet: WALLET }
+          requestedWithdrawRawUsdc: "10000", purpose: "yield_realize",
+          signingIntent: { wallet: WALLET, vault: SUBLY_VAULT.address, allowFullExit: false }
         });
       }
       if (u.endsWith("/v1/withdrawals/submit")) {
@@ -117,7 +120,8 @@ describe("RelayerYieldRealizer", () => {
           withdrawalId: "wd_1",
           serializedTransaction: "preparedTxB64",
           destinationUsdcAta: "ata",
-          signingIntent: { wallet: WALLET }
+          requestedWithdrawRawUsdc: "10000", purpose: "yield_realize",
+          signingIntent: { wallet: WALLET, vault: SUBLY_VAULT.address, allowFullExit: false }
         });
       }
       if (u.endsWith("/v1/withdrawals/submit")) {

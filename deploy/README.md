@@ -10,11 +10,11 @@ sellers (Nansen uses PayAI, Base sellers use Coinbase CDP, ...). A relayer
 operator provides exactly three things:
 
 - **Gas sponsorship** — a sponsor keypair fronts the network fees for every
-  deposit / withdraw / yield-realize transaction, so end users never need SOL.
+  deposit / withdraw / yield-realize transaction, when sponsorship is available.
 - **The ledger** — a Postgres database tracking each wallet's principal
   basis, accrued yield, and fee debt.
 - **The yield-only guard** — the server-side rule that `yield_realize`
-  withdrawals never exceed spendable yield, so payments never spend principal.
+  withdrawals never exceed spendable yield, according to the relayer ledger.
 
 The x402 payment transaction itself is fee-paid by the *seller's* facilitator
 (`extra.feePayer`), not by your sponsor — budget roughly one sponsored
@@ -35,12 +35,11 @@ secrets/sponsor.json    <- sponsor key (host only, never baked into the image)
   Inbound TCP **80 and 443** must be open in the host firewall / cloud
   security group — Caddy provisions TLS automatically and needs port 80 for
   certificate issuance.
-- Node.js >= 20 with npm, on the server or your workstation, for the
+- Node.js 24+ with npm, on the server or your workstation, for the
   one-time on-chain setup scripts below (the relayer itself runs in Docker).
 - A **dedicated / paid Solana RPC endpoint** — the public RPC is not
   sufficient for the settlement path.
-- A **sponsor wallet**: create it and fund it with SOL (~0.5 SOL is a
-  comfortable start; the default alert threshold is 0.1 SOL):
+- A **sponsor wallet**: create it and fund it with SOL (size its balance for expected gas and rent; the default alert threshold is 0.1 SOL):
 
   ```bash
   solana-keygen new --no-bip39-passphrase -o sponsor.json
@@ -56,12 +55,17 @@ secrets/sponsor.json    <- sponsor key (host only, never baked into the image)
 
 ## Get the code onto the host
 
-No git credentials belong on the server — ship a tarball (or `git clone` if
-you prefer). Everything below assumes the repo lives at `/opt/subly`:
+Use the reviewed `pay-v0.7.0` source tag. You can clone anonymously:
+
+```bash
+git clone --branch pay-v0.7.0 --depth 1 https://github.com/SublyFi/subly-payment-protocol.git
+```
+
+Alternatively ship a tarball from that tag. Everything below assumes the repo lives at `/opt/subly`:
 
 ```bash
 # locally
-git archive --format=tar.gz -o /tmp/subly.tar.gz HEAD
+git archive --format=tar.gz -o /tmp/subly.tar.gz pay-v0.7.0
 scp /tmp/subly.tar.gz <user>@<host>:/tmp/
 # on the server
 sudo mkdir -p /opt/subly && sudo tar xzf /tmp/subly.tar.gz -C /opt/subly
@@ -75,13 +79,20 @@ On the server:
 cd /opt/subly/deploy
 cp relayer.production.env.example relayer.production.env   # fill in (see notes below)
 cp Caddyfile.example Caddyfile                              # set your domain
-mkdir -p secrets                                            # sponsor key -> secrets/sponsor.json
+mkdir -p secrets                                            # copy sponsor key to secrets/sponsor.json
+# The relayer runs as UID 1000. Allow that user to read only this key:
+sudo chown 1000:1000 secrets/sponsor.json
+sudo chmod 600 secrets/sponsor.json
 echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" > .env
-docker compose up -d --build
-curl -s https://<your-domain>/healthz                       # {"ok":true}
+chmod 600 .env relayer.production.env
+docker compose config --quiet
+docker compose up -d --build --wait
+curl --fail https://<your-domain>/readyz                       # {"ok":true}
 ```
 
-On a fresh database, the schema auto-creates on first connection. For an
+The runtime image is non-root, read-only, and installs production dependencies with lifecycle scripts disabled. It drains requests on SIGTERM and closes PostgreSQL. `/healthz` checks liveness; `/readyz` checks the database and initialized schema. Neither guarantees RPC liquidity or sponsor funding.
+
+On a fresh database, the schema auto-creates before HTTP startup. For an
 existing deployment, read the migration notes under [vault configuration](#existing-deployments-and-retiring-vaults). Notes on `relayer.production.env`:
 
 - **`SUBLY_APPROVE_URL_BASE` / `SUBLY_SETUP_URL_BASE` must point at your own
@@ -99,7 +110,7 @@ existing deployment, read the migration notes under [vault configuration](#exist
 
 ## One-time on-chain setup
 
-Both scripts run **from the repo root** on a machine with Node >= 20 after
+Both scripts run **from the repo root** on a machine with Node 24+ after
 `npm ci` — either the server or your workstation. They read the sponsor key
 from `SUBLY_SPONSOR_KEYPAIR_PATH` (file) or `SUBLY_SPONSOR_KEYPAIR` (base58
 secret), so from a workstation you need one of the two available locally.
@@ -145,17 +156,17 @@ including your lookup table; moves no funds):
 SOLANA_RPC_URL=<rpc> SUBLY_EXTRA_LOOKUP_TABLES=<your LUT> npm run validate:mainnet
 ```
 
-Then do one end-to-end dry run against your live relayer with your own
+Then do one end-to-end **real-funds smoke test** against your live relayer with your own
 wallet before inviting anyone else (the test wallet needs a little USDC; see
 the client README's "Wallet" section for keypair options):
 
 ```bash
 export SUBLY_RELAYER_URL=https://<your-domain>
 export SUBLY_DEMO_AGENT_KEYPAIR_PATH=<test wallet keypair.json>
-npx -y @subly_fi/pay setup-link --initial-deposit 1010000   # owner signs on your domain
-npx -y @subly_fi/pay deposit 1010000
-# ...once yield has accrued: npx -y @subly_fi/pay fetch <x402 url>
-npx -y @subly_fi/pay withdraw 1000000
+npx -y @subly_fi/pay@0.7.0 setup-link --initial-deposit 1010000   # owner signs on your domain
+npx -y @subly_fi/pay@0.7.0 deposit 1010000
+# ...once yield has accrued: npx -y @subly_fi/pay@0.7.0 fetch <x402 url>
+npx -y @subly_fi/pay@0.7.0 withdraw 1000000
 ```
 
 ## Monitoring and backups
@@ -180,7 +191,8 @@ basis, forfeiting users' accrued yield). Ship a dump off-host regularly:
 ```bash
 0 * * * * cd /opt/subly/deploy && docker compose exec -T postgres \
   pg_dump -U postgres subly | gzip > /backups/subly-$(date +\%F-\%H).sql.gz
-# restore: gunzip -c <dump> | docker compose exec -T postgres psql -U postgres subly
+# Restore into a NEW empty database with relayer traffic stopped.
+# Do not merge a dump into a live ledger. Validate restoration before resuming traffic.
 ```
 
 Routine recovery: if a wallet's position flips to `needs_baseline_reset`
@@ -199,22 +211,21 @@ Your users run the standard published client — they just override the
 relayer URL:
 
 ```bash
-SUBLY_RELAYER_URL=https://<your-domain> npx -y @subly_fi/pay fetch <url>
+SUBLY_RELAYER_URL=https://<your-domain> npx -y @subly_fi/pay@0.7.0 fetch <url>
 # or put SUBLY_RELAYER_URL in the MCP server's env block
 ```
 
 No API token — buyer requests are wallet-signature authenticated. With
 `SUBLY_MANDATE_ENFORCEMENT=on` (recommended above), a user's **first action
-is the owner setup link** (`npx -y @subly_fi/pay setup-link
+is the owner setup link** (`npx -y @subly_fi/pay@0.7.0 setup-link
 --initial-deposit 1010000`, or the `create_subly_setup_link` MCP tool): the
 owner signs the spending mandate and pre-approves the first deposit with one
 Face ID. A bare first deposit is refused with `mandate_required_for_deposit`,
 and later deposits also require owner approval under the default policy.
 
-Things worth telling your users up front: minimum deposit is just over
-1 USDC (`1010000` raw — exactly `1000000` is refused), each payment needs
-price + ~0.0035 USDC of spendable yield (withdrawal penalty + fee headroom),
-they never need SOL, and only x402 sellers offering a Solana USDC `exact`
+Things worth telling your users up front: the minimum deposit depends on the vault (the example uses `1010000` raw), each payment needs
+price plus the selected vault's fees and relayer headroom,
+they need fee sponsorship from both the relayer and seller facilitator, and only x402 sellers offering a Solana USDC `exact`
 rail with facilitator `extra.feePayer` support are payable.
 
 ## Operator economics (honest)
@@ -230,8 +241,7 @@ but no USDC ever flows back to you**. There is no fee-collection mechanism
 in the code today: fee debt is an accounting offset, not revenue, and a user
 who exits takes the offset value with them. Run the numbers accordingly —
 sponsored gas is currently an operating cost, and any revenue model (e.g. a
-performance fee on realized yield, per
-[`docs/business-model.md`](../docs/business-model.md)) is yours to implement.
+performance fee on realized yield) is yours to implement.
 
 ## Advanced: your own Kamino vault
 
@@ -298,8 +308,7 @@ the client uses its own copy to validate exactly which vault/share mint/farm
 it signs for. `GET /v1/vaults` advertises relayer support; it does not install
 or replace the signer's local trust anchors. Client catalogues can be a subset,
 but metadata must match for every selected vault. Restart processes after
-changing files. Use a client **built from this checkout**; installing the
-currently published npm package does not install unshipped source changes.
+changing files. Use `@subly_fi/pay@0.7.0` or a newer compatible client on every machine.
 
 ### 3. Let the user choose
 
@@ -376,6 +385,9 @@ address requires an explicit share mint and farm; the no-farm value is
 takes precedence over those individual mint/farm variables.
 
 ## Updating a running deployment
+
+Stop traffic and take a tested database backup before upgrading. Do not mix old/new relayer versions across the vault-mandate migration. A binary rollback alone is unsafe after new writes: restore the pre-upgrade database into an empty database, reconcile chain activity, then resume. Preserve client pending-state JSON across upgrades.
+
 
 For multi-vault deployments, include `-f docker-compose.yml -f docker-compose.vaults.yml`
 in the Compose commands below.

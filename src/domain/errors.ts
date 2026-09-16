@@ -12,6 +12,14 @@ export class SublyError extends Error {
   }
 }
 
+/** An expected policy refusal whose newly created approval must be committed. */
+export class ApprovalRequiredError extends SublyError {
+  constructor(code: string, message: string, details: unknown) {
+    super(code, message, 409, details);
+    this.name = "ApprovalRequiredError";
+  }
+}
+
 export function badRequest(code: string, message: string, details?: unknown): SublyError {
   return new SublyError(code, message, 400, details);
 }

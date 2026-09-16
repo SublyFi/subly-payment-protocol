@@ -7,7 +7,7 @@ import {
 
 /**
  * Loads a 64-byte ed25519 keypair from either a base58 string or a JSON
- * byte-array file (solana-keygen format). Exactly one source must be set.
+ * byte-array file (solana-keygen format). A nonempty base58 value takes precedence over a file path.
  */
 export async function loadKeyPairSigner(params: {
   base58Secret?: string | undefined;

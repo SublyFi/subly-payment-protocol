@@ -304,7 +304,14 @@ describe("SublyX402Client", () => {
       temporarySettlementSignature: "temp-signature",
       intentJson: {
         serializedTransaction: "c2VyaWFsaXplZA==",
-        signingIntent: { paymentId: "pay_from_prepare", wallet: WALLET }
+        signingIntent: { paymentId: "pay_from_prepare", wallet: WALLET,
+          scheme: PAYMENT_SCHEME, network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+          vault: SUBLY_VAULT.address, shareMint: SUBLY_VAULT.shareMint,
+          asset: SUBLY_VAULT.usdcMint, seller: SELLER, sellerRequestId: "seller_req_x402",
+          httpMethod: "GET", canonicalResourceUrl: RESOURCE, requestBodyHash: EMPTY_BODY_HASH,
+          amountRawUsdc: "500000", payTo: SELLER, sellerUsdcAta: SELLER_USDC_ATA,
+          requestBindingHash: bindingHashForPricedRequest()
+        }
       }
     };
   }
@@ -405,4 +412,16 @@ describe("SublyX402Client", () => {
     expect(sellerCalls).toHaveLength(2);
     expect(sellerCalls[1]?.[PAYMENT_SIGNATURE_HEADER]).toBeDefined();
   });
+
+it("refuses a replacement legacy payment destination before signing", async () => {
+  const signer = fakeSigner();
+  const prepared = prepareResponse();
+  prepared.intentJson.signingIntent.payTo = WALLET;
+  const client = new SublyX402Client({ facilitatorBaseUrl: "https://facilitator.test", signer,
+    fetchImpl: async () => ({ status: 200, headers: { get: () => null }, json: async () => prepared }) });
+  await expect(client.buildPaymentSignatureHeader({ paymentRequiredHeader: sellerChallengeHeader(),
+    httpMethod: "GET", url: RESOURCE })).rejects.toMatchObject({ reason: "prepared_intent_mismatch" });
+  expect(signer.signedIntents).toHaveLength(0);
+});
+
 });

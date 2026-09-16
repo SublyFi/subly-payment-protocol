@@ -1,7 +1,7 @@
 {
   "name": "@subly_fi/pay",
-  "version": "0.6.2",
-  "description": "Subly client: pay compatible standard x402 Solana USDC exact APIs from Kamino vault yield — the seller needs no Subly integration. Ships an MCP server and a one-shot pay/deposit CLI; non-custodial (signs locally with your own key).",
+  "version": "0.7.0",
+  "description": "Subly client: pay compatible standard x402 Solana USDC exact APIs from Kamino vault yield \u2014 the seller needs no Subly integration. Ships an MCP server and a one-shot pay/deposit CLI; non-custodial (signs locally with your own key).",
   "keywords": [
     "x402",
     "solana",
@@ -15,7 +15,7 @@
   "license": "MIT",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "bin": {
     "pay": "dist/cli.js"
@@ -28,8 +28,9 @@
   "scripts": {
     "build": "node build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "prepublishOnly": "npm run build",
-    "pack:check": "npm pack --dry-run --json"
+    "pack:check": "npm pack --dry-run --json",
+    "prepack": "npm run build",
+    "check": "npm run typecheck && npm run build && npm run pack:check"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
@@ -54,6 +55,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/SublyFi/subly-payment-protocol.git"
+    "url": "git+https://github.com/SublyFi/subly-payment-protocol.git",
+    "directory": "packages/pay"
   }
 }

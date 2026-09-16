@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   dependency-audit:
-    name: npm audit (advisory)
+    name: Dependency audits
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -24,8 +24,7 @@ jobs:
             packages/pay/package-lock.json
       - run: npm ci
       - name: Audit relayer dependencies
-        run: npm audit --omit=dev --audit-level=high
-        continue-on-error: true
+        run: node scripts/audit-relayer.mjs
       - run: npm ci
         working-directory: packages/pay
       - name: Audit published client dependencies

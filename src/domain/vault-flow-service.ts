@@ -31,6 +31,7 @@ import {
   signatureBase58ForSigner
 } from "../solana/tx.js";
 import { computePositionValueRawUsdc, evaluatePaymentBudget } from "./budget.js";
+import { YIELD_REALIZE_ROUNDING_RAW_USDC } from "./withdrawal-rounding.js";
 import { badRequest, conflict, notFound } from "./errors.js";
 import type { Ledger } from "./ledger.js";
 import type {
@@ -464,7 +465,8 @@ export class VaultFlowService {
       let grossWithdrawRawUsdc: bigint;
       try {
         grossWithdrawRawUsdc = grossWithdrawForNetTarget({
-          targetNetRawUsdc: amountRawUsdc,
+          targetNetRawUsdc: amountRawUsdc +
+            (input.purpose === "yield_realize" ? YIELD_REALIZE_ROUNDING_RAW_USDC : 0n),
           penaltyBps: context.withdrawalPenaltyBps,
           penaltyLamports: context.withdrawalPenaltyLamports
         });

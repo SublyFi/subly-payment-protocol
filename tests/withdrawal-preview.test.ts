@@ -8,6 +8,16 @@ const wallet = "GPqt7ksu6LoKAx7PXEDb54bjrN5fs9R61TkzyL5X3H1M";
 const request = { wallet, vault: SUBLY_VAULT, serializedTransaction: "unsigned", amountRawUsdc: 10_000n };
 
 describe("withdrawal preview before signing", () => {
+  it("refuses even a one-unit shortfall when realizing an exact payment", async () => {
+    await expect(assertWithdrawalPreview({ ...request, purpose: "yield_realize", rpc: previewRpc(wallet, 9_999n) })).rejects.toThrow("differs");
+    await expect(assertWithdrawalPreview({ ...request, rpc: previewRpc(wallet, 9_999n) })).resolves.toBeUndefined();
+  });
+  it.each([10_000n, 10_005n, 10_010n])("accepts a fully funded realize within the fixed allowance: %s", async amount => {
+    await expect(assertWithdrawalPreview({ ...request, purpose: "yield_realize", rpc: previewRpc(wallet, amount) })).resolves.toBeUndefined();
+  });
+  it("refuses excessive liquidation even for yield realization", async () => {
+    await expect(assertWithdrawalPreview({ ...request, purpose: "yield_realize", rpc: previewRpc(wallet, 10_011n) })).rejects.toThrow("differs");
+  });
   it("accepts the requested amount with bounded whole-share rounding", async () => {
     await expect(assertWithdrawalPreview({ ...request, rpc: previewRpc(wallet, 10_003n) })).resolves.toBeUndefined();
   });

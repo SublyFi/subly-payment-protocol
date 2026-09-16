@@ -62,17 +62,17 @@ secrets/sponsor.json    <- sponsor key (host only, never baked into the image)
 
 ## Get the code onto the host
 
-Use the reviewed `pay-v0.7.1` source tag. You can clone anonymously:
+Use the reviewed `pay-v0.7.2` source tag. You can clone anonymously:
 
 ```bash
-git clone --branch pay-v0.7.1 --depth 1 https://github.com/SublyFi/subly-payment-protocol.git
+git clone --branch pay-v0.7.2 --depth 1 https://github.com/SublyFi/subly-payment-protocol.git
 ```
 
 Alternatively ship a tarball from that tag. Everything below assumes the repo lives at `/opt/subly`:
 
 ```bash
 # locally
-git archive --format=tar.gz -o /tmp/subly.tar.gz pay-v0.7.1
+git archive --format=tar.gz -o /tmp/subly.tar.gz pay-v0.7.2
 scp /tmp/subly.tar.gz <user>@<host>:/tmp/
 # on the server
 sudo mkdir -p /opt/subly && sudo tar xzf /tmp/subly.tar.gz -C /opt/subly
@@ -124,9 +124,13 @@ secret), so from a workstation you need one of the two available locally.
 Note: scripts read only process environment variables —
 `relayer.production.env` feeds the container, not these scripts.
 
-**Settlement lookup table.** Vault transactions can exceed Solana's
-1232-byte limit (farm-staked withdrawals measured 1326 bytes) unless the
-accounts are in an address lookup table:
+**Additional lookup table, when needed.** The current standard x402 flow
+uses separate withdrawal and payment transactions. It first uses the vault's
+existing lookup table. Run the read-only validation below before creating
+another table: only create one if your actual transactions exceed Solana's
+1232-byte limit. The retired atomic settlement diagnostic can exceed this
+limit even when current withdrawals fit; that alone is not a reason to spend
+SOL creating a table.
 
 ```bash
 cd /opt/subly && npm ci
@@ -156,19 +160,24 @@ insurance for your users' yield pace.
 
 ## Verify before onboarding users
 
-Run the read-only validation harness (simulates the full settlement path,
-including your lookup table; moves no funds):
+Run the read-only validation harness for the current withdrawal path. It
+checks mainnet identity, Pyth pricing, pinned vault metadata, normal and
+yield-realize transaction output and a delayed client preview. It loads
+`.env` automatically and also accepts `SOLANA_MAINNET_RPC_URL` as a fallback
+for `SOLANA_RPC_URL` (other runtime commands still use `SOLANA_RPC_URL`):
 
 ```bash
-SOLANA_RPC_URL=<rpc> SUBLY_EXTRA_LOOKUP_TABLES=<your LUT> \
-  SUBLY_HERMES_API_KEY=<key> npm run validate:mainnet
+SUBLY_VALIDATE_WALLET=<public wallet holding vault shares> npm run validate:mainnet
 ```
 
-Load real credentials from your local secret environment rather than recording them
-in shell history. The harness exits nonzero on incomplete settlement checks, missing
-shares, oversized transactions, simulation drift or oracle failure. If your RPC
-restricts wallet discovery, set `SUBLY_VALIDATE_WALLET` to a public address holding
-shares in the selected vault. No private key is needed for these simulations.
+Keep RPC and Pyth credentials in the local secret environment or ignored `.env`,
+not command history. Set `SUBLY_VALIDATE_SPONSOR` to a funded public address if
+the selected share owner has no SOL. The command never loads a keypair or sends
+a transaction; missing shares, oversize transactions, preview failures and
+oracle errors exit nonzero. Passing does not certify owner approval, deposit
+execution, the deployed ledger's yield provenance or an external seller.
+Use [the disposable fork test](../CONTRIBUTING.md#mainnet-fork-integration-test)
+to exercise the full local HTTP/client/transaction pipeline without real funds.
 
 Then do one end-to-end **real-funds smoke test** against your live relayer with your own
 wallet before inviting anyone else (the test wallet needs a little USDC; see
@@ -177,10 +186,10 @@ the client README's "Wallet" section for keypair options):
 ```bash
 export SUBLY_RELAYER_URL=https://<your-domain>
 export SUBLY_DEMO_AGENT_KEYPAIR_PATH=<test wallet keypair.json>
-npx -y @subly_fi/pay@0.7.1 setup-link --initial-deposit 1010000   # owner signs on your domain
-npx -y @subly_fi/pay@0.7.1 deposit 1010000
-# ...once yield has accrued: npx -y @subly_fi/pay@0.7.1 fetch <x402 url>
-npx -y @subly_fi/pay@0.7.1 withdraw 1000000
+npx -y @subly_fi/pay@0.7.2 setup-link --initial-deposit 1010000   # owner signs on your domain
+npx -y @subly_fi/pay@0.7.2 deposit 1010000
+# ...once yield has accrued: npx -y @subly_fi/pay@0.7.2 fetch <x402 url>
+npx -y @subly_fi/pay@0.7.2 withdraw 1000000
 ```
 
 ## Monitoring and backups
@@ -225,13 +234,13 @@ Your users run the standard published client — they just override the
 relayer URL:
 
 ```bash
-SUBLY_RELAYER_URL=https://<your-domain> npx -y @subly_fi/pay@0.7.1 fetch <url>
+SUBLY_RELAYER_URL=https://<your-domain> npx -y @subly_fi/pay@0.7.2 fetch <url>
 # or put SUBLY_RELAYER_URL in the MCP server's env block
 ```
 
 No API token — buyer requests are wallet-signature authenticated. With
 `SUBLY_MANDATE_ENFORCEMENT=on` (recommended above), a user's **first action
-is the owner setup link** (`npx -y @subly_fi/pay@0.7.1 setup-link
+is the owner setup link** (`npx -y @subly_fi/pay@0.7.2 setup-link
 --initial-deposit 1010000`, or the `create_subly_setup_link` MCP tool): the
 owner signs the spending mandate and pre-approves the first deposit with one
 Face ID. A bare first deposit is refused with `mandate_required_for_deposit`,
@@ -322,7 +331,7 @@ the client uses its own copy to validate exactly which vault/share mint/farm
 it signs for. `GET /v1/vaults` advertises relayer support; it does not install
 or replace the signer's local trust anchors. Client catalogues can be a subset,
 but metadata must match for every selected vault. Restart processes after
-changing files. Use `@subly_fi/pay@0.7.1` or a newer compatible client on every machine.
+changing files. Use `@subly_fi/pay@0.7.2` or a newer compatible client on every machine.
 
 ### 3. Let the user choose
 

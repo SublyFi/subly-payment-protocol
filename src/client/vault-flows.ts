@@ -279,7 +279,8 @@ export class VaultFlowClient {
       serializedTransaction: prepared.serializedTransaction,
       wallet: this.signer.walletAddress,
       vault: this.vault,
-      amountRawUsdc: input.amountRawUsdc
+      amountRawUsdc: input.amountRawUsdc,
+      ...(input.purpose === undefined ? {} : { purpose: input.purpose })
     });
     const signed = await this.signer.signWithdrawal({
       intent: prepared.signingIntent,

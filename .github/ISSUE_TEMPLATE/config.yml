@@ -6,3 +6,7 @@ contact_links:
   - name: Documentation
     url: https://github.com/SublyFi/subly-payment-protocol/tree/main/docs
     about: Read the documentation index and design notes before opening a usage question.
+
+  - name: Usage question
+    url: https://github.com/SublyFi/subly-payment-protocol/discussions
+    about: Ask about client setup, relayer operation or integration.

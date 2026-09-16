@@ -1,3 +1,4 @@
+import { computeRequestBindingHash } from "../domain/request-binding.js";
 import { SOLANA_MAINNET_NETWORK, SUBLY_VAULT } from "../config/constants.js";
 import { deriveAssociatedTokenAddress } from "../lib/associated-token-account.js";
 import type { AgentWalletSigner } from "../client/agent-wallet-signer.js";
@@ -119,6 +120,30 @@ export class SublyX402Client {
       httpMethod: input.httpMethod.toUpperCase(),
       requestBodyHash
     });
+
+    const expected = {
+      wallet: this.signer.walletAddress,
+      scheme: requirement.scheme,
+      network: requirement.network,
+      vault: requirement.extra.vault,
+      shareMint: requirement.extra.shareMint,
+      asset: requirement.asset,
+      seller: requirement.extra.seller,
+      sellerRequestId: requirement.extra.sellerRequestId,
+      httpMethod: input.httpMethod.toUpperCase(),
+      canonicalResourceUrl: input.url,
+      requestBodyHash,
+      amountRawUsdc: requirement.amountRawUsdc,
+      payTo: requirement.payTo,
+      sellerUsdcAta: requirement.extra.sellerUsdcAta
+    };
+    const intent = prepared.intentJson?.signingIntent;
+    const bindingHash = computeRequestBindingHash(expected);
+    if (!intent || Object.entries(expected).some(([key, value]) =>
+      intent[key as keyof PaymentSigningIntent] !== value) ||
+      intent.requestBindingHash !== bindingHash || prepared.requestBindingHash !== bindingHash) {
+      throw new X402ClientError("prepared_intent_mismatch", "The prepared payment differs from the selected seller challenge");
+    }
 
     const lookupTables =
       this.lookupTablesFor === null

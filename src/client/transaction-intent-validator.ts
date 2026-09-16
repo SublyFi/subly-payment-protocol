@@ -431,6 +431,9 @@ export function validateDepositIntentTransaction(params: {
       case MEMO_PROGRAM_ID:
         break;
       case KVAULT_PROGRAM_ID: {
+        if (sawDeposit) {
+          reject("duplicate_deposit", "A deposit intent authorizes exactly one KVault deposit");
+        }
         if (!bytesStartWith(ix.data, KVAULT_DEPOSIT_DISCRIMINATOR)) {
           reject("unexpected_instruction", "Unexpected KVault instruction in deposit");
         }

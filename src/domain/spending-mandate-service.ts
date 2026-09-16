@@ -1,3 +1,4 @@
+import { ApprovalRequiredError } from "./errors.js";
 import { SUBLY_VAULT } from "../config/constants.js";
 import { randomUUID } from "node:crypto";
 import { canonicalJson } from "../lib/canonical-json.js";
@@ -786,6 +787,32 @@ export class SpendingMandateService {
 
   // ------------------------------------------------------------ enforcement
 
+  /** Called under the wallet/vault lock immediately before sponsor signing. */
+  async assertPreparedAuthorization(input: {
+    wallet: string;
+    vault: string;
+    mandateHash: string | null;
+    approvalId: string | null;
+  }): Promise<void> {
+    if (this.config.enforcementLevel === "off") return;
+    const nowMs = this.now();
+    const effective = await this.resolvePolicy(input.wallet, nowMs, input.vault);
+    if (effective.revoked) {
+      throw conflict("mandate_revoked", "The owner revoked this mandate before submission");
+    }
+    if ((effective.mandate?.mandateHash ?? null) !== input.mandateHash) {
+      throw conflict("mandate_changed", "The mandate changed or expired; prepare a new operation");
+    }
+    if (input.approvalId !== null) {
+      const approval = await this.ledger.getSpendingApproval(input.approvalId);
+      if (approval === null || approval.wallet !== input.wallet ||
+          approval.mandateHash !== input.mandateHash ||
+          approval.status !== "approved" || approval.expiresAtMs <= nowMs) {
+        throw conflict("approval_no_longer_valid", "The owner approval is no longer valid; prepare again");
+      }
+    }
+  }
+
   /**
    * Mandate/default-policy gate for a yield-realize withdrawal, evaluated
    * BEFORE the yield-only budget guard. Returns the audit decision to stamp
@@ -1292,7 +1319,7 @@ export class SpendingMandateService {
         consumedByWithdrawalId: null
       }));
 
-    throw conflict(input.requiredCode, input.requiredMessage, {
+    throw new ApprovalRequiredError(input.requiredCode, input.requiredMessage, {
       approvalId: approval.approvalId,
       expiresAtMs: approval.expiresAtMs,
       approveUrl: this.approveUrl(approval.approvalId),

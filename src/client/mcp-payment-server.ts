@@ -28,7 +28,7 @@ const SETUP_STATUS_TOOL_NAME = "check_subly_setup";
 
 const SERVER_INSTRUCTIONS = `Subly lets an agent pay standard x402 (HTTP 402) \
 paid APIs that offer a Solana USDC exact rail with facilitator feePayer support \
-from its wallet's Kamino vault YIELD — the deposited principal is never spent, \
+from its wallet's Kamino vault YIELD — the relayer limits API spending to recorded yield, \
 and the seller needs no Subly integration. With a configured vault catalog, call \
 list_subly_vaults and select_subly_vault(vaultAddress) for the user's choice \
 before owner setup. All subsequent tools use that vault until changed. \
@@ -46,8 +46,8 @@ PRIVY_APP_SECRET, PRIVY_WALLET_ID, plus PRIVY_AUTHORIZATION_KEY for \
 owner-key wallets). With a \
 local keypair the private key never leaves that file; with a custody \
 provider it never enters this machine at all. Then fund the wallet with \
-USDC on Solana mainnet — no SOL is ever needed, all vault transaction fees \
-are sponsored.
+USDC on Solana mainnet — a funded relayer sponsors vault transaction fees, which \
+do not require agent SOL.
 
 Owner (human) onboarding: deposits require the human owner's approval \
 (Face ID / wallet signature). During the first deposit conversation, agree \
@@ -328,8 +328,7 @@ export function createMcpPaymentServer(
           `above maxAmountRawUsdc (default ${defaultMaxAmountRawUsdc} raw = ${formatRawUsdcAmount(
             defaultMaxAmountRawUsdc
           )} USDC) are refused without paying. Payments are refused when the ` +
-          "spendable yield budget cannot cover them — the principal is never " +
-          "spent. Use only for URLs you intend to purchase access to.",
+          "spendable yield budget cannot cover them — principal is excluded by the relayer policy. Use only for URLs you intend to purchase access to.",
         inputSchema: {
           type: "object",
           properties: {

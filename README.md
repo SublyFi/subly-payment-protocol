@@ -1,479 +1,104 @@
 # Subly
 
-> **Use Now, Pay Never.** Your yield pays your AI agent's API bills.
+**Pay for x402 APIs with the yield from a Kamino USDC vault on Solana.**
 
 [![CI](https://github.com/SublyFi/subly-payment-protocol/actions/workflows/ci.yml/badge.svg)](https://github.com/SublyFi/subly-payment-protocol/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/%40subly_fi%2Fpay)](https://www.npmjs.com/package/@subly_fi/pay)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Node.js >= 20](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](package.json)
-[![x402](https://img.shields.io/badge/protocol-x402-8A2BE2)](https://x402.org)
-[![Solana](https://img.shields.io/badge/network-Solana%20mainnet-14F195)](https://solana.com)
+[![MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Subly lets an AI agent pay for [x402](https://x402.org)-metered APIs from the **yield** on a one-time USDC deposit, instead of spending the deposit itself. You deposit USDC once into a [Kamino](https://kamino.finance) vault on Solana. When your agent hits an HTTP `402 Payment Required` paywall, Subly checks the accrued yield, realizes just enough of it into the agent's wallet, and pays the seller with a completely standard x402 USDC payment.
+Subly provides an open-source relayer and an MCP/CLI client. An agent deposits USDC into a selected Kamino Earn vault. When an API returns `402 Payment Required`, the client asks the relayer to realize enough accrued yield, then pays the seller using standard x402. Sellers do not need to integrate Subly.
 
-- **Sellers need no Subly integration.** They receive an ordinary x402 payment through their own facilitator (PayAI, Coinbase CDP, ...).
-- **Principal is protected by a server-side guard.** Payments are funded only from spendable yield; the deposit stays in the vault earning.
-- **Non-custodial.** Transactions are signed locally with your own Solana keypair (or your Circle / Privy custody wallet). Subly never holds your key.
-- **No SOL needed.** A sponsor wallet fronts all network fees; the agent wallet only ever holds USDC.
-- **Human-in-the-loop spending controls.** An owner-signed spending mandate sets caps, escalation thresholds, and a kill switch for the agent.
+| I want to… | Start here |
+| --- | --- |
+| Use Subly with an agent or the CLI | [Client quick start](packages/pay/README.md#quick-start) |
+| Operate my own relayer | [Operator guide](deploy/README.md) |
+| Try the API locally without funds | [Local development](#try-it-locally) |
+| Contribute a change | [Contributing](CONTRIBUTING.md) |
 
-```text
-Existing standard x402 seller
-  -> Buyer/agent receives 402
-  -> Subly checks spendable Kamino yield
-  -> Subly realizes yield into the agent wallet
-  -> Buyer pays the seller with standard x402
-```
+**Status:** MIT-licensed OSS, version `0.x` (beta). Mainnet vault operations use real funds. There has been no external security audit. Yield limits and owner mandates are enforced by the relayer; they do not guarantee principal value or prevent an agent with its own key from transacting elsewhere. See the [security model](docs/security-model.md) and [dependency status](docs/dependencies.md).
 
-As a rule of thumb: 1,000 USDC at 10% APY covers roughly 27 API calls per day at $0.01 each (before overhead).
+## What is included
 
-**Project status:** Subly is beta software, uses semantic version `0.x`, and has not had an external security audit. The root repository is public source; only [`@subly_fi/pay`](packages/pay) is published to npm. Read the [support](SUPPORT.md), [security](SECURITY.md), [governance](GOVERNANCE.md), and [release](RELEASE.md) policies before operating it with real funds.
-
-> [!WARNING]
-> This release is experimental and moves real funds on Solana mainnet. It has not undergone an external security audit, and the source-distributed relayer still has known upstream dependency advisories and an unresolved Kamino/Solana peer-dependency compatibility issue. The published client currently passes its production dependency audit, but that does not make the relayer or the Kamino vault risk-free. Use only amounts you can afford to lose, keep the beta limits small, and review the exact commit and configuration before self-hosting.
-
----
-
-## Table of contents
-
-- [Why Subly?](#why-subly)
-- [How it works](#how-it-works)
-- [Quick start](#quick-start)
-- [Using Subly from Claude (MCP)](#using-subly-from-claude-mcp)
-- [CLI reference](#cli-reference)
-- [Client configuration](#client-configuration)
-- [Spending controls (owner mandate)](#spending-controls-owner-mandate)
-- [Self-hosting the relayer](#self-hosting-the-relayer)
-- [Architecture](#architecture)
-- [Security & trust model](#security--trust-model)
-- [Known limitations](#known-limitations)
-- [Development](#development)
-- [Roadmap](#roadmap)
-- [Documentation](#documentation)
-- [Support](#support)
-- [Contributing](#contributing)
-- [Governance](#governance)
-- [Changelog](#changelog)
-- [License](#license)
-- [Disclaimer](#disclaimer)
-
-## Why Subly?
-
-**Autonomous payments, manual top-ups.** AI agents are getting genuinely good at metered, pay-per-call work — market data, on-chain analytics, research APIs priced at $0.01–$0.05 per call over x402. But their funding model is still a human refilling a wallet. When the wallet runs dry, the agent stops.
-
-Subly replaces the top-up loop with an endowment model: deposit once, and the deposit's yield becomes a self-refilling API budget. The agent spends the interest; the principal is not spent on API calls.
-
-## How it works
+- **Client:** `@subly_fi/pay` exposes setup, deposits, budgets, withdrawals and paid API requests through CLI and stdio MCP.
+- **Relayer:** Fastify API with wallet-signature authentication, sponsored vault transactions, owner spending controls and a PostgreSQL ledger.
+- **Self-hosting:** Docker Compose with PostgreSQL and Caddy HTTPS; no Subly account, operator allowlist or proprietary service is required.
+- **Vault choice:** a reviewed local catalogue of compatible mainnet USDC Kamino Earn vaults, with separate accounting and mandates for each vault.
 
 ```mermaid
 sequenceDiagram
-    participant Agent as AI agent
-    participant Pay as @subly_fi/pay (MCP / CLI)
-    participant Relayer as Subly relayer
+    participant Client as Agent / Subly client
+    participant Relayer as Your relayer
     participant Vault as Kamino USDC vault
-    participant Seller as x402 API seller
-
-    Agent->>Pay: fetch(url)
-    Pay->>Seller: GET url (unpaid probe)
-    Seller-->>Pay: 402 Payment Required (Solana USDC "exact")
-    Pay->>Relayer: prepare yield-realize (price + overhead)
-    Relayer->>Vault: withdraw accrued yield only (sponsor pays gas)
-    Vault-->>Pay: USDC lands in the agent wallet
-    Pay->>Seller: retry with X-PAYMENT (signed locally, standard x402)
-    Seller-->>Agent: 200 OK + response body
-    Pay->>Relayer: report payment tx (audit trail)
+    participant Seller as Standard x402 seller
+    Client->>Seller: Request API
+    Seller-->>Client: 402 + price and payment rail
+    Client->>Relayer: Request yield realization
+    Relayer-->>Client: Prepared withdrawal
+    Client->>Client: Validate and sign
+    Client->>Relayer: Signed transaction
+    Relayer->>Vault: Sponsor and submit
+    Vault-->>Client: USDC to agent wallet
+    Client->>Seller: Standard x402 payment
+    Seller-->>Client: API response
 ```
 
-Throughout this document, the **relayer** is Subly's buyer-side server (the vault / budget / yield-realize API) — it is *not* the seller's x402 facilitator; sellers keep their own.
+The relayer and the seller's **x402 facilitator** have different roles. The relayer sponsors vault transactions; the seller's facilitator sponsors the final x402 payment. Realization and payment are separate transactions, so the flow is not atomic.
 
-1. **Deposit.** The agent wallet deposits USDC into its selected Kamino vault. The relayer records the *principal basis*.
-2. **Yield accrues.** Vault share value grows against the basis; the difference is *spendable yield*.
-3. **402 challenge.** The agent calls a paid API without an API key and receives a standard x402 challenge. Subly selects the `scheme=exact` / `network=solana` / `asset=USDC` requirement.
-4. **Yield realize.** The relayer prepares a withdrawal capped to spendable yield (`purpose: "yield_realize"`) — a server-side guard rejects anything that would dip into principal. The sponsor pays gas.
-5. **Standard x402 payment.** The client signs the USDC payment locally (via the official `@x402/svm` + `@x402/fetch`) and retries the request. The seller returns the data.
-6. **Audit.** The payment transaction signature is reported back and bound to the realize, giving a per-payment spending log.
+## Use the client
 
-The realize and the payment are two separate transactions (deliberately — composite vault-withdraw+pay transactions don't pass external facilitators' policies), so the flow is standard-compatible rather than atomic.
-
-## Quick start
-
-**Prerequisites:** Node.js >= 20, the [Solana CLI](https://docs.anza.xyz/cli/install) (for `solana-keygen`), and some USDC on Solana mainnet. You do **not** need SOL, an API token, or a pre-registration — wallets self-register with signature auth on first use.
-
-### 1. Create an agent wallet
-
-Subly never creates or holds wallets — bring your own keypair:
+Install Node.js 24 and choose a relayer operator you trust. No repository clone is needed:
 
 ```bash
-mkdir -p ~/.subly
-solana-keygen new --no-bip39-passphrase -o ~/.subly/agent.json
-export SUBLY_DEMO_AGENT_KEYPAIR_PATH=~/.subly/agent.json
+npx -y @subly_fi/pay@0.7.0 --help
+export SUBLY_RELAYER_URL=https://your-relayer.example.com
+export SUBLY_DEMO_AGENT_KEYPAIR_PATH=/absolute/path/to/agent.json
+npx -y @subly_fi/pay@0.7.0 doctor
 ```
 
-(Prefer a custody wallet? See [Circle / Privy signers](#custody-signers-circle--privy).)
+Continue with the [client guide](packages/pay/README.md): review the vault, create an owner setup link, approve the policy, deposit, and check the budget before buying an API call. It also includes MCP configuration, custody signers and troubleshooting.
 
-### 2. Fund it with USDC
+Supported sellers must offer **Solana mainnet USDC `exact`** with `extra.feePayer`. The client checks the challenge at runtime; a seller name alone is not proof of compatibility. Amounts use six-decimal raw USDC units: `1000000` means 1 USDC. The default API payment cap is `10000` (0.01 USDC).
 
-Send USDC (Solana mainnet) to the printed address. No SOL — every transaction fee is sponsored.
+## Try it locally
 
-### 3. Deposit into the yield vault
-
-Amounts are **raw USDC units** (6 decimals): `1 USDC = 1_000_000`. The default vault minimum is just over 1 USDC (exactly `1000000` is refused by share rounding — use `1010000` or more). Other vaults have their own minimums:
-
-```bash
-npx -y @subly_fi/pay deposit 1010000   # 1.01 USDC
-```
-
-The first deposit auto-registers your wallet with the relayer. If the relayer requires owner setup first, the command prints instructions to create a one-time [setup link](#spending-controls-owner-mandate) (`pay setup-link --initial-deposit ...`). On the hosted beta relayer today the first deposit proceeds without owner setup, because mandate enforcement there still runs in `warn` mode — see [Spending controls](#spending-controls-owner-mandate).
-
-### 4. Pay an x402 API from yield
-
-```bash
-npx -y @subly_fi/pay fetch https://seller.example.com/api/premium
-```
-
-That's it. If the accrued yield doesn't cover the price yet, you'll get `insufficient_yield` — that's expected early on; yield accrues over time.
-
-> Works with any standard x402 seller that offers a **Solana USDC `exact`** rail with facilitator `extra.feePayer` support (meaning the seller side sponsors the payment transaction's network fee — true of common facilitators such as PayAI and Coinbase CDP). Examples: the pay-per-call crypto-data APIs (Nansen, CoinGecko, Birdeye, ...) priced at $0.01–$0.05 per request.
->
-> The client refuses to pay more than **0.01 USDC per call by default** — for pricier sellers, raise `SUBLY_MCP_MAX_AMOUNT_RAW_USDC` or pass the `maxAmountRawUsdc` argument, or you'll see `amount_exceeds_client_cap`.
-
-## Using Subly from Claude (MCP)
-
-The same package ships a stdio MCP server (`subly-payments`) so agents can manage the whole lifecycle — setup, deposit, budget check, payment, withdrawal — as tools.
-
-**Claude Code:**
-
-```bash
-claude mcp add subly -- npx -y @subly_fi/pay mcp
-```
-
-**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS, `%APPDATA%\Claude\claude_desktop_config.json` on Windows):
-
-```json
-{
-  "mcpServers": {
-    "subly": {
-      "command": "npx",
-      "args": ["-y", "@subly_fi/pay", "mcp"],
-      "env": {
-        "SUBLY_DEMO_AGENT_KEYPAIR_PATH": "/Users/you/.subly/agent.json"
-      }
-    }
-  }
-}
-```
-
-Claude Desktop does not inherit your shell environment: put every variable in the `env` block, use an **absolute** keypair path (`~` is not expanded), and if Node is installed via nvm set `command` to the absolute path from `which npx`. Restart the app fully after editing.
-
-### MCP tools
-
-| Tool | What it does |
-| --- | --- |
-| `create_subly_setup_link` | Creates a one-time owner setup link (spending mandate + pre-approved first deposit — one Face ID covers both). |
-| `check_subly_setup` | Polls a setup session (`pending` / `completed` / `expired`). |
-| `list_subly_vaults` / `select_subly_vault` | List configured USDC vaults and choose one for subsequent tools. |
-| `deposit_to_subly_vault` | Deposits USDC into the vault (gas sponsored). |
-| `get_subly_yield_budget` | Reports principal basis, position value, gross yield, and spendable yield. |
-| `fetch_with_subly_payment` | Fetches a URL; on a 402 it realizes yield and pays via standard x402. |
-| `withdraw_from_subly_vault` | Exit path — withdraws back to the agent wallet (may spend principal; instant liquidity only). |
-
-> **Tip:** in Claude Code, the tool-permission prompt *is* your payment confirmation. Don't set `fetch_with_subly_payment` to always-allow unless you fully trust the mandate caps.
-
-## CLI reference
-
-All subcommands run via `npx -y @subly_fi/pay <cmd>` (the bin is named `pay`).
-
-| Command | Description |
-| --- | --- |
-| `pay mcp` | Start the stdio MCP server (all config via env vars). |
-| `pay fetch <url> [maxAmountRawUsdc] [apr_<id>]` | One-shot paid fetch. Optional per-call price cap and owner-approval id for retries. |
-| `pay deposit <amountRawUsdc> [apr_<id>]` | Deposit into the vault. |
-| `pay withdraw <amountRawUsdc> [apr_<id>]` | Withdraw back to the agent wallet (exit path — may spend principal). |
-| `pay setup-link [--initial-deposit N] [--approval-threshold N] [--per-payment-cap N] [--daily-api-cap N] [--daily-deposit-cap N] [--ttl-days D]` | Create a one-time owner setup link (10-minute expiry, single-use). |
-| `pay setup-status <st_sessionId \| setupUrl>` | Check a setup session (public read, no key needed). |
-
-Examples:
-
-```bash
-# Pay a POST-body x402 seller
-SUBLY_PAY_METHOD=POST SUBLY_PAY_BODY='{"q":"..."}' \
-  npx -y @subly_fi/pay fetch https://seller.example.com/api/query
-
-# A payment above the approval threshold was refused with an approveUrl —
-# after the owner approves, retry the SAME url with the SAME cap plus the approval id:
-npx -y @subly_fi/pay fetch "https://seller.example.com/api/premium" 2000000 apr_1a2b3c
-
-# Exit: withdraw 1 USDC
-npx -y @subly_fi/pay withdraw 1000000
-```
-
-On an `approval_required` response **nothing has been paid** — the JSON includes an `approveUrl` for the owner and the exact retry command.
-
-## Client configuration
-
-All configuration is via environment variables (there are no config files and no API tokens — requests are authenticated by wallet signature).
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `SUBLY_DEMO_AGENT_KEYPAIR_PATH` | — | Path to a `solana-keygen` JSON keypair (required with the default `local` signer). |
-| `SUBLY_DEMO_AGENT_KEYPAIR` | — | Alternative: base58-encoded 64-byte secret key (checked before the path). |
-| `SUBLY_SIGNER_PROVIDER` | `local` | `local` \| `circle` \| `privy`. |
-| `SUBLY_RELAYER_URL` | `https://api.demo.sublyfi.com` | Relayer base URL. Point this at your own relayer when [self-hosting](#self-hosting-the-relayer). (`SUBLY_FACILITATOR_URL` is a legacy alias.) |
-| `SOLANA_RPC_URL` | `https://api.mainnet-beta.solana.com` | RPC used for lookup tables and building the x402 payment. |
-| `SUBLY_MCP_MAX_AMOUNT_RAW_USDC` | `10000` (0.01 USDC) | Client-side per-payment cap for `pay mcp` and `pay fetch`. |
-| `SUBLY_MCP_STATE_PATH` | `~/.subly/standard-x402-pending.json` | Local store of pending payments (double-payment protection). |
-| `SUBLY_PAY_METHOD` / `SUBLY_PAY_BODY` | `GET` / — | `pay fetch` only: HTTP method / JSON body for POST-body sellers. |
-| `SUBLY_VAULTS_FILE` | unset (single-vault fallback) | Local reviewed USDC vault catalogue; configure on both relayer and MCP/CLI. |
-| `SUBLY_VAULT_ADDRESS` | catalogue default or legacy Subly vault | Initial selection; must be listed when using a catalogue. Without a catalogue, a custom address also requires `SUBLY_VAULT_SHARE_MINT` and `SUBLY_VAULT_FARM`. |
-
-### Custody signers (Circle / Privy)
-
-Instead of a local keypair, the agent wallet can be a custody wallet. Every returned signature is verified locally against the wallet key and the exact transaction bytes before use.
-
-```bash
-# Circle developer-controlled wallet (LIVE credentials; sandbox = devnet is rejected)
-export SUBLY_SIGNER_PROVIDER=circle
-export CIRCLE_API_KEY=... CIRCLE_ENTITY_SECRET=... CIRCLE_WALLET_ID=...
-
-# Privy server wallet
-export SUBLY_SIGNER_PROVIDER=privy
-export PRIVY_APP_ID=... PRIVY_APP_SECRET=... PRIVY_WALLET_ID=...
-export PRIVY_AUTHORIZATION_KEY=wallet-auth:...   # only for owner-key/agentic wallets
-```
-
-Each variable also accepts a `SUBLY_`-prefixed form (e.g. `SUBLY_CIRCLE_API_KEY`) that takes precedence, so Subly can use different credentials than other tooling on the same machine.
-
-## Spending controls (owner mandate)
-
-Subly separates the **agent** (holds the wallet key, spends yield) from the **owner** (a human who authorizes policy). The owner signs a *spending mandate* — with a passkey (Face ID) or an ed25519 wallet signature — that the relayer applies. The defaults below describe the policy as enforced when the relayer runs with enforcement `on` (see the boundary note underneath):
-
-| Policy | Default | Meaning |
-| --- | --- | --- |
-| Approval threshold | 1 USDC | Payments at or below run automatically; above requires owner approval. |
-| Per-payment cap | 10 USDC | Absolute ceiling — even owner approval cannot exceed it. |
-| Daily API spend cap | 100 USDC | Rolling 24h cap on realized spend. |
-| Daily deposit cap | 3,000 USDC | Rolling 24h cap on deposits. |
-| Deposit policy | owner approval required | Principal never enters DeFi without a human sign-off. |
-| Withdrawal policy | agent allowed | Exiting risk is never gated by default (can be locked to owner approval). |
-| Payee allowlist | off | Optional allowlist of seller addresses. |
-
-- **Setup links** bundle mandate signing with a pre-approved first deposit, so onboarding is a single Face ID tap. Links expire in 10 minutes and are single-use; the pre-approved deposit id is valid ~15 minutes.
-- **Approvals** are single-use, bound to the exact payment (payee + amount + resource), and expire in 15 minutes. The agent surfaces an `approveUrl` the owner opens on their phone.
-- **Kill switch:** the owner can revoke the mandate at any time; revocation blocks agent operations for that vault immediately. A 72-hour agent-initiated recovery-revoke exists for owner-loss deadlock (the owner can veto during the window).
-- **Audit:** `GET /v1/wallets/:wallet/spending-log` gives one row per payment with the decision (`auto_within_policy` / `owner_approved:apr_...`) and the mandate hash.
-
-**Honest boundary:** these controls are enforced at the relayer, not by an on-chain program. `SUBLY_MANDATE_ENFORCEMENT=off|warn|on` is available for staged rollout, but the source default is now **`on`**; `warn` only logs and stamps violations without blocking. **The hosted beta relayer may still run `warn`** — treat caps as advisory there until its operator confirms `on`. See [`docs/spending-mandate-design.md`](docs/spending-mandate-design.md).
-
-## Self-hosting the relayer
-
-The relayer is the buyer-side vault/budget/yield-realize API in [`src/`](src). It is **not** an x402 facilitator — sellers keep their own. By default the npm client talks to Subly's hosted beta relayer (`api.demo.sublyfi.com`), but **anyone can run their own relayer as their own service** — no permission from Subly is needed, and nothing in the on-chain settlement path is exclusive to Subly's deployment. The full from-zero runbook (sponsor wallet, lookup table, invest crank, monitoring, economics) is [`deploy/README.md`](deploy/README.md); the short version follows.
-
-### Local development
+Node.js 24 and npm 11 are the development baseline:
 
 ```bash
 git clone https://github.com/SublyFi/subly-payment-protocol.git
 cd subly-payment-protocol
 npm ci
-npm run dev        # http://localhost:3000, NODE_ENV=development
+npm run dev
 ```
 
-With no chain configuration, dev boots in **detached mode** (in-memory ledger, no on-chain operations) — enough to exercise the API surface and mandate endpoints. For full mainnet mode set `SOLANA_RPC_URL` + `SUBLY_SPONSOR_KEYPAIR_PATH` (see below). `NODE_ENV` is fail-closed: anything other than `development`/`test` counts as production and refuses to boot without the required env.
-
-### Production (Docker Compose)
-
-`deploy/` ships a production stack: Postgres 16 + the relayer (built from the root [`Dockerfile`](Dockerfile), Node 24) + Caddy with automatic TLS.
+In another terminal:
 
 ```bash
-cd deploy
-cp relayer.production.env.example relayer.production.env   # fill in
-cp Caddyfile.example Caddyfile                             # set your domain
-mkdir -p secrets                                           # sponsor keypair -> secrets/sponsor.json
-echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" > .env
-docker compose up -d --build
-curl -s https://<your-domain>/healthz                      # {"ok":true}
+curl --fail http://127.0.0.1:3000/healthz
+curl --fail http://127.0.0.1:3000/v1/vaults
 ```
 
-The Postgres schema auto-creates on a fresh database. Existing deployments must follow the [mandate migration notes](deploy/README.md#existing-deployments-and-retiring-vaults). Full instructions (updates via `git archive`, monitoring cron): [`deploy/README.md`](deploy/README.md).
-
-### Running it as your own service
-
-The operator checklist, in order (details in [`deploy/README.md`](deploy/README.md)):
-
-1. **Sponsor wallet** — `solana-keygen new`, fund with ~0.5 SOL. It fronts gas for every deposit/withdraw/realize (about one sponsored transaction per payment); users never need SOL.
-2. **Dedicated RPC + your own domain** — set `SUBLY_APPROVE_URL_BASE` / `SUBLY_SETUP_URL_BASE` to *your* domain, or owner passkeys will bind to the wrong WebAuthn rpId and fail.
-3. **`SUBLY_MANDATE_ENFORCEMENT=on`** — this is the secure source default; set it explicitly in production so configuration drift is visible.
-4. **Settlement lookup table** — one-time `scripts/create-settlement-lut.ts` run, then `SUBLY_EXTRA_LOOKUP_TABLES`.
-5. **Invest crank** — run `scripts/invest-vault.ts` after significant deposits so funds actually earn yield (the instruction is permissionless).
-6. **Monitoring** — cron `scripts/check-sponsor-balance.sh`; nothing auto-halts when the sponsor runs dry, flows just start failing.
-7. **Point users at you** — they set `SUBLY_RELAYER_URL=https://your-domain` on the standard `@subly_fi/pay` client; no API token needed. With enforcement `on`, their first action is the owner setup link (`pay setup-link`) — a bare first deposit is refused with `mandate_required_for_deposit`.
-
-**Economics, honestly:** sponsored gas is recorded as `feeDebt` against each user's position and reduces their spendable yield, but no USDC ever flows back to the operator — there is no fee-collection mechanism in the code today. Treat gas as an operating cost and bring your own revenue model ([`docs/business-model.md`](docs/business-model.md) describes the intended one).
-
-**Let users choose a USDC Kamino vault:** one relayer can serve multiple vaults,
-with a reviewed local catalogue shared by the relayer and MCP clients. Generate
-it from the official listed USDC vaults and on-chain metadata:
+With no RPC or sponsor configured, explicit development mode uses an in-memory **detached** API. It requires no wallet, funds or database. On-chain deposit, withdrawal and settlement are unavailable in this mode. Production refuses this fallback.
 
 ```bash
-SOLANA_RPC_URL=<rpc> npm run --silent configure:vaults -- <default-vault-address> > vaults.next.json
+npm run check                  # types, tests, build and documentation links
+npm ci --prefix packages/pay
+npm run check --prefix packages/pay
+npm run test:package           # install the tarball and exercise CLI + MCP
 ```
 
-Review the result, then set `SUBLY_VAULTS_FILE=/absolute/path/to/vaults.json` on
-both sides. For Docker, use the [multi-vault Compose override](deploy/docker-compose.vaults.yml).
-MCP users call `list_subly_vaults`, then `select_subly_vault(vaultAddress)` before
-owner setup. Subsequent tools use that vault; switching never moves existing
-funds. Mandates, approvals, spending limits and balances are separate per vault.
-Payment deduplication remains shared across selections.
+The [contributor guide](CONTRIBUTING.md) explains PostgreSQL tests and repository structure.
 
-The read-only generator requires no wallet. It supports mainnet USDC Earn
-vaults using SPL Token and 6 decimal token/share units; vault fees, minimums and
-liquidity vary. See the [operator guide](deploy/README.md#advanced-your-own-kamino-vault)
-for client setup, lookup tables, API selection, existing database migration and
-retiring vaults without removing exits. Build clients from this checkout for
-this feature. Single-vault environment settings remain supported when no
-catalogue file is configured.
+## Operate a relayer
 
+Follow the [operator guide](deploy/README.md) for configuration, sponsor funding, reviewed vault metadata, lookup tables, HTTPS, health checks, backups and upgrades. The deployment is built from a tagged source checkout. Publish your relayer URL and reviewed vault catalogue to your users.
 
-### Key server environment
+Sponsor gas and account rent are operator costs. Recorded fee debt reduces a user's spending budget; the current code does **not** collect reimbursement for the operator.
 
-| Variable | Required (prod) | Description |
-| --- | --- | --- |
-| `SOLANA_RPC_URL` | yes — boot refuses without it | A dedicated/paid RPC (public RPC is not sufficient). |
-| `SUBLY_SPONSOR_KEYPAIR_PATH` / `SUBLY_SPONSOR_KEYPAIR` | yes — boot refuses without it | Sponsor key — co-signs and pays gas for every vault flow. Keep it funded with SOL. |
-| `DATABASE_URL` | yes — boot refuses without it | Postgres ledger (positions, intents, mandates, approvals, audit events). |
-| `SUBLY_EXTRA_LOOKUP_TABLES` | operational | Settlement address lookup table (create with `scripts/create-settlement-lut.ts`). Boot succeeds without it, but vault transactions can exceed Solana's size limit. |
-| `SUBLY_ADMIN_API_TOKEN` | operational | Operator bearer token for `/v1/admin/*` (unset, those endpoints return 503). Buyers need no token. |
-| `SUBLY_MANDATE_ENFORCEMENT` | no (default `on`) | `off` \| `warn` \| `on` — `warn` is for an explicitly staged rollout; `on` blocks policy violations. |
-| `SUBLY_TRUST_PROXY` | behind a proxy | Required behind Caddy/LB so per-IP rate limiting keys on the real client IP. |
-| `SUBLY_APPROVE_URL_BASE` / `SUBLY_SETUP_URL_BASE` | for mandates | Where owner approve/setup pages are served (WebAuthn rpId derives from these). |
-| `SUBLY_VAULTS_FILE` | multi-vault: yes | Reviewed catalogue path; same metadata on relayer and clients. Optional `SUBLY_VAULT_ADDRESS` selects the initial default. |
-| `SUBLY_ENABLE_LEGACY_X402` | no (default off) | Re-enables the retired seller-side `subly-yield-exact` endpoints. Leave off. |
+## Documentation and community
 
-### Operational scripts
+The [documentation index](docs/README.md) links the current architecture, API, security and troubleshooting guides. Old beta plans, pitch materials and superseded designs are available in Git history rather than the onboarding path.
 
-| Script | Purpose |
-| --- | --- |
-| `npm run configure:vaults -- <default-address>` | Generate a reviewed catalogue candidate from official listed USDC Earn vaults and chain metadata; read-only. |
-| `npm run configure:vault -- <address>` | Read a selected USDC Earn vault from chain and print shared relayer/client settings. No wallet or transaction required. |
-| `scripts/create-settlement-lut.ts` | One-time: create the settlement lookup table (keeps vault transactions under Solana's size limit). Re-runs create a *new* table — append it to `SUBLY_EXTRA_LOOKUP_TABLES`. |
-| `scripts/invest-vault.ts` | Crank idle vault USDC into Kamino reserves so yield actually accrues. |
-| `npm run validate:mainnet` | Read-only mainnet validation harness — simulates the full settlement path, moves no funds. |
-| `scripts/check-sponsor-balance.sh` | Cron monitor: alerts a webhook when the sponsor's SOL drops below threshold. |
-| `scripts/onboard-agent.sh` | Operator-only manual wallet recovery (normal users self-register). |
-
-## Architecture
-
-```text
-+--------------+   MCP / CLI    +------------------+   wallet-signature auth   +-----------------+
-|   AI agent   | -------------> |  @subly_fi/pay   | ------------------------> |  Subly relayer  |
-| (Claude ...) |                |  packages/pay    |      prepare / submit     |  src/ (Fastify) |
-+--------------+                |  signs locally   |                           +--------+--------+
-                                +--------+---------+                   sponsor co-signs |
-                                         | standard x402                                |
-                                         v (@x402/svm)                                  v
-                                +------------------+                          +------------------+
-                                |  x402 seller +   |                          |  Kamino USDC     |
-                                |  its facilitator |                          |  vault (Solana)  |
-                                +------------------+                          +------------------+
-```
-
-- **[`packages/pay`](packages/pay)** — the published client (`@subly_fi/pay`): MCP server, CLI, local/custody signing, standard x402 payer built on the official `@x402/svm` + `@x402/fetch` (handles off-curve/PDA seller addresses). MIT-licensed, `npx`-runnable.
-- **[`src/`](src)** — the relayer: Fastify API with wallet-signature auth (`x-subly-wallet` / `x-subly-signed-at` / `x-subly-signature` over method + path + body hash, 5-minute freshness). Vault flows are two-step: the server *prepares* a versioned transaction with the sponsor as fee payer, the client validates the structured intent and signs locally, the server co-signs, broadcasts, confirms, and attributes on-chain deltas to the Postgres ledger. Yield-realize withdrawals are checked against the fresh vault exchange rate: *"Yield-realize withdrawals are limited to the spendable yield; the deposited principal is never spent."*
-- **[`demo/`](demo)** — runnable deposit/withdraw clients (`npm run demo:deposit -- <raw>`), plus legacy `subly-yield-exact` demos kept for history (`demo:legacy:*`).
-- **[`deploy/`](deploy)** — production Docker Compose stack.
-- **[`docs/`](docs)** — design documents ([index](docs/README.md); several are written in Japanese).
-- **[`tests/`](tests)** — Vitest suites covering the x402 payer, vault flows, mandates, wallet auth, fee estimation, and more.
-
-## Security & trust model
-
-What you trust, and what you don't:
-
-- **Keys:** never leave your machine (local signer) or your custody provider (Circle/Privy — signatures are verified locally before use). The relayer cannot move funds without the agent's signature on the exact prepared transaction, which the client validates against a structured intent before signing.
-- **The relayer** maintains the ledger, enforces the yield-only guard and mandate policy, and sponsors gas. A malicious relayer could refuse service or mis-report budgets, but cannot sign for your wallet. Enforcement is server-side, not on-chain (an explicit non-goal so far).
-- **The vault:** deposits carry real DeFi protocol risk (Kamino). Exits are intentionally never gated: withdrawals are agent-allowed by default and the design treats "never freeze user exits" as a hard rule. See [`docs/protocol-dependency-risk.md`](docs/protocol-dependency-risk.md) for the disclosure/containment/survivability design.
-- **Sellers** see a standard x402 USDC payment on-chain. Payments are currently transparent (payer → seller is publicly visible); a third-party-unlinkability design exists but is not implemented ([`docs/payment-privacy-design.md`](docs/payment-privacy-design.md)).
-- **This code base has not been externally audited.** Use amounts you can afford to lose.
-
-## Known limitations
-
-- **Solana mainnet only**, and only sellers offering a **Solana USDC `exact`** rail with facilitator `extra.feePayer` support. Base/EVM rails are on the roadmap, not implemented.
-- **Yield budgets are small by design.** ~6–10% APY on a $500–$5,000 deposit funds cents per day — a fit for metered $0.01-class APIs, not large bills.
-- **Withdrawals consume accrued yield first** — the spendable budget drops by the amount withdrawn and only restarts from zero if you withdraw more than the accrued yield. Every withdrawal also pays the vault's penalty: the greater of 0.01% and a 0.001 USDC floor.
-- **`insufficient_yield` is normal** right after depositing — yield needs time to accrue (rough guide: a 100 USDC deposit reaches its first $0.01 payment within hours to about a day, depending on the vault's current APY; each realize must also cover ~0.0035 USDC of penalty + fee overhead).
-- **Mandate enforcement defaults to `on`** in the current source. `warn` is an explicit staged-rollout mode and must not be used when policy enforcement is required.
-- **Fees:** the protocol charges no payment fees. A performance fee on realized yield is planned for the hosted service ([`docs/business-model.md`](docs/business-model.md)) but is not implemented; self-hosting is entirely fee-free.
-
-## Development
-
-```bash
-npm ci
-npm test              # 28 Vitest suites (no network/DB needed)
-npm run typecheck     # strict TypeScript, includes tests/demo/scripts
-npm run build         # server -> dist/
-npm run dev           # relayer in watch mode
-```
-
-The client package builds separately:
-
-```bash
-cd packages/pay
-npm run build         # esbuild bundle -> dist/
-```
-
-Repository layout: the root package (`subly-agent-payments`) is **private** — the relayer server plus demos and ops scripts. Only [`packages/pay`](packages/pay) is published to npm (see [`packages/pay/PUBLISHING.md`](packages/pay/PUBLISHING.md)).
-
-## Roadmap
-
-- Vault yield optimization and a multi-venue TVL ladder (automatic selection is not implemented)
-- Vault health monitor with automatic deposit/realize halt on anomalies (designed, not implemented — withdrawals are never halted)
-- Program security audit
-- Additional payment rails (Base, further x402 schemes)
-- Additional custody signers (Turnkey, Coinbase CDP, ...)
-- Payment privacy via PSP-style omnibus settlement (designed, not implemented)
-- Performance-fee collection for the hosted service
-
-## Documentation
-
-| Document | Contents |
-| --- | --- |
-| [`docs/README.md`](docs/README.md) | Docs index — defines which designs are canonical vs legacy. |
-| [`docs/nansen-x402-yield-payment-architecture.md`](docs/nansen-x402-yield-payment-architecture.md) | The canonical buyer-side payment flow, step by step. |
-| [`docs/buyer-side-yield-payment-strategy.md`](docs/buyer-side-yield-payment-strategy.md) | Why buyer-side standard x402 (vs. the retired seller-integrated scheme). |
-| [`docs/spending-mandate-design.md`](docs/spending-mandate-design.md) | Owner mandate: caps, approvals, passkeys, kill switch. |
-| [`docs/protocol-dependency-risk.md`](docs/protocol-dependency-risk.md) | DeFi dependency risk: disclosure, auto-halt, safety reserve design. |
-| [`docs/payment-privacy-design.md`](docs/payment-privacy-design.md) | Third-party payment unlinkability design (not implemented). |
-| [`packages/pay/README.md`](packages/pay/README.md) | Client package reference (env vars, MCP tools, troubleshooting). |
-| [`deploy/README.md`](deploy/README.md) | Operator guide — run your own gas-sponsoring relayer from zero (deploy, LUT, monitoring, economics). |
-| [`SUPPORT.md`](SUPPORT.md) / [`SECURITY.md`](SECURITY.md) | User support and private vulnerability reporting. |
-| [`GOVERNANCE.md`](GOVERNANCE.md) / [`RELEASE.md`](RELEASE.md) / [`CHANGELOG.md`](CHANGELOG.md) | Project decisions, release checklist, and release history. |
-
-> Note: several design documents are currently written in Japanese; English translations are welcome contributions.
-
-## Contributing
-
-Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup and guidelines, and please follow the [Code of Conduct](CODE_OF_CONDUCT.md). Report security vulnerabilities privately per the [Security Policy](SECURITY.md), never in a public issue.
-
-Good first contributions: English translations of the design docs, and additional custody signer transports (one file implementing `RemoteSignerTransport` + an env branch — see [`docs/agent-wallet-providers.md`](docs/agent-wallet-providers.md)).
-
-## Support
-
-For usage questions and bug reports, follow [`SUPPORT.md`](SUPPORT.md). Please remove secrets and personal data from logs. There is no guaranteed response or uptime SLA.
-
-## Governance
-
-The project is maintained by SublyFi during beta. Decision-making, release authority, and security handling are documented in [`GOVERNANCE.md`](GOVERNANCE.md).
-
-## Changelog
-
-See [`CHANGELOG.md`](CHANGELOG.md) for the release history and the current unreleased changes.
-
-## License
-
-[MIT](LICENSE) © SublyFi
-
-## Disclaimer
-
-Subly moves real money on Solana mainnet and deposits it into third-party DeFi protocols. **There is no guarantee of principal or yield.** APY varies; DeFi or stablecoin failures can reduce or destroy deposited value; withdrawals can be delayed by vault liquidity. Payments are made at use time from realized yield, and principal is not intentionally spent — but this is a software guarantee enforced off-chain, not an on-chain invariant, and the code has not been audited. Regulatory and tax treatment vary by jurisdiction. Use at your own risk.
-
----
-
-<p align="center"><b>Subly</b> — Use Now, Pay Never · <a href="https://x.com/subly_fi">@subly_fi</a></p>
+- [Questions and discussions](https://github.com/SublyFi/subly-payment-protocol/discussions) · [Bug reports](https://github.com/SublyFi/subly-payment-protocol/issues)
+- [Security reporting](SECURITY.md) · [Support](SUPPORT.md)
+- [Contributing](CONTRIBUTING.md) · [Code of conduct](CODE_OF_CONDUCT.md) · [Governance](GOVERNANCE.md)
+- [Changelog](CHANGELOG.md) · [Release process](RELEASE.md) · [MIT license](LICENSE)

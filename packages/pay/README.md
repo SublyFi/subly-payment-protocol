@@ -1,194 +1,110 @@
 # @subly_fi/pay
 
-Subly client for [x402](https://x402.org)-style HTTP payments funded by
-**Kamino vault yield** — your agent pays for paywalled APIs from the yield on
-deposited USDC, and the principal is never spent. Non-custodial: it signs
-locally with your own Solana key; Subly never holds it.
+CLI and stdio MCP client for paying compatible x402 APIs with Kamino USDC vault yield on Solana. MIT licensed. Works with your own [Subly relayer](https://github.com/SublyFi/subly-payment-protocol/tree/main/deploy); no Subly account is required.
 
-Current payments target standard x402 sellers that offer a Solana USDC `exact`
-rail with facilitator `extra.feePayer` support (meaning the seller side
-sponsors the payment transaction's network fee — true of common facilitators
-such as PayAI and Coinbase CDP).
+Version 0.7 is beta software and has not had an external security audit. Vault operations use real mainnet funds. Yield accounting and owner policies depend on your relayer operator. Read the [security model](https://github.com/SublyFi/subly-payment-protocol/blob/main/docs/security-model.md).
 
-> [!WARNING]
-> `@subly_fi/pay` is beta software and has not undergone an external security audit. It signs and submits transactions involving real Solana mainnet funds through a separate relayer and Kamino vault. The client package currently passes its production dependency audit, but this is not a guarantee of relayer, protocol, or vault safety. Use only amounts you can afford to lose and review the relayer operator and configuration before use.
+## Quick start
 
-Ships one `pay` dispatcher bin with subcommands, all runnable with `npx` (no clone):
-
-- `pay mcp` — an MCP server (Claude Code, Cursor, any MCP client) exposing
-  the full lifecycle as tools: `create_subly_setup_link` /
-  `check_subly_setup` (owner onboarding: the human approves the spending
-  mandate + first deposit with one Face ID), `deposit_to_subly_vault`,
-  `get_subly_yield_budget`, `fetch_with_subly_payment`,
-  `withdraw_from_subly_vault`. Payments above the owner's approval
-  threshold, deposits, and (when the mandate opts in) withdrawals return an
-  `approveUrl` to paste into chat; retry with the `approvalId` once the
-  human approved.
-- `pay fetch <url> [maxAmountRawUsdc] [apr_<approvalId>]` — one-shot: pay for
-  a URL, print the receipt (used by the OpenClaw skill); retry with the
-  `apr_...` id after an `approval_required` refusal
-- `pay deposit <amountRawUsdc> [apr_...]` / `pay withdraw <amountRawUsdc>
-  [apr_...]` — vault deposit / withdraw with the same owner-approval flow
-- `pay setup-link [--initial-deposit <raw>] [--approval-threshold <raw>] ...`
-  / `pay setup-status <st_sessionId | setupUrl>` — owner onboarding for
-  CLI/skill harnesses (same flow as the MCP setup tools)
-
-## Wallet
-
-Subly does not create wallets — bring your own Solana keypair (`solana-keygen`
-ships with the [Solana CLI](https://docs.anza.xyz/cli/install)):
+You need **Node.js 24+**, a Solana agent wallet with mainnet USDC, a trusted relayer URL, and a mainnet RPC endpoint that supports transaction simulation with inner instructions. Your wallet can be a local keypair or a supported custody signer. The owner who approves spending controls can use a passkey or a separate Solana wallet.
 
 ```bash
-solana-keygen new --no-bip39-passphrase -o ~/.subly/agent.json
-export SUBLY_DEMO_AGENT_KEYPAIR_PATH=~/.subly/agent.json
+npx -y @subly_fi/pay@0.7.0 --help
+export SUBLY_RELAYER_URL=https://your-relayer.example.com
+export SOLANA_RPC_URL=https://your-mainnet-rpc.example.com
+export SUBLY_DEMO_AGENT_KEYPAIR_PATH=/absolute/path/to/agent.json
+npx -y @subly_fi/pay@0.7.0 doctor
+npx -y @subly_fi/pay@0.7.0 vaults
 ```
 
-Or bring a custody-held agent wallet — the key then never touches this
-machine; every signature is requested from the provider's API and verified
-locally before use:
+Use an existing dedicated agent wallet, or create one with `solana-keygen new -o agent.json`. Keep its recovery material private and restrict the file to its owner (`chmod 600 agent.json`). Fund its public address with **USDC on Solana mainnet**. Subly does not create or fund wallets. Vault fees require a funded relayer sponsor; the final API payment requires the seller's facilitator fee payer.
 
-```bash
-# Circle developer-controlled wallet (a Solana wallet in your wallet set):
-export SUBLY_SIGNER_PROVIDER=circle
-export CIRCLE_API_KEY=... CIRCLE_ENTITY_SECRET=... CIRCLE_WALLET_ID=...
+1. Review the selected vault, its curator, fees and liquidity. For a catalogue supplied by your operator, install the reviewed file locally and set `SUBLY_VAULTS_FILE=/absolute/path/vaults.json`. `SUBLY_VAULT_ADDRESS` selects one listed vault for CLI commands. Never install transaction trust anchors merely because a remote response says to.
+2. Create an owner setup link. This example pre-approves a **1.01 USDC** deposit; the selected vault's minimum can differ:
 
-# Privy server wallet (Solana), incl. agentic wallets owned by an
-# authorization key — pass that key so requests carry the required
-# privy-authorization-signature:
-export SUBLY_SIGNER_PROVIDER=privy
-export PRIVY_APP_ID=... PRIVY_APP_SECRET=... PRIVY_WALLET_ID=...
-export PRIVY_AUTHORIZATION_KEY=wallet-auth:...   # only for owner-key wallets
-```
-
-Each Circle/Privy credential var also accepts a `SUBLY_`-prefixed form (e.g.
-`SUBLY_CIRCLE_API_KEY`) that wins over the plain one, so Subly can use a
-different credential than other tooling on the same machine. Note the
-`circle` CLI "agent wallet" (email + OTP) is a different Circle product that
-exposes no signing API and cannot be used here.
-
-Send USDC (Solana mainnet) to the printed address — no SOL needed, fees are
-sponsored — then deposit (the legacy default vault minimum is just over 1 USDC: share rounding
-refuses exactly 1.000000; deposit self-registers the wallet):
-
-```bash
-npx -y @subly_fi/pay deposit 1010000   # 1.01 USDC
-```
-
-## Use it
-
-```bash
-# Claude Code (no clone):
-claude mcp add subly -- npx -y @subly_fi/pay mcp
-
-# One-shot pay (also what the OpenClaw skill calls):
-npx -y @subly_fi/pay fetch https://seller.example.com/api/premium
-```
-
-### Claude Desktop
-
-Prerequisites: [Node.js](https://nodejs.org) 20+ installed, and an agent
-keypair (see [Wallet](#wallet) above).
-
-1. Open the config file (create it if it does not exist):
-   - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-   - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
-
-   Or in the app: **Settings → Developer → Edit Config**.
-
-2. Add the `subly` server. Claude Desktop is a GUI app and does **not**
-   inherit your shell environment (`.zshrc`, `.env` files), so every
-   variable must go in the `env` block:
-
-   ```json
-   {
-     "mcpServers": {
-       "subly": {
-         "command": "npx",
-         "args": ["-y", "@subly_fi/pay", "mcp"],
-         "env": {
-           "SUBLY_DEMO_AGENT_KEYPAIR_PATH": "/Users/you/.subly/agent.json"
-         }
-       }
-     }
-   }
+   ```bash
+   npx -y @subly_fi/pay@0.7.0 setup-link --initial-deposit 1010000
    ```
 
-   Use an absolute path for the keypair (`~` is not expanded). For a
-   custody wallet, replace the keypair var with the `circle` / `privy`
-   variables from [Environment](#environment). Optional vars
-   (`SUBLY_MCP_MAX_AMOUNT_RAW_USDC`, `SOLANA_RPC_URL`, …) go in the same
-   `env` block.
+   Open the returned `setupUrl`, review the wallet, vault and limits, then approve with your passkey or wallet. Links expire in 10 minutes. Treat setup and approval links as private capabilities. The first person completing an initial setup becomes the owner for that wallet/vault.
+3. Check completion and deposit promptly; initial deposit approval lasts about 15 minutes:
 
-3. Restart Claude Desktop (quit fully, then reopen). The tools icon under
-   the chat input should now list **subly-payments** with the tools above.
+   ```bash
+   npx -y @subly_fi/pay@0.7.0 setup-status <sessionId>
+   npx -y @subly_fi/pay@0.7.0 deposit 1010000
+   npx -y @subly_fi/pay@0.7.0 budget
+   ```
 
-   If the server fails to start, the usual cause is that Claude Desktop
-   cannot find `npx` (e.g. Node installed via nvm). Point `command` at the
-   absolute path instead — run `which npx` in a terminal and use that
-   value, e.g. `"command": "/opt/homebrew/bin/npx"`.
+4. Wait until **spendable yield** covers the price and vault fees. A new deposit does not immediately provide a payment budget. Then request a compatible API:
 
-4. Use it by chatting. First time: "set up Subly" walks you through the
-   owner setup link (spending mandate + first deposit). After that,
-   asking for anything behind an x402 paywall ("fetch
-   https://seller.example.com/api/premium") pays from vault yield
-   automatically and returns the response plus a payment receipt.
-   Payments above the owner's approval threshold return an `approveUrl` —
-   open it in a browser, approve, then tell Claude to retry.
+   ```bash
+   npx -y @subly_fi/pay@0.7.0 fetch https://seller.example.com/paid-resource
+   ```
 
-   Claude Desktop asks for permission on each first tool use. The permission
-   prompt is effectively your payment confirmation: "Allow always" on
-   `fetch_with_subly_payment` removes that human check and relies entirely on
-   the spending-mandate caps — keep per-use approval for payments, and reserve
-   "Allow always" for read-only tools like `get_subly_yield_budget`.
+5. Withdraw funds back to the same agent wallet when needed:
 
-## Environment
+   ```bash
+   npx -y @subly_fi/pay@0.7.0 withdraw 1000000
+   ```
 
-| Var | Required | Default |
-|---|---|---|
-| `SUBLY_SIGNER_PROVIDER` | no | `local` (`circle` / `privy` for custody wallets) |
-| `SUBLY_DEMO_AGENT_KEYPAIR_PATH` | with `local` (or `SUBLY_DEMO_AGENT_KEYPAIR` base58) | — |
-| `CIRCLE_API_KEY` / `CIRCLE_ENTITY_SECRET` / `CIRCLE_WALLET_ID` | with `circle` | — |
-| `PRIVY_APP_ID` / `PRIVY_APP_SECRET` / `PRIVY_WALLET_ID` | with `privy` | — |
-| `PRIVY_AUTHORIZATION_KEY` | only for owner-key (agentic) Privy wallets | — |
-| `SUBLY_RELAYER_URL` | no | `https://api.demo.sublyfi.com` |
-| `SOLANA_RPC_URL` | no | public mainnet RPC |
-| `SUBLY_MCP_MAX_AMOUNT_RAW_USDC` | no | `10000` (0.01 USDC) per-payment cap |
-| `SUBLY_MCP_STATE_PATH` | no | `~/.subly/standard-x402-pending.json` (pending-payment store, double-payment protection) |
-| `SUBLY_PAY_METHOD` / `SUBLY_PAY_BODY` | no (`pay fetch` only) | `GET` / — (JSON body for POST-body sellers) |
-| `SUBLY_PAY_FORCE_NEW_PAYMENT` | no (`pay fetch` only) | unset (`1` forces a fresh payment — may double-pay) |
-| `CIRCLE_BASE_URL` / `PRIVY_BASE_URL` | no | provider API defaults |
-| `SUBLY_VAULTS_FILE` | multi-vault | Path to the reviewed local USDC vault catalogue. `SUBLY_VAULT_ADDRESS` optionally overrides its default. |
-| `SUBLY_VAULT_ADDRESS` / `SUBLY_VAULT_SHARE_MINT` / `SUBLY_VAULT_USDC_MINT` / `SUBLY_VAULT_FARM` | only with a custom-vault relayer | Subly's public vault and Farm. Use the same settings as your chosen relayer. A custom address requires its share mint and explicit farm; use `11111111111111111111111111111111` for no farm. Mainnet USDC only. These are your signer's local trust anchors. |
+All amounts are raw USDC integers: `1000000` = 1 USDC. `fetch` defaults to a **0.01 USDC cap**, configurable with `SUBLY_MCP_MAX_AMOUNT_RAW_USDC` or `fetch <URL> <capRawUSDC>`. The owner mandate may set stricter limits. `setup-link --help` lists policy options. A withdrawal can include principal and is subject to liquidity, fees and the owner's policy. A revoked mandate also blocks relayer withdrawals.
 
-### Select a USDC vault (source build)
+A subsequent deposit/payment/withdrawal may return `approvalRequired` with an `approveUrl`. After the owner approves, retry the same operation with the returned `apr_...` as a trailing argument. Never automatically retry a transaction reported as submitted or an API payment with an unknown outcome.
 
-With a multi-vault relayer, install the reviewed `vaults.json` catalogue locally
-and set `SUBLY_VAULTS_FILE=/absolute/path/to/vaults.json` in the MCP server's env.
-The operator generates it from the source checkout with:
+## MCP configuration
 
-```bash
-SOLANA_RPC_URL=<rpc> npm run --silent configure:vaults -- <default-vault-address> > vaults.next.json
+Add this to the MCP configuration of your editor or agent host. Replace all example values with your own absolute paths and endpoints. Pinning the version keeps upgrades explicit.
+
+```json
+{
+  "mcpServers": {
+    "subly": {
+      "command": "npx",
+      "args": ["-y", "@subly_fi/pay@0.7.0", "mcp"],
+      "env": {
+        "SUBLY_RELAYER_URL": "https://your-relayer.example.com",
+        "SOLANA_RPC_URL": "https://your-mainnet-rpc.example.com",
+        "SUBLY_DEMO_AGENT_KEYPAIR_PATH": "/absolute/path/to/agent.json",
+        "SUBLY_MCP_STATE_PATH": "/absolute/path/to/subly-pending.json",
+        "SUBLY_MCP_MAX_AMOUNT_RAW_USDC": "10000"
+      }
+    }
+  }
+}
 ```
 
-Call `list_subly_vaults`, then `select_subly_vault(vaultAddress)` to choose one.
-Selection checks matching relayer support and affects subsequent setup, deposit,
-budget, withdrawal and payment tools. It lasts until changed or MCP restarts.
-Each vault needs its own owner setup/mandate; balances and spending limits are
-separate. Switching does not move funds, combine yield, or clear protection
-against duplicate payments. To withdraw earlier funds, select their vault.
+Tools: `list_subly_vaults`, `select_subly_vault`, `create_subly_setup_link`, `check_subly_setup`, `deposit_to_subly_vault`, `get_subly_yield_budget`, `withdraw_from_subly_vault`, `fetch_with_subly_payment`. Ask the agent to list vaults and follow owner setup before depositing. Each selected vault has its own mandate and accounting; changing selection never moves funds. Stdio stdout is reserved for MCP messages.
 
-For CLI commands, set `SUBLY_VAULT_ADDRESS` to a listed address before starting
-the process; otherwise the catalogue default applies. Without a catalogue,
-single-vault settings continue to work. Client metadata is pinned locally;
-`GET /v1/vaults` never replaces it. The client and relayer must both support the
-selected vault. Use a build from this checkout until these changes are released
-on npm. See the [operator guide](https://github.com/SublyFi/subly-payment-protocol/blob/main/deploy/README.md#advanced-your-own-kamino-vault)
-for deployment, supported vault configurations, and migration.
+## Configuration
 
-Requests authenticate with a signature from your wallet key — there is no API
-token. `SUBLY_FACILITATOR_URL` is still accepted as a legacy fallback for
-`SUBLY_RELAYER_URL`. Spending is bounded twice: the client cap, and the
-relayer's server-side guard that refuses to realize anything beyond the
-spendable yield — the deposited principal is never touched by a payment.
-(A plain `pay withdraw` is the exit path and may of course move principal
-back to your wallet.)
+| Variable | Meaning |
+| --- | --- |
+| `SUBLY_RELAYER_URL` | Chosen operator's HTTPS URL. Set explicitly; the historical demo fallback has no availability promise. |
+| `SOLANA_RPC_URL` | Your trusted mainnet RPC; fallback is the rate-limited public mainnet RPC. Used to verify lookup tables and simulate withdrawals before signing. |
+| `SUBLY_DEMO_AGENT_KEYPAIR_PATH` | Local Solana 64-byte JSON keypair; the historical `DEMO` name also applies in production. |
+| `SUBLY_DEMO_AGENT_KEYPAIR` | Alternative base58 64-byte secret; if set, takes precedence over the file. Avoid putting secrets in shell history. |
+| `SUBLY_SIGNER_PROVIDER` | `local` (default), `circle` or `privy`. |
+| `SUBLY_VAULTS_FILE` | Reviewed local vault catalogue. Without it, the built-in vault is used. |
+| `SUBLY_VAULT_ADDRESS` | Selected catalogue entry (or custom single-vault address with matching share mint/farm settings). |
+| `SUBLY_MCP_MAX_AMOUNT_RAW_USDC` | Client payment cap; default `10000`. |
+| `SUBLY_MCP_STATE_PATH` | Persistent pending-payment file. Default `~/.subly/standard-x402-pending.json`. Use one shared file for all clients paying from the same wallet. |
+| `SUBLY_PAY_METHOD` / `SUBLY_PAY_BODY` | Optional HTTP method and body for CLI `fetch`; MCP accepts these as tool arguments. |
+
+For Circle configure `CIRCLE_API_KEY`, `CIRCLE_ENTITY_SECRET`, `CIRCLE_WALLET_ID`. For Privy use `PRIVY_APP_ID`, `PRIVY_APP_SECRET`, `PRIVY_WALLET_ID`, and `PRIVY_AUTHORIZATION_KEY` when required by wallet ownership. Each accepts a `SUBLY_` prefix which takes precedence. See [provider details](https://github.com/SublyFi/subly-payment-protocol/blob/main/docs/agent-wallet-providers.md).
+
+Only sellers offering **Solana mainnet USDC `exact`** with `extra.feePayer` are supported. EVM, unsupported tokens and unsponsored rails are refused. A supported seller does not need a Subly integration. Yield realization and x402 payment are separate transactions: if the payment fails after realization, USDC may remain in the agent wallet.
+
+## Recovery and troubleshooting
+
+- `doctor` performs read-only configuration, relayer/vault and RPC checks. It never signs or transacts; it does not prove vault safety or available yield.
+- A withdrawal preview failure is a refusal to sign. Check your RPC's simulation support and liquidity; do not disable transaction validation.
+- Preserve the pending-state JSON across restarts and upgrades. An `external_outcome_unknown` record blocks a second payment until you investigate the seller/facilitator outcome.
+- Concurrent clients using the same state file serialize payments with a `.lock` file. After a crash, stop **all** clients using that file before removing only the stale `.lock`. Preserve the JSON. A new file or another machine cannot coordinate with the old one.
+- `submitted` means the transaction may still confirm. Poll the original intent ID / transaction instead of preparing another deposit or withdrawal.
+- Setup passkeys bind to the operator's domain. Use the original domain and device credential; follow the documented recovery delay if access is lost.
+
+[Full troubleshooting](https://github.com/SublyFi/subly-payment-protocol/blob/main/docs/troubleshooting.md) · [Support](https://github.com/SublyFi/subly-payment-protocol/blob/main/SUPPORT.md) · [Private security reports](https://github.com/SublyFi/subly-payment-protocol/security/advisories/new)
+
+## Build from source
+
+In the repository root: `npm ci`, then `npm ci --prefix packages/pay` and `npm run check --prefix packages/pay`. `npm run test:package` verifies a packed installation from outside the checkout, including the MCP handshake. The published package contains the client only; it does not include the relayer or Kamino server SDK.

@@ -1,38 +1,31 @@
-# Release checklist
+# Release process
 
-This repository contains a source-distributed relayer and the published `@subly_fi/pay` client. A release must be reproducible from a clean checkout and must not require private keys in CI.
+The relayer is distributed as tagged source and a source-built Docker image. `@subly_fi/pay` is the public client npm package. Node.js 24 / npm 11 and committed lockfiles are required.
 
-## Before tagging
+## Verify a release candidate
 
-- [ ] Review the diff and confirm no secrets, local env files, keypairs, database dumps, or generated `dist/` files are committed.
-- [ ] Update `CHANGELOG.md` and the client version in `packages/pay/package.json`.
-- [ ] Regenerate `packages/pay/package-lock.json` with the same npm major used by CI.
-- [ ] Run `npm ci`, `npm run typecheck`, `npm test`, and `npm run build` at the repository root.
-- [ ] Run `npm ci`, `npm run typecheck`, `npm run build`, and `npm run pack:check` in `packages/pay/`.
-- [ ] Inspect the dry-run tarball contents. It must contain `dist/`, `README.md`, and `LICENSE`, and must not contain source key material, `.env` files, or server code.
-- [ ] Review `npm audit --omit=dev --audit-level=high` output. Do not suppress a finding; document an unavoidable upstream finding and its mitigation before release.
+1. Update root/client versions, both lockfiles, changelog and pinned command examples. Review for credentials or generated files.
+2. Run `npm ci --ignore-scripts`, `npm ci --prefix packages/pay --ignore-scripts`, `npm run check`, `npm run check --prefix packages/pay`, `npm run test:package` and `node scripts/audit-relayer.mjs`.
+3. Run all tests with a disposable `SUBLY_TEST_POSTGRES_URL`, including migration and approval persistence regressions.
+4. Run `npm audit --prefix packages/pay --omit=dev --audit-level=high` and review [known relayer advisories](docs/dependencies.md).
+5. Build the Docker image, check its non-root detached health endpoint, and test SIGTERM shutdown. Inspect the package tarball allowlist. No keys, source server SDK or local state belong in the npm package.
+6. Merge a reviewed PR after CI, dependency review and CodeQL complete. Record any limits to mainnet validation in release notes. Automated tests never substitute for an external security audit.
 
-## Publish the client
+## Publish
 
-The recommended path is the GitHub Actions workflow, triggered by a tag such as `pay-v0.6.2`. Configure npm trusted publishing for the repository and workflow before using it; the workflow requests only `id-token: write` and publishes with provenance.
-
-For a local maintainer release, use an account authorized for the `@subly_fi` scope:
+Tag the merged commit as `pay-v<package version>`. The release workflow calls the full reusable CI workflow (PostgreSQL, client tarball/MCP, Docker, audit) before publishing. npm uses GitHub OIDC trusted publishing; configure the package's trusted publisher as organization `SublyFi`, repository `subly-payment-protocol`, workflow filename `release-pay.yml`. Node 24's npm supports this flow. No long-lived npm token is stored in GitHub.
 
 ```bash
-cd packages/pay
-npm ci
-npm run typecheck
-npm run pack:check
-npm publish --access public --provenance
+git tag -a pay-v0.7.0 -m "Subly 0.7.0"
+git push origin pay-v0.7.0
 ```
 
-After publishing:
+The publisher checks tag/version equality and uses `npm publish --access public --provenance`. If publication fails, inspect the workflow and npm trusted-publisher settings; do not move an existing public tag. Re-run the failed job after fixing configuration. Publishing the same npm version twice is not possible.
 
-- [ ] Verify `npm view @subly_fi/pay version dist-tags --json`.
-- [ ] Verify the package is public and its provenance is visible on npm.
-- [ ] From a clean temporary directory, run `npx -y @subly_fi/pay@<version> --help`.
-- [ ] Create the GitHub release for the matching tag and paste the changelog entry.
+An authorized local maintainer can use `npm publish --access public` after the same checks and any required registry authentication. GitHub provenance cannot be generated from a normal local shell; never claim provenance for that fallback. Record the publication method in release notes.
 
-## Operational release
+After publication verify `npm view @subly_fi/pay version dist-tags dist.attestations --json`, install the exact registry version in a clean directory, and check `--version`, `--help` and MCP initialization. Create a GitHub release for the immutable matching tag with release notes and optional npm tarball/checksum.
 
-Relayer deployment is separate from npm publishing. Review the production env example, run the read-only mainnet validation harness where appropriate, deploy the image from the reviewed commit, and confirm health checks, sponsor balance monitoring, database migrations, and rollback instructions before enabling traffic.
+## Operator upgrade
+
+Publication does not deploy a live relayer. Operators back up the ledger, stop old instances, update to the reviewed tag, validate their own vault/RPC/sponsor configuration and follow the [migration and rollback instructions](deploy/README.md#existing-deployments-and-retiring-vaults). Do not roll back only the binary after the vault-mandate table migration. Preserve pending client state. Sponsor funding, liquidity and the two-transaction payment flow need operator validation on each deployment.

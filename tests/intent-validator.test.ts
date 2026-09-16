@@ -39,6 +39,7 @@ import {
 import {
   IntentValidationError,
   validatePaymentIntentTransaction,
+  validateDepositIntentTransaction,
   type PaymentSigningIntent
 } from "../src/client/transaction-intent-validator.js";
 import { KAMINO_FARMS_PROGRAM_ID } from "../src/client/transaction-intent-validator.js";
@@ -459,4 +460,28 @@ describe("validatePaymentIntentTransaction", () => {
       "message_hash_mismatch"
     );
   });
+});
+
+
+it("accepts one deposit instruction and refuses duplicate authorized deposits", async () => {
+  const a = await actors();
+  const data = Buffer.alloc(16);
+  data.set([242, 35, 198, 137, 82, 225, 242, 182]);
+  data.writeBigUInt64LE(1010000n, 8);
+  const source = deriveAssociatedTokenAddress({ owner: a.agent.address, mint: SUBLY_VAULT.usdcMint });
+  const accounts = [a.agent.address, SUBLY_VAULT.address, a.tokenVault, SUBLY_VAULT.usdcMint,
+    a.baseVaultAuthority, SUBLY_VAULT.shareMint, source].map((key, index) => ({ address: address(key), role: index === 0 ? 3 as const : 1 as const }));
+  const instruction: Instruction = { programAddress: address(SUBLY_VAULT.programId), accounts, data };
+  for (const count of [1, 2]) {
+    const tx = await buildVersionedTransaction({ feePayer: a.sponsor.address,
+      blockhash: blockhash("GHtnjzoaqLgzJZ4XTQr5ChCAPGJmCEqVMG6gRGoiTLDv"), lastValidBlockHeight: 1000n,
+      instructions: Array.from({ length: count }, () => instruction) });
+    const validate = () => validateDepositIntentTransaction({ serializedTransaction: tx.serializedBase64,
+      intent: { wallet: a.agent.address, vault: SUBLY_VAULT.address, farm: SUBLY_VAULT.farm,
+        shareMint: SUBLY_VAULT.shareMint, asset: SUBLY_VAULT.usdcMint, amountRawUsdc: "1010000",
+        feePayer: a.sponsor.address, preparedMessageHash: tx.messageHash,
+        expiresAt: new Date(Date.now() + 60000).toISOString() } });
+    if (count === 1) expect(validate).not.toThrow();
+    else expect(validate).toThrow("exactly one KVault deposit");
+  }
 });

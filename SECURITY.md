@@ -20,7 +20,7 @@ Reports are especially valuable for:
 - **Client-side signing** — transaction-intent validation (signing something other than the validated intent), custody-signature verification, x402 payment construction, double-payment protection.
 - **Sponsored-transaction abuse** — draining or griefing the sponsor wallet.
 
-Out of scope: vulnerabilities in third-party dependencies (Kamino, x402 facilitators, Circle/Privy, Solana itself) — please report those upstream; findings on the hosted demo infrastructure that amount to denial of service against a beta service.
+Report vulnerabilities in upstream programs or dependencies to their maintainers as well. If an upstream issue is exploitable through Subly, report that integration impact here. Do not test denial of service against shared infrastructure.
 
 ## Supported versions
 
@@ -28,8 +28,10 @@ Security fixes land on `main` and in the latest published `@subly_fi/pay` releas
 
 ## Disclosure
 
-Please give us a reasonable window to ship a fix before public disclosure. This project has not yet undergone an external security audit; the [README's security model](README.md#security--trust-model) documents the current trust assumptions honestly.
+Please give us a reasonable window to ship a fix before public disclosure. This project has not yet undergone an external security audit; the [security model](docs/security-model.md) documents the current trust assumptions honestly.
 
 ## Dependency status
 
 The published client dependency lock is checked by CI and must pass a high-severity npm audit before release. The source-distributed relayer has a separate dependency graph; its current Kamino SDK/Solana transitive chain can report upstream npm advisories that require a coordinated SDK upgrade and compatibility review. A clean client audit must not be interpreted as a clean relayer audit. Dependabot and the advisory security workflow keep this distinction visible until that upgrade is completed.
+
+See the versioned [dependency status and mitigations](docs/dependencies.md).

@@ -4,7 +4,7 @@ Subly is a beta project that moves real funds on Solana. Read the [README](READM
 
 ## Where to ask
 
-- **Usage questions:** open a [GitHub discussion or issue](https://github.com/SublyFi/subly-payment-protocol/issues) with the command, expected result, actual result, and relevant logs.
+- **Usage questions:** open a [GitHub discussion](https://github.com/SublyFi/subly-payment-protocol/discussions) with the command, expected result, actual result, and relevant logs.
 - **Bug reports:** use the [bug report template](https://github.com/SublyFi/subly-payment-protocol/issues/new?template=bug_report.md) and include a minimal reproduction that does not contain secrets.
 - **Feature requests:** use the [feature request template](https://github.com/SublyFi/subly-payment-protocol/issues/new?template=feature_request.md) and describe the user problem and proposed behavior.
 - **Security vulnerabilities:** do **not** open a public issue. Follow [SECURITY.md](SECURITY.md).

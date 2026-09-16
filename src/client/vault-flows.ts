@@ -1,3 +1,4 @@
+import { assertWithdrawalPreview } from "./withdrawal-preview.js";
 import { SUBLY_VAULT } from "../config/constants.js";
 import type { VaultConfig } from "../config/vault.js";
 import type { SolanaRpc } from "../solana/rpc.js";
@@ -36,7 +37,7 @@ export interface VaultFlowClientConfig {
   relayerBaseUrl: string;
   signer: AgentWalletSigner;
   vault?: Readonly<VaultConfig>;
-  /** Used only to resolve lookup tables for structured-intent validation. */
+  /** Independent RPC for lookup tables and unsigned withdrawal simulation. */
   rpc: SolanaRpc;
   fetchImpl?: typeof fetch;
   lookupTablesFor?: (
@@ -116,6 +117,8 @@ interface PreparedDeposit {
 }
 
 interface PreparedWithdrawal {
+  requestedWithdrawRawUsdc: string;
+  purpose: "normal" | "yield_realize";
   withdrawalId: string;
   serializedTransaction: string;
   destinationUsdcAta: string;
@@ -124,6 +127,7 @@ interface PreparedWithdrawal {
 
 export class VaultFlowClient {
   readonly vault: Readonly<VaultConfig>;
+  private readonly rpc: SolanaRpc;
   private readonly baseUrl: string;
   private readonly signer: AgentWalletSigner;
   private readonly fetchImpl: typeof fetch;
@@ -134,6 +138,7 @@ export class VaultFlowClient {
   private readonly pollIntervalMs: number;
 
   constructor(config: VaultFlowClientConfig) {
+    this.rpc = config.rpc;
     this.vault = config.vault ?? config.signer.vault ?? SUBLY_VAULT;
     if (config.signer.vault && config.signer.vault.address !== this.vault.address) {
       throw new Error("Vault flow client and signer must select the same vault");
@@ -190,6 +195,11 @@ export class VaultFlowClient {
       })) as PreparedDeposit;
     }
 
+    if (prepared.signingIntent?.wallet !== this.signer.walletAddress ||
+        prepared.signingIntent.vault !== this.vault.address ||
+        prepared.signingIntent.amountRawUsdc !== input.amountRawUsdc.toString()) {
+      throw new VaultFlowClientError("prepare", "Prepared deposit differs from the requested wallet, vault or amount");
+    }
     const signed = await this.signer.signDeposit({
       intent: prepared.signingIntent,
       serializedTransaction: prepared.serializedTransaction,
@@ -257,6 +267,20 @@ export class VaultFlowClient {
       }
     )) as PreparedWithdrawal;
 
+    if (prepared.signingIntent?.wallet !== this.signer.walletAddress ||
+        prepared.signingIntent.vault !== this.vault.address ||
+        prepared.requestedWithdrawRawUsdc !== input.amountRawUsdc.toString() ||
+        prepared.purpose !== (input.purpose ?? "normal") ||
+        (input.purpose === "yield_realize" && prepared.signingIntent.allowFullExit)) {
+      throw new VaultFlowClientError("prepare", "Prepared withdrawal differs from the requested operation");
+    }
+    await assertWithdrawalPreview({
+      rpc: this.rpc,
+      serializedTransaction: prepared.serializedTransaction,
+      wallet: this.signer.walletAddress,
+      vault: this.vault,
+      amountRawUsdc: input.amountRawUsdc
+    });
     const signed = await this.signer.signWithdrawal({
       intent: prepared.signingIntent,
       serializedTransaction: prepared.serializedTransaction,

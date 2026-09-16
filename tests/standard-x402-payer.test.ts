@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileStandardX402StateStore } from "../src/client/standard-x402-state-store.js";
 import { describe, expect, it, vi } from "vitest";
 import { SOLANA_MAINNET_NETWORK, SUBLY_VAULT } from "../src/config/constants.js";
 import { encodeX402Header, PAYMENT_REQUIRED_HEADER } from "../src/x402/headers.js";
@@ -564,4 +568,23 @@ describe("StandardX402Payer", () => {
     expect(result.paid).toBe(true);
     expect(store.records).toEqual([]);
   });
+});
+
+
+it("reloads shared disk state before a long-lived second payer can repeat an uncertain charge", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "subly-payers-"));
+  try {
+    const path = join(directory, "pending.json");
+    const realizer = okRealizer();
+    const x402Fetch = vi.fn(async () => { throw new Error("connection lost after sending payment"); });
+    const config = { realizer, x402Fetch, defaultMaxAmountRawUsdc: 10000n,
+      probeFetch: async () => resp({ status: 402, headers: { [PAYMENT_REQUIRED_HEADER.toLowerCase()]: encodeX402Header(challenge()) } }) };
+    // Both clients start BEFORE either records the uncertain outcome.
+    const a = new StandardX402Payer({ ...config, stateStore: fileStandardX402StateStore(path) });
+    const b = new StandardX402Payer({ ...config, stateStore: fileStandardX402StateStore(path) });
+    await expect(a.pay({ url: URL })).rejects.toMatchObject({ reason: "payment_outcome_unknown" });
+    await expect(b.pay({ url: URL })).rejects.toMatchObject({ reason: "payment_outcome_unknown" });
+    expect(realizer.ensureUsdcAvailable).toHaveBeenCalledTimes(1);
+    expect(x402Fetch).toHaveBeenCalledTimes(1);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });

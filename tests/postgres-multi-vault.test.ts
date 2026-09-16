@@ -50,4 +50,28 @@ describe.skipIf(!connectionString)("Postgres vault mandate migration", () => {
       await admin.query(`drop schema ${schema} cascade`); await admin.end();
     }
   });
+  it("commits owner approval challenges but rolls back unexpected failures", async () => {
+    const schema = `subly_test_${randomUUID().replaceAll("-", "")}`;
+    const admin = new Pool({ connectionString });
+    await admin.query(`create schema ${schema}`);
+    const ledger = new PostgresLedger({ connectionString, options: `-c search_path=${schema}` });
+    try {
+      const service = new SpendingMandateService({ ledger, config: { nowMs: () => NOW_MS, enforcementLevel: "on" } });
+      await service.registerMandate({ wallet: AGENT_PUB, vault: A, document: buildDocument() });
+      await expect(ledger.withWalletVaultLock(AGENT_PUB, A, () => service.authorizeDeposit({
+        wallet: AGENT_PUB, vault: A, amountRawUsdc: 1_010_000n, approvalId: null
+      }))).rejects.toMatchObject({ code: "deposit_approval_required" });
+      const approvals = await ledger.listSpendingApprovalsForWallet(AGENT_PUB);
+      expect(approvals).toHaveLength(1);
+      expect((await service.getApprovalView(approvals[0]!.approvalId)).status).toBe("pending");
+      await expect(ledger.withWalletVaultLock(AGENT_PUB, A, async () => {
+        await ledger.saveSpendingApproval({ ...approvals[0]!, status: "denied" });
+        throw new Error("unexpected failure");
+      })).rejects.toThrow("unexpected failure");
+      expect((await ledger.getSpendingApproval(approvals[0]!.approvalId))?.status).toBe("pending");
+    } finally {
+      await ledger.close(); await admin.query(`drop schema ${schema} cascade`); await admin.end();
+    }
+  });
+
 });

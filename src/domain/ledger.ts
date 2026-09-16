@@ -16,6 +16,8 @@ import type {
 export type Awaitable<T> = T | Promise<T>;
 
 export interface Ledger {
+  checkHealth?(): Promise<void>;
+  close?(): Promise<void>;
   withSpendingMandateLock<T>(
     wallet: string,
     callback: () => Promise<T>

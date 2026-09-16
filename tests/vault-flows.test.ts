@@ -1,3 +1,4 @@
+import { previewRpc } from "./helpers/withdrawal-preview.js";
 import { SUBLY_VAULT } from "../src/config/constants.js";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentWalletSigner } from "../src/client/agent-wallet-signer.js";
@@ -35,7 +36,7 @@ function buildClient(fetchImpl: typeof fetch) {
   return new VaultFlowClient({
     relayerBaseUrl: BASE,
     signer: fakeSigner(),
-    rpc: {} as SolanaRpc,
+    rpc: previewRpc(WALLET, 500_000n),
     fetchImpl,
     lookupTablesFor: async () => ({}),
     pollIntervalMs: 1,
@@ -69,7 +70,7 @@ describe("VaultFlowClient", () => {
           return jsonResponse(200, {
             depositId: "dep_2",
             serializedTransaction: "preparedTxB64",
-            signingIntent: { wallet: WALLET }
+            signingIntent: { wallet: WALLET, vault: SUBLY_VAULT.address, amountRawUsdc: "500000000" }
           });
         }
         if (u.includes("/approvals")) {
@@ -154,7 +155,7 @@ describe("VaultFlowClient", () => {
         return jsonResponse(200, {
           depositId: "dep_1",
           serializedTransaction: "preparedTxB64",
-          signingIntent: { wallet: WALLET }
+          signingIntent: { wallet: WALLET, vault: SUBLY_VAULT.address, amountRawUsdc: "1000000" }
         });
       }
       if (u.endsWith("/v1/deposits/submit")) {
@@ -195,7 +196,8 @@ describe("VaultFlowClient", () => {
             withdrawalId: "wdr_1",
             serializedTransaction: "preparedTxB64",
             destinationUsdcAta: "ata",
-            signingIntent: { wallet: WALLET }
+            requestedWithdrawRawUsdc: "500000", purpose: "yield_realize",
+            signingIntent: { wallet: WALLET, vault: SUBLY_VAULT.address, allowFullExit: false }
           });
         }
         if (u.endsWith("/v1/withdrawals/submit")) {
@@ -341,5 +343,33 @@ describe("VaultFlowClient", () => {
         error.step === "prepare" &&
         error.message.includes("deposit_below_minimum")
     );
+  });
+});
+
+describe("caller amount binding", () => {
+  it("rejects a relayer's larger deposit before asking the signer", async () => {
+    const signer = fakeSigner();
+    const client = new VaultFlowClient({
+      relayerBaseUrl: BASE, signer, rpc: {} as SolanaRpc,
+      lookupTablesFor: async () => ({}),
+      fetchImpl: async () => jsonResponse(200, {
+        depositId: "dep_bad", serializedTransaction: "unused",
+        signingIntent: { wallet: WALLET, vault: SUBLY_VAULT.address, amountRawUsdc: "100000000" }
+      })
+    });
+    await expect(client.deposit({ amountRawUsdc: 1_000_000n })).rejects.toThrow("differs");
+    expect(signer.signDeposit).not.toHaveBeenCalled();
+  });
+  it("refuses full liquidation for a yield-only request", async () => {
+    const signer = fakeSigner();
+    const client = new VaultFlowClient({
+      relayerBaseUrl: BASE, signer, rpc: {} as SolanaRpc,
+      fetchImpl: async () => jsonResponse(200, {
+        withdrawalId: "bad", requestedWithdrawRawUsdc: "10000", purpose: "yield_realize",
+        signingIntent: { wallet: WALLET, vault: SUBLY_VAULT.address, allowFullExit: true }
+      })
+    });
+    await expect(client.withdraw({ amountRawUsdc: 10_000n, purpose: "yield_realize" })).rejects.toThrow("differs");
+    expect(signer.signWithdrawal).not.toHaveBeenCalled();
   });
 });

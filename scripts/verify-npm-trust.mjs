@@ -45,7 +45,7 @@ async function main() {
   }
   const exchange = await requestJson(
     // npm-package-arg's escapedName keeps @ and encodes only the scope slash.
-    `https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/${packageName.replace("/", "%2f")}`,
+    `https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/${packageName.replaceAll("/", "%2f")}`,
     { method: "POST", headers: { Accept: "application/json", Authorization: `Bearer ${identity.value}` } },
     "npm trusted publisher exchange"
   );

@@ -88,6 +88,20 @@ function memoryStore(
 }
 
 describe("StandardX402Payer", () => {
+  it("retains an underfunded realization and never pays or realizes twice, including after restart", async () => {
+    const realizer = { ensureUsdcAvailable: vi.fn(async () => ({ realizedRawUsdc: 9_999n, txSignature: "landed-realize" })) };
+    const stateStore = memoryStore();
+    const x402Fetch = vi.fn(async () => resp({ status: 200 }));
+    const config = { realizer, stateStore, x402Fetch, defaultMaxAmountRawUsdc: 10_000n,
+      probeFetch: async () => resp({ status: 402, headers: { [PAYMENT_REQUIRED_HEADER.toLowerCase()]: encodeX402Header(challenge()) } }) };
+    const payer = new StandardX402Payer(config);
+    await expect(payer.pay({ url: URL })).rejects.toMatchObject({ reason: "realize_underfunded" });
+    expect(stateStore.records[0]).toMatchObject({ realizedRawUsdc: "9999", realizeTxSignature: "landed-realize", status: "realized" });
+    await expect(payer.pay({ url: URL })).rejects.toMatchObject({ reason: "payment_outcome_unknown" });
+    await expect(new StandardX402Payer(config).pay({ url: URL })).rejects.toMatchObject({ reason: "payment_outcome_unknown" });
+    expect(realizer.ensureUsdcAvailable).toHaveBeenCalledTimes(1);
+    expect(x402Fetch).not.toHaveBeenCalled();
+  });
   it("deduplicates in-flight requests across vaults and reports against the original source", async () => {
     let release!: (response: FetchResponseLike) => void;
     let started!: () => void;
@@ -179,7 +193,7 @@ describe("StandardX402Payer", () => {
     );
   });
 
-  it("reports the settled payment tx back to the realizer (best-effort)", async () => {
+  it.each(["payment-response", "x-payment-response"])("reports the settled payment tx from %s back to the realizer", async headerName => {
     const reportPayment = vi.fn(async () => undefined);
     const realizer: YieldRealizer = {
       ensureUsdcAvailable: vi.fn(async () => ({
@@ -204,7 +218,7 @@ describe("StandardX402Payer", () => {
       resp({
         status: 200,
         body: "paid",
-        headers: { "x-payment-response": settleHeader }
+        headers: { [headerName]: settleHeader }
       });
     const payer = new StandardX402Payer({
       realizer,

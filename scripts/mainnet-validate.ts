@@ -1,285 +1,94 @@
 /**
- * Read-only mainnet validation harness.
- *
- * Validates the chain-critical Subly path against the live vault without
- * moving funds: vault context loading, settlement quoting, canonical
- * settlement transaction building, probe + final simulation (sigVerify off),
- * output drift over time, the Kamino P&L API, and the fee oracle.
- *
- * Usage:
- *   SOLANA_RPC_URL=... npx tsx scripts/mainnet-validate.ts
- * Optional:
- *   SUBLY_VALIDATE_WALLET   agent wallet holding vault shares
- *   SUBLY_VALIDATE_SPONSOR  funded wallet used as simulated fee payer
- *   SUBLY_VALIDATE_SELLER   wallet with an existing USDC ATA (payment target)
- *   SUBLY_VALIDATE_AMOUNT   seller amount in raw USDC (default 10000 = 0.01)
- *   SUBLY_VALIDATE_DRIFT_S  seconds to wait before drift re-simulation (default 0 = skip)
+ * Read-only checks for the CURRENT two-transaction x402 integration.
+ * Uses only a public wallet address, never loads signers and never submits.
+ * The legacy atomic settlement diagnostic is legacy-settlement-validate.ts.
  */
+import assert from "node:assert/strict";
 import { address } from "@solana/kit";
-import { SUBLY_VAULT } from "../src/config/constants.js";
-import { KaminoCanonicalTransactionBuilder } from "../src/domain/kamino-transaction-builder.js";
+import { getSetComputeUnitLimitInstruction, getSetComputeUnitPriceInstruction } from "@solana-program/compute-budget";
+import { SUBLY_VAULT, RATE_SCALE } from "../src/config/constants.js";
 import { PythHermesFeeEstimator, pythHermesConnectionFromEnv } from "../src/domain/pyth-fee-estimator.js";
+import { YIELD_REALIZE_ROUNDING_RAW_USDC } from "../src/domain/withdrawal-rounding.js";
+import { KaminoVaultAdapter, grossWithdrawForNetTarget } from "../src/kamino/vault-adapter.js";
 import { KaminoApiClient } from "../src/kamino/api-client.js";
-import { KaminoVaultAdapter, rawToUsdcDecimal } from "../src/kamino/vault-adapter.js";
 import { deriveAssociatedTokenAddress } from "../src/lib/associated-token-account.js";
-import { createRpcFromEnv } from "../src/solana/rpc.js";
-
-// Defaults to a persistently funded exchange hot wallet for simulation only.
-const DEFAULT_SIMULATED_SPONSOR = "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9";
+import { ceilDiv, parsePositiveRawUnits } from "../src/lib/raw-units.js";
+import { createRpc } from "../src/solana/rpc.js";
+import { buildVersionedTransaction } from "../src/solana/tx.js";
+import { assertWithdrawalPreview } from "../src/client/withdrawal-preview.js";
 
 async function main() {
-  const rpc = createRpcFromEnv();
-  const adapter = new KaminoVaultAdapter({
-    rpc,
-    vaultAddress: SUBLY_VAULT.address,
-    vaultConfig: SUBLY_VAULT,
-    extraLookupTables: [
-      ...(SUBLY_VAULT.extraLookupTables ?? []),
-      ...(process.env.SUBLY_EXTRA_LOOKUP_TABLES ?? "").split(",").map((s) => s.trim()).filter(Boolean)
-    ]
-  });
-
-  console.log("=== 1. Vault context ===");
+  const rpcUrl = process.env.SOLANA_RPC_URL || process.env.SOLANA_MAINNET_RPC_URL;
+  assert(rpcUrl, "Set SOLANA_RPC_URL (or SOLANA_MAINNET_RPC_URL) in .env or the process environment");
+  const rpc = createRpc(rpcUrl);
+  assert.equal(await rpc.getGenesisHash().send(), "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
+    "The validation RPC must be Solana mainnet");
+  console.log("PASS: mainnet RPC genesis");
+  const walletText = process.env.SUBLY_VALIDATE_WALLET;
+  assert(walletText, "Set SUBLY_VALIDATE_WALLET to a PUBLIC wallet address with vault shares; no private key is needed");
+  const wallet = address(walletText);
+  const sponsor = address(process.env.SUBLY_VALIDATE_SPONSOR ?? wallet);
+  const amount = parsePositiveRawUnits(process.env.SUBLY_VALIDATE_AMOUNT ?? "10000", "SUBLY_VALIDATE_AMOUNT");
+  const drift = Number(process.env.SUBLY_VALIDATE_DRIFT_S ?? "15");
+  assert(Number.isInteger(drift) && drift >= 0 && drift <= 60, "SUBLY_VALIDATE_DRIFT_S must be 0..60 seconds");
+  const oracle = new PythHermesFeeEstimator(pythHermesConnectionFromEnv());
+  const fee = await oracle.estimatePaymentFee({ wallet, seller: wallet, amountRawUsdc: amount });
+  console.log("PASS: authenticated live fee price", { source: fee.source, observedAt: fee.observedAt,
+    estimatedFeeDebtRawUsdc: fee.estimatedFeeDebtRawUsdc.toString() });
+  const adapter = new KaminoVaultAdapter({ rpc, vaultAddress: SUBLY_VAULT.address, vaultConfig: SUBLY_VAULT,
+    extraLookupTables: [...(SUBLY_VAULT.extraLookupTables ?? []),
+      ...(process.env.SUBLY_EXTRA_LOOKUP_TABLES ?? "").split(",").map(s => s.trim()).filter(Boolean)] });
+  await adapter.validateConfiguration();
   const context = await adapter.loadContext();
-  console.log("slot", context.slot.toString());
-  console.log("tokenAvailableRaw", context.tokenAvailableRaw.toString());
-  console.log("sharesIssued", context.vaultState.sharesIssued.toString());
-  console.log("tokensPerShare", context.tokensPerShare.toString());
-  console.log("exchangeRateScaled", context.exchangeRateScaled.toString());
-  console.log(
-    "instantRedeemCapacityRawUsdc",
-    context.instantRedeemCapacityRawUsdc.toString()
-  );
-  console.log(
-    "singleIxCapacityRawUsdc",
-    context.singleInstructionRedeemCapacityRawUsdc.toString()
-  );
-  console.log(
-    "withdrawalPenaltyBps",
-    context.withdrawalPenaltyBps.toString(),
-    "penaltyLamports",
-    context.withdrawalPenaltyLamports.toString(),
-    "minWithdrawRaw",
-    context.minWithdrawAmountRaw.toString()
-  );
-  console.log("farm", context.farmState === null ? "none" : "configured");
-
-  console.log("\n=== 2. Locate a share-holding wallet ===");
-  let wallet = process.env.SUBLY_VALIDATE_WALLET ?? null;
-  if (wallet === null) {
-    const largest = await rpc
-      .getTokenLargestAccounts(address(SUBLY_VAULT.shareMint))
-      .send();
-    for (const entry of largest.value) {
-      if (BigInt(entry.amount) === 0n) {
-        continue;
-      }
-      const info = await rpc
-        .getAccountInfo(entry.address, { encoding: "jsonParsed" })
-        .send();
-      const data = info.value?.data;
-      const owner =
-        data !== undefined && typeof data === "object" && "parsed" in data
-          ? (data.parsed as { info?: { owner?: string } }).info?.owner ?? null
-          : null;
-      if (owner === null) {
-        continue;
-      }
-      const shares = await adapter.getUserSharesRaw(owner, context);
-      if (shares.totalSharesRaw > 0n) {
-        wallet = owner;
-        break;
-      }
-    }
+  const shares = await adapter.getUserSharesRaw(wallet, context);
+  assert(shares.totalSharesRaw > 0n, "Wallet has no vault shares; withdrawal validation is incomplete");
+  assert((await rpc.getBalance(sponsor).send()).value > 0n, "Simulated fee payer needs a funded system account");
+  console.log("PASS: pinned vault configuration and wallet position", {
+    wallet, vault: SUBLY_VAULT.address, sharesRaw: shares.totalSharesRaw.toString(),
+    positionValueRawUsdc: (shares.totalSharesRaw * context.exchangeRateScaled / RATE_SCALE).toString(),
+    slot: context.slot.toString() });
+  const lookupTables = await adapter.loadLookupTables(context);
+  const transactions: Array<{ purpose?: "yield_realize"; serializedTransaction: string }> = [];
+  for (const purpose of [undefined, "yield_realize"] as const) {
+    const gross = grossWithdrawForNetTarget({
+      targetNetRawUsdc: amount + (purpose === "yield_realize" ? YIELD_REALIZE_ROUNDING_RAW_USDC : 0n),
+      penaltyBps: context.withdrawalPenaltyBps, penaltyLamports: context.withdrawalPenaltyLamports });
+    const redeem = ceilDiv(gross * RATE_SCALE, context.exchangeRateScaled);
+    assert(redeem <= shares.totalSharesRaw, "Requested amount exceeds wallet shares");
+    assert(gross <= context.instantRedeemCapacityRawUsdc, "Requested amount exceeds instant vault liquidity");
+    const instructions = [getSetComputeUnitLimitInstruction({ units: 1_000_000 }),
+      getSetComputeUnitPriceInstruction({ microLamports: 1n }),
+      ...await adapter.buildNormalWithdrawInstructions({ wallet, sharesToRedeemRaw: redeem, context, rentPayer: sponsor })];
+    const built = await buildVersionedTransaction({ feePayer: sponsor, blockhash: context.blockhash,
+      lastValidBlockHeight: context.lastValidBlockHeight, instructions, lookupTables });
+    const tx = { serializedTransaction: built.serializedBase64, ...(purpose ? { purpose } : {}) };
+    await assertWithdrawalPreview({ rpc, wallet, vault: SUBLY_VAULT, amountRawUsdc: amount, ...tx });
+    transactions.push(tx);
+    console.log(`PASS: ${purpose ?? "normal exit"} transaction and independent client preview`, {
+      bytes: Buffer.from(built.serializedBase64, "base64").length, requestedRawUsdc: amount.toString() });
   }
-  if (wallet === null) {
-    // All shares may be staked in the vault farm; attribute via recent vault
-    // transaction signers instead of share token accounts.
-    const signatures = await rpc
-      .getSignaturesForAddress(address(SUBLY_VAULT.address), { limit: 25 })
-      .send();
-    const candidates = new Set<string>();
-    for (const entry of signatures) {
-      if (entry.err !== null) {
-        continue;
-      }
-      const tx = await rpc
-        .getTransaction(entry.signature, {
-          maxSupportedTransactionVersion: 0,
-          encoding: "json"
-        })
-        .send();
-      const keys = tx?.transaction.message.accountKeys ?? [];
-      const numSigners = tx?.transaction.message.header.numRequiredSignatures ?? 0;
-      for (let index = 0; index < Number(numSigners); index += 1) {
-        const key = keys[index];
-        if (key !== undefined) {
-          candidates.add(String(key));
-        }
-      }
-      if (candidates.size >= 8) {
-        break;
-      }
-    }
-    for (const candidate of candidates) {
-      const shares = await adapter.getUserSharesRaw(candidate, context);
-      if (shares.totalSharesRaw > 0n) {
-        wallet = candidate;
-        break;
-      }
-    }
+  if (drift > 0) {
+    console.log(`Checking the same unsigned transactions again after ${drift}s...`);
+    await new Promise(resolve => setTimeout(resolve, drift * 1_000));
+    for (const tx of transactions) await assertWithdrawalPreview({ rpc, wallet, vault: SUBLY_VAULT, amountRawUsdc: amount, ...tx });
+    console.log("PASS: delayed client previews");
   }
-  if (wallet === null) {
-    throw new Error("No share-holding wallet found; set SUBLY_VALIDATE_WALLET. Validation is incomplete.");
-  }
-  const userShares = await adapter.getUserSharesRaw(wallet, context);
-  console.log("wallet", wallet);
-  console.log("stakedSharesRaw", userShares.stakedSharesRaw.toString());
-  console.log("unstakedSharesRaw", userShares.unstakedSharesRaw.toString());
-  console.log("sharesAtaExists", userShares.sharesAtaExists);
-
-  console.log("\n=== 3. Settlement quote ===");
-  const amountRawUsdc = BigInt(process.env.SUBLY_VALIDATE_AMOUNT ?? "10000");
-  const builder = new KaminoCanonicalTransactionBuilder({ rpc, adapter });
-  const quote = await builder.quoteSettlementWithdraw({
-    wallet,
-    vault: SUBLY_VAULT.address,
-    amountRawUsdc
-  });
-  console.log("requiredWithdrawRawUsdc", quote.requiredWithdrawRawUsdc.toString());
-  console.log("sharesToRedeemRaw", quote.sharesToRedeemRaw.toString());
-  console.log("withdrawalPenaltyRawUsdc", quote.withdrawalPenaltyRawUsdc.toString());
-  if (quote.userTotalSharesRaw === 0n) {
-    throw new Error("Wallet has no shares; cannot build settlement. Validation is incomplete.");
-  }
-
-  console.log("\n=== 4. Canonical settlement transaction (simulation only) ===");
-  const sponsor = process.env.SUBLY_VALIDATE_SPONSOR ?? DEFAULT_SIMULATED_SPONSOR;
-  const seller = process.env.SUBLY_VALIDATE_SELLER ?? sponsor;
-  const sellerUsdcAta = deriveAssociatedTokenAddress({
-    owner: seller,
-    mint: SUBLY_VAULT.usdcMint
-  });
-  const dustRecipientUsdcAta = deriveAssociatedTokenAddress({
-    owner: wallet,
-    mint: SUBLY_VAULT.usdcMint
-  });
-  console.log("simulated sponsor", sponsor);
-  console.log("seller", seller, "sellerUsdcAta", sellerUsdcAta);
-
-  const startedAt = Date.now();
-  let prepared;
-  try {
-    prepared = await builder.preparePaymentSettlement({
-    paymentId: "pay_mainnet_validation",
-    wallet,
-    vault: SUBLY_VAULT.address,
-    shareMint: SUBLY_VAULT.shareMint,
-    usdcMint: SUBLY_VAULT.usdcMint,
-    feePayer: sponsor,
-    seller,
-    sellerRequestId: "validation",
-    requestBindingHash: "sha256-validation",
-    httpMethod: "GET",
-    canonicalResourceUrl: "https://example.com/v1/data",
-    requestBodyHash: "sha256-empty",
-    amountRawUsdc,
-    payTo: seller,
-    sellerUsdcAta,
-    dustRecipientUsdcAta,
-    sharesToRedeemRaw: quote.sharesToRedeemRaw,
-    requiredWithdrawRawUsdc: quote.requiredWithdrawRawUsdc,
-    memo: "pay_mainnet_validation",
-    expiresAt: new Date(Date.now() + 120_000).toISOString()
-    });
-  } catch (error) {
-    if (error instanceof Error && error.message.includes("byte limit")) {
-      console.log(
-        "PARTIAL PASS: the withdraw probe simulation succeeded on mainnet " +
-          "(temporary account funded via KVault withdraw), but the final " +
-          "transaction exceeds the size limit because the wallet's shares " +
-          "are farm-staked and the vault lookup table is not synced."
-      );
-      console.log("Detail:", error.message);
-      console.log(
-        "Remediation: run `npx tsx scripts/create-settlement-lut.ts` with the " +
-          "funded sponsor keypair and set SUBLY_EXTRA_LOOKUP_TABLES, or sync " +
-          "the curator vault LUT from the Kamino SDK, then re-run this harness."
-      );
-      process.exitCode = 1;
-      return;
-    }
-    throw error;
-  }
-  console.log("preparedMessageHash", prepared.preparedMessageHash);
-  console.log("temporary account", prepared.temporarySettlementTokenAccount);
-  console.log(
-    "transaction bytes",
-    Buffer.from(prepared.serializedTransaction, "base64").length
-  );
-  console.log("build+simulate ms", Date.now() - startedAt);
-  console.log(
-    "PASS: probe + final simulation succeeded (temporary account closed, seller paid",
-    rawToUsdcDecimal(amountRawUsdc).toString(),
-    "USDC)"
-  );
-
-  const driftSeconds = Number(process.env.SUBLY_VALIDATE_DRIFT_S ?? "0");
-  if (driftSeconds > 0) {
-    console.log(`\n=== 5. Output drift after ${driftSeconds}s ===`);
-    await new Promise((resolve) => setTimeout(resolve, driftSeconds * 1000));
-    const result = await rpc
-      .simulateTransaction(
-        prepared.serializedTransaction as Parameters<
-          typeof rpc.simulateTransaction
-        >[0],
-        {
-          encoding: "base64",
-          sigVerify: false,
-          replaceRecentBlockhash: true,
-          commitment: "confirmed"
-        }
-      )
-      .send();
-    if (result.value.err === null) {
-      console.log("PASS: settlement still closes exactly after", driftSeconds, "s");
-    } else {
-      console.log(
-        "DRIFT: settlement no longer balances:",
-        JSON.stringify(result.value.err),
-        (result.value.logs ?? []).slice(-5)
-      );
-      process.exitCode = 1;
-    }
-  }
-
-  console.log("\n=== 6. Kamino P&L API ===");
-  const apiClient = new KaminoApiClient(process.env.SUBLY_KAMINO_API_BASE);
-  const pnl = await apiClient.getUserVaultPnl({
-    wallet,
-    vault: SUBLY_VAULT.address
-  });
-  console.log(
-    pnl === null
-      ? "P&L API unavailable (conservative reset path will be used)"
-      : `costBasisRawUsdc=${pnl.costBasisRawUsdc?.toString() ?? "null"}`
-  );
-
-  console.log("\n=== 7. Fee oracle ===");
-  const estimator = new PythHermesFeeEstimator(pythHermesConnectionFromEnv());
-  const fee = await estimator.estimatePaymentFee({
-    wallet,
-    seller,
-    amountRawUsdc
-  });
-  console.log("estimatedFeeLamports", fee.estimatedFeeLamports.toString());
-  console.log("estimatedFeeDebtRawUsdc", fee.estimatedFeeDebtRawUsdc.toString());
-  console.log("source", fee.source, "observedAt", fee.observedAt);
-
-  console.log(process.exitCode ? "\nValidation failed; see checks above." : "\nAll read-only validations completed.");
+  const pnl = await new KaminoApiClient(process.env.SUBLY_KAMINO_API_BASE).getUserVaultPnl({ wallet, vault: SUBLY_VAULT.address });
+  console.log("INFO: Kamino historical cost basis", pnl?.costBasisRawUsdc?.toString() ?? "unavailable; fresh ledger sync conservatively treats current value as principal");
+  const ata = deriveAssociatedTokenAddress({ owner: wallet, mint: SUBLY_VAULT.usdcMint });
+  const token = await rpc.getAccountInfo(address(ata), { encoding: "base64" }).send();
+  const walletUsdc = token.value === null ? 0n : Buffer.from(token.value.data[0], "base64").readBigUInt64LE(64);
+  console.log("INFO: wallet USDC and minimum deposit", { walletUsdcRaw: walletUsdc.toString(),
+    minimumDepositWithRoundingRaw: (context.minDepositAmountRaw + 10n).toString() });
+  console.log("Read-only withdrawal/price checks passed. Deposit execution, owner approval, real accrued yield, seller settlement and public-host deployment are NOT certified by this command. Run test:fork for the disposable end-to-end fixture.");
 }
 
-main().catch((error) => {
-  console.error("Validation failed:", error);
-  process.exit(1);
+main().catch(error => {
+  // RPC exceptions can carry headers and authenticated URLs. Never dump them.
+  let message = error instanceof Error ? error.message : "Unexpected validation failure";
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value && /API_KEY|RPC_URL/.test(name)) message = message.replaceAll(value, "[redacted]");
+  }
+  console.error("Validation failed:", message.replace(/https?:\/\/[^\s"'<>]+/g, "[endpoint omitted]"));
+  process.exitCode = 1;
 });

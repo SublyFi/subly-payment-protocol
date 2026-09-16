@@ -37,6 +37,39 @@ docker stop subly-test-db
 
 Wait for the database to become ready before testing. Fixtures use generated/test-only keys, never real funded keys. For deployment testing use [the operator guide](deploy/README.md); scripts that create lookup tables or invest vault funds are real transactions.
 
+## Mainnet fork integration test
+
+With Surfpool installed and root/client dependencies installed, start a
+**disposable** fork in a separate terminal. Use an environment variable for
+your dedicated upstream RPC so its credential is not placed in shell history:
+
+```bash
+node --env-file=.env --input-type=module -e '
+  const { spawn } = await import("node:child_process");
+  const rpc = process.env.SOLANA_RPC_URL || process.env.SOLANA_MAINNET_RPC_URL;
+  if (!rpc) throw new Error("Configure the mainnet RPC in .env");
+  const child = spawn("surfpool", ["start", "--port", "18899", "--ws-port", "18900",
+    "--no-deploy", "--no-tui", "--no-studio", "--airdrop-amount", "0", "--db", ":memory:", "--log-level", "warn"],
+    { stdio: "inherit", env: { ...process.env, SURFPOOL_DATASOURCE_RPC_URL: rpc } });
+  child.on("exit", code => process.exit(code ?? 1));
+'
+```
+
+Then run `npm run test:fork`. The test requires a working Pyth key in `.env`
+and a numeric loopback Surfpool endpoint (default `http://127.0.0.1:18899`;
+override with `SUBLY_FORK_RPC_URL`). It verifies Surfpool before changing state.
+All agent, sponsor and seller keys are generated in memory; existing wallet
+files are never loaded. Keep normal transaction signature verification enabled.
+
+The test runs wallet-authenticated HTTP onboarding, a simulated passkey owner
+approval, a sponsored deposit, receipt/fee accounting, yield realization from
+a zero USDC wallet balance, the published client's official x402 transport and
+a local seller settlement, then a normal withdrawal. Test balances are local
+faucet balances. A **synthetic in-memory ledger yield fixture** is used for the
+payment: this verifies transaction/policy behavior, not actual accrued yield
+or a third-party facilitator. Stop the fork afterward to discard its state.
+It is opt-in because it needs a current mainnet datasource and Pyth access.
+
 ## Repository map
 
 - `packages/pay/`: published CLI/MCP entry points and package build.

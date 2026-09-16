@@ -49,10 +49,10 @@ The relayer and the seller's **x402 facilitator** have different roles. The rela
 Install Node.js 24 and choose a relayer operator you trust. No repository clone is needed:
 
 ```bash
-npx -y @subly_fi/pay@0.7.1 --help
+npx -y @subly_fi/pay@0.7.2 --help
 export SUBLY_RELAYER_URL=https://your-relayer.example.com
 export SUBLY_DEMO_AGENT_KEYPAIR_PATH=/absolute/path/to/agent.json
-npx -y @subly_fi/pay@0.7.1 doctor
+npx -y @subly_fi/pay@0.7.2 doctor
 ```
 
 Continue with the [client guide](packages/pay/README.md): review the vault, create an owner setup link, approve the policy, deposit, and check the budget before buying an API call. It also includes MCP configuration, custody signers and troubleshooting.

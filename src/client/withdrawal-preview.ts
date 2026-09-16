@@ -3,10 +3,7 @@ import { SPL_TOKEN_PROGRAM_ID } from "../config/constants.js";
 import type { VaultConfig } from "../config/vault.js";
 import { deriveAssociatedTokenAddress } from "../lib/associated-token-account.js";
 import type { SolanaRpc } from "../solana/rpc.js";
-
-// A local, fixed allowance for whole-share rounding: 0.00001 USDC. A vault
-// requiring more must fail closed until its pricing has been reviewed.
-const ROUNDING_RAW_USDC = 10n;
+import { WITHDRAWAL_ROUNDING_RAW_USDC } from "../domain/withdrawal-rounding.js";
 
 /** Independently preview the exact unsigned withdrawal using the client's RPC.
  * The relayer's share quote is not an authority for how much USDC to liquidate.
@@ -18,6 +15,7 @@ export async function assertWithdrawalPreview(input: {
   wallet: string;
   vault: Readonly<VaultConfig>;
   amountRawUsdc: bigint;
+  purpose?: "yield_realize";
 }): Promise<void> {
   const destination = deriveAssociatedTokenAddress({ owner: input.wallet, mint: input.vault.usdcMint });
   const simulation = await input.rpc.simulateTransaction(
@@ -46,8 +44,10 @@ export async function assertWithdrawalPreview(input: {
       if (info.source === destination) received -= amount;
     }
   }
-  if (received <= 0n || received > input.amountRawUsdc + ROUNDING_RAW_USDC ||
-      received < input.amountRawUsdc - ROUNDING_RAW_USDC) {
+  const minimum = input.purpose === "yield_realize"
+    ? input.amountRawUsdc : input.amountRawUsdc - WITHDRAWAL_ROUNDING_RAW_USDC;
+  if (received <= 0n || received > input.amountRawUsdc + WITHDRAWAL_ROUNDING_RAW_USDC ||
+      received < minimum) {
     throw new Error("Withdrawal preview differs from the requested USDC amount; no transaction was signed");
   }
 }

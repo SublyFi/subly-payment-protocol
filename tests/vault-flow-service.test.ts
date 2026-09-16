@@ -263,6 +263,19 @@ describe("VaultFlowService gates", () => {
 });
 
 describe("VaultFlowService yield-realize guard", () => {
+  it("includes rounding headroom in the share request and principal guard", async () => {
+    const { service, ledger } = buildService();
+    await registerPosition(ledger);
+    const prepared = await service.prepareWithdrawal({ wallet: WALLET, amountRawUsdc: "10000", purpose: "yield_realize" });
+    expect(prepared.requestedSharesRaw).toBe("10005");
+
+    const other = buildService();
+    // 12,504 raw yield covers the payment + 2,500 fee headroom, but does
+    // not also cover the five-unit rounding reserve. Do not spend principal.
+    await registerPosition(other.ledger, { principalBasisRawUsdc: 100_987_496n });
+    await expect(other.service.prepareWithdrawal({ wallet: WALLET, amountRawUsdc: "10000", purpose: "yield_realize" }))
+      .rejects.toMatchObject({ code: "insufficient_yield" });
+  });
   // Position: 101 shares @ rate 1.0 = 101 USDC value, basis 100 USDC
   // -> spendable yield 1 USDC (1_000_000 raw).
 

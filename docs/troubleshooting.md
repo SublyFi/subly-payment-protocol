@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Start with `npx -y @subly_fi/pay@0.7.1 doctor` and record the exact client version. For operators, check `docker compose ps`, `docker compose logs --tail=100 relayer`, `/healthz` and `/readyz`. Remove credentials and capability URLs before sharing logs.
+Start with `npx -y @subly_fi/pay@0.7.2 doctor` and record the exact client version. For operators, check `docker compose ps`, `docker compose logs --tail=100 relayer`, `/healthz` and `/readyz`. Remove credentials and capability URLs before sharing logs.
 
 | Symptom | Action |
 | --- | --- |
@@ -16,6 +16,7 @@ Start with `npx -y @subly_fi/pay@0.7.1 doctor` and record the exact client versi
 | Unsupported x402 rail | Seller must offer mainnet Solana USDC exact with `extra.feePayer`. EVM or missing fee sponsorship is not supported. |
 | `submitted` / confirmation timeout | Save the original intent ID and signature; query its status / chain. The transaction may still land. Do not deposit/withdraw again until resolved. |
 | `payment_outcome_unknown` | Preserve pending JSON. Investigate seller/facilitator status and chain before any new charge. Operator assistance may be required. |
+| `realize_underfunded` | A withdrawal landed but its USDC receipt was below the exact API price. No seller payment was attempted. Preserve pending state and reconcile the original withdrawal; do not blindly force a new payment or fill the gap from unrelated wallet funds. Upgrade both client and relayer for bounded rounding headroom and the pre-sign minimum-output check. |
 | Payment state locked | Stop concurrent clients. After confirming no process is using the state file, remove only a stale `.lock` from a crash. Keep JSON intact. |
 | `needs_baseline_reset` | External share movement changed accounting. The operator can chain-sync conservatively; accrued budget may be lost. Backups matter. |
 | Transaction exceeds 1232 bytes | Operator must configure suitable vault-specific lookup tables. The LUT setup script spends sponsor SOL. |

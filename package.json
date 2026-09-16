@@ -1,6 +1,6 @@
 {
   "name": "subly-agent-payments",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -15,7 +15,8 @@
     "test": "vitest run",
     "configure:vault": "tsx scripts/configure-vault.ts",
     "configure:vaults": "tsx scripts/configure-vaults.ts",
-    "validate:mainnet": "tsx scripts/mainnet-validate.ts",
+    "validate:mainnet": "node --env-file-if-exists=.env --import tsx scripts/mainnet-validate.ts",
+    "test:fork": "node --env-file-if-exists=.env --import tsx packages/pay/scripts/fork-smoke.ts",
     "demo:legacy:seller": "NODE_ENV=development tsx demo/seller.ts",
     "demo:legacy:buyer": "NODE_ENV=development tsx demo/buyer.ts",
     "demo:deposit": "NODE_ENV=development tsx demo/deposit.ts",

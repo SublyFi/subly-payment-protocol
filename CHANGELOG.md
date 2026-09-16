@@ -4,6 +4,16 @@ All notable changes to the repository and the published client are recorded here
 
 ## [Unreleased]
 
+## 0.7.2 — 2026-09-17
+
+- Reserve bounded rounding headroom for yield realization; refuse a preview or confirmed receipt that cannot fund the exact API price. Preserve the pending withdrawal record so retries cannot realize twice or silently use unrelated wallet USDC.
+- Read the standard x402 v2 `PAYMENT-RESPONSE` receipt, retaining legacy header compatibility, so payment signatures are reported to the relayer and checked on-chain.
+- Validate the current separate withdrawal/payment integration instead of requiring the retired atomic settlement transaction to fit. Additional lookup tables are needed only when current transactions exceed the size limit.
+- Add an opt-in disposable Surfpool integration test covering wallet-authenticated HTTP onboarding, simulated passkey approval, deposit, fee accounting with Pyth, yield realization, the official x402 client, a local seller settlement and normal withdrawal. It uses generated keys and synthetic local balances/yield, never user key files or mainnet transactions.
+- Load ignored `.env` settings in the validation commands and accept `SOLANA_MAINNET_RPC_URL` for mainnet validation. Document exactly what live read-only checks and fork tests do and do not establish.
+
+Upgrade both relayer and client together for the rounding fix. No database migration. Mainnet read-only previews and authenticated Pyth requests were verified; real-funded end-to-end payments and public server deployment remain operator checks.
+
 ## 0.7.1 — 2026-09-16
 
 - Support authenticated Pyth Hermes fee pricing after the August 2026 API upgrade. Operators set `SUBLY_HERMES_API_KEY` (or `PYTH_API_KEY`); credentials require HTTPS and redirects are rejected.
@@ -36,4 +46,4 @@ Compatibility: Node.js 24+ is now required. Withdrawal RPCs must support simulat
 - Published client baseline before the OSS release-readiness work.
 
 [0.6.2]: https://github.com/SublyFi/subly-payment-protocol/compare/pay-v0.6.1...pay-v0.6.2
-[Unreleased]: https://github.com/SublyFi/subly-payment-protocol/compare/pay-v0.7.1...HEAD
+[Unreleased]: https://github.com/SublyFi/subly-payment-protocol/compare/pay-v0.7.2...HEAD

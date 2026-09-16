@@ -2,6 +2,7 @@ import { SOLANA_MAINNET_NETWORK, SUBLY_VAULT } from "../config/constants.js";
 import { sha256HexOf } from "../lib/canonical-json.js";
 import {
   PAYMENT_REQUIRED_HEADER,
+  PAYMENT_RESPONSE_HEADER,
   requestBodyHashFor
 } from "../x402/headers.js";
 import {
@@ -152,7 +153,7 @@ export interface StandardPayResult {
     feePayer: string | null;
     realizedRawUsdc: string;
     realizeTxSignature: string | null;
-    /** From the seller's X-PAYMENT-RESPONSE settle header, when present. */
+    /** From the seller's PAYMENT-RESPONSE settle header, when present. */
     paymentTxSignature: string | null;
   };
 }
@@ -165,6 +166,7 @@ export class StandardX402PayError extends Error {
       | "amount_exceeds_client_cap"
       | "approval_required"
       | "realize_failed"
+      | "realize_underfunded"
       | "payment_outcome_unknown"
       | "state_persist_failed",
     message: string,
@@ -346,6 +348,17 @@ export class StandardX402Payer {
         "could not persist the pending x402 marker; refusing to attempt the " +
           "external payment because a restart would not be double-payment safe",
         { error, pendingPayment: pendingRecord }
+      );
+    }
+
+    // A landed withdrawal can differ from its earlier preview. Never fill a
+    // yield shortfall with unrelated wallet funds, or realize again on retry.
+    // Keep the persisted marker because the first realization already landed.
+    if (realized.realizedRawUsdc < selected.amountRawUsdc) {
+      throw new StandardX402PayError(
+        "realize_underfunded",
+        "The confirmed withdrawal did not cover the exact API price. No external payment was attempted; reconcile the recorded withdrawal before retrying.",
+        { pendingPayment: pendingRecord }
       );
     }
 
@@ -550,13 +563,13 @@ function pendingPaymentKey(input: {
 
 /**
  * Standard x402 v2: after settlement the resource server echoes the settle
- * response as base64 JSON in X-PAYMENT-RESPONSE, including the payment
+ * response as base64 JSON in PAYMENT-RESPONSE, including the payment
  * transaction signature. Absent or malformed headers yield null.
  */
 export function extractSettledPaymentTxSignature(
   response: FetchResponseLike
 ): string | null {
-  const header = response.headers.get("x-payment-response");
+  const header = response.headers.get(PAYMENT_RESPONSE_HEADER) ?? response.headers.get("x-payment-response");
   if (header === null || header.length === 0) {
     return null;
   }

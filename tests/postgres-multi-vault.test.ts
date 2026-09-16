@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { PostgresLedger } from "../src/domain/postgres-ledger.js";
 import { InMemoryLedger } from "../src/domain/ledger.js";
 import { SpendingMandateService } from "../src/domain/spending-mandate-service.js";
@@ -13,6 +13,35 @@ const B = "HDsayqAsDWy3QvANGqh2yNraqcD8Fnjgh73Mhb3WRS5E";
 
 // Opt in with a disposable PostgreSQL instance. Each test owns an isolated schema.
 describe.skipIf(!connectionString)("Postgres vault mandate migration", () => {
+  it("survives a terminated idle backend and reconnects without losing stored mandates", async () => {
+    const schema = `subly_test_${randomUUID().replaceAll("-", "")}`;
+    const admin = new Pool({ connectionString });
+    await admin.query(`create schema ${schema}`);
+    const ledger = new PostgresLedger({
+      connectionString, options: `-c search_path=${schema}`, application_name: schema
+    });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const service = new SpendingMandateService({ ledger, config: { nowMs: () => NOW_MS } });
+      const saved = await service.registerMandate({ wallet: AGENT_PUB, vault: A, document: buildDocument() });
+      const before = await admin.query("select pid from pg_stat_activity where application_name = $1 and state = 'idle'", [schema]);
+      expect(before.rowCount).toBe(1);
+      const pid = before.rows[0].pid;
+      await admin.query("select pg_terminate_backend($1)", [pid]);
+      await expect.poll(() => warning.mock.calls.length).toBe(1);
+      expect(warning).toHaveBeenCalledWith("PostgreSQL idle connection lost; the next query will reconnect.");
+      await ledger.checkHealth();
+      expect((await ledger.getSpendingMandate(AGENT_PUB, A))?.mandateHash).toBe(saved.mandateHash);
+      const after = await admin.query("select pid from pg_stat_activity where application_name = $1", [schema]);
+      expect(after.rows[0].pid).not.toBe(pid);
+    } finally {
+      warning.mockRestore();
+      await ledger.close();
+      await admin.query(`drop schema ${schema} cascade`);
+      await admin.end();
+    }
+  });
+
   it.each([false, true])("preserves isolated mandates across restarts (legacy data: %s)", async (legacy) => {
     const schema = `subly_test_${randomUUID().replaceAll("-", "")}`;
     const admin = new Pool({ connectionString });

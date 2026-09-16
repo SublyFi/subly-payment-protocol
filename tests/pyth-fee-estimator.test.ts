@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   PythHermesFeeEstimator,
+  pythHermesConnectionFromEnv,
   scalePythPrice
 } from "../src/domain/pyth-fee-estimator.js";
 
@@ -48,6 +49,52 @@ describe("scalePythPrice", () => {
 });
 
 describe("PythHermesFeeEstimator", () => {
+  it("authenticates hosted Hermes requests without putting the key in the URL", async () => {
+    stubHermes({});
+    const estimator = new PythHermesFeeEstimator(pythHermesConnectionFromEnv({
+      SUBLY_HERMES_API_KEY: "test-hermes-secret"
+    }));
+    await estimator.estimatePaymentFee({ wallet: "w", seller: "s", amountRawUsdc: 1n });
+    const [url, init] = vi.mocked(fetch).mock.calls[0]!;
+    expect(String(url)).toMatch(/^https:\/\/pyth\.dourolabs\.app\/hermes\/v2\/updates\/price\/latest\?/);
+    expect(String(url)).not.toContain("test-hermes-secret");
+    expect(init?.headers).toEqual({ Authorization: "Bearer test-hermes-secret" });
+    expect(init?.redirect).toBe("error");
+  });
+
+  it("supports an explicitly selected provider and the standard PYTH_API_KEY variable", async () => {
+    stubHermes({});
+    const estimator = new PythHermesFeeEstimator(pythHermesConnectionFromEnv({
+      SUBLY_HERMES_BASE_URL: "https://oracle.example.test/hermes/",
+      PYTH_API_KEY: "test-provider-secret"
+    }));
+    await estimator.convertFeeLamportsToUsdc(15_000n);
+    const [url, init] = vi.mocked(fetch).mock.calls[0]!;
+    expect(String(url)).toMatch(/^https:\/\/oracle\.example\.test\/hermes\/v2\//);
+    expect(init?.headers).toEqual({ Authorization: "Bearer test-provider-secret" });
+  });
+
+  it("prefers the operator-specific key and permits credential-free custom Hermes", () => {
+    expect(pythHermesConnectionFromEnv({ SUBLY_HERMES_API_KEY: "specific", PYTH_API_KEY: "fallback" }))
+      .toEqual({ apiKey: "specific" });
+    expect(pythHermesConnectionFromEnv({})).toEqual({});
+  });
+
+  it("refuses sending API credentials over plaintext HTTP", () => {
+    expect(() => new PythHermesFeeEstimator({
+      hermesBaseUrl: "http://oracle.example.test", apiKey: "test-secret"
+    })).toThrow("must use HTTPS");
+  });
+
+  it.each([401, 403])("fails closed with an actionable authentication error on HTTP %s", async (status) => {
+    stubHermes({ status });
+    const estimator = new PythHermesFeeEstimator({ apiKey: "test-hermes-secret" });
+    await expect(estimator.convertFeeLamportsToUsdc(15_000n)).rejects.toMatchObject({
+      code: "stale_oracle", message: expect.stringContaining("SUBLY_HERMES_API_KEY")
+    });
+    await expect(estimator.convertFeeLamportsToUsdc(15_000n)).rejects.not.toThrow("test-hermes-secret");
+  });
+
   it("computes fee debt from the live price", async () => {
     stubHermes({});
     const estimator = new PythHermesFeeEstimator({

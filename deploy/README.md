@@ -39,6 +39,13 @@ secrets/sponsor.json    <- sponsor key (host only, never baked into the image)
   one-time on-chain setup scripts below (the relayer itself runs in Docker).
 - A **dedicated / paid Solana RPC endpoint** — the public RPC is not
   sufficient for the settlement path.
+- A **Pyth Hermes API key** for live SOL/USDC fee pricing. Set `SUBLY_HERMES_API_KEY`
+  (or `PYTH_API_KEY`) in the relayer environment. Since the
+  [August 2026 Hermes upgrade](https://docs.pyth.network/price-feeds/core/upgrade/preparing),
+  the hosted service requires authentication. The default endpoint is
+  `https://pyth.dourolabs.app/hermes`; `SUBLY_HERMES_BASE_URL` supports a compatible
+  operator-selected provider. Keep this credential on the server, out of client
+  configuration and URLs.
 - A **sponsor wallet**: create it and fund it with SOL (size its balance for expected gas and rent; the default alert threshold is 0.1 SOL):
 
   ```bash
@@ -55,17 +62,17 @@ secrets/sponsor.json    <- sponsor key (host only, never baked into the image)
 
 ## Get the code onto the host
 
-Use the reviewed `pay-v0.7.0` source tag. You can clone anonymously:
+Use the reviewed `pay-v0.7.1` source tag. You can clone anonymously:
 
 ```bash
-git clone --branch pay-v0.7.0 --depth 1 https://github.com/SublyFi/subly-payment-protocol.git
+git clone --branch pay-v0.7.1 --depth 1 https://github.com/SublyFi/subly-payment-protocol.git
 ```
 
 Alternatively ship a tarball from that tag. Everything below assumes the repo lives at `/opt/subly`:
 
 ```bash
 # locally
-git archive --format=tar.gz -o /tmp/subly.tar.gz pay-v0.7.0
+git archive --format=tar.gz -o /tmp/subly.tar.gz pay-v0.7.1
 scp /tmp/subly.tar.gz <user>@<host>:/tmp/
 # on the server
 sudo mkdir -p /opt/subly && sudo tar xzf /tmp/subly.tar.gz -C /opt/subly
@@ -153,8 +160,15 @@ Run the read-only validation harness (simulates the full settlement path,
 including your lookup table; moves no funds):
 
 ```bash
-SOLANA_RPC_URL=<rpc> SUBLY_EXTRA_LOOKUP_TABLES=<your LUT> npm run validate:mainnet
+SOLANA_RPC_URL=<rpc> SUBLY_EXTRA_LOOKUP_TABLES=<your LUT> \
+  SUBLY_HERMES_API_KEY=<key> npm run validate:mainnet
 ```
+
+Load real credentials from your local secret environment rather than recording them
+in shell history. The harness exits nonzero on incomplete settlement checks, missing
+shares, oversized transactions, simulation drift or oracle failure. If your RPC
+restricts wallet discovery, set `SUBLY_VALIDATE_WALLET` to a public address holding
+shares in the selected vault. No private key is needed for these simulations.
 
 Then do one end-to-end **real-funds smoke test** against your live relayer with your own
 wallet before inviting anyone else (the test wallet needs a little USDC; see
@@ -163,10 +177,10 @@ the client README's "Wallet" section for keypair options):
 ```bash
 export SUBLY_RELAYER_URL=https://<your-domain>
 export SUBLY_DEMO_AGENT_KEYPAIR_PATH=<test wallet keypair.json>
-npx -y @subly_fi/pay@0.7.0 setup-link --initial-deposit 1010000   # owner signs on your domain
-npx -y @subly_fi/pay@0.7.0 deposit 1010000
-# ...once yield has accrued: npx -y @subly_fi/pay@0.7.0 fetch <x402 url>
-npx -y @subly_fi/pay@0.7.0 withdraw 1000000
+npx -y @subly_fi/pay@0.7.1 setup-link --initial-deposit 1010000   # owner signs on your domain
+npx -y @subly_fi/pay@0.7.1 deposit 1010000
+# ...once yield has accrued: npx -y @subly_fi/pay@0.7.1 fetch <x402 url>
+npx -y @subly_fi/pay@0.7.1 withdraw 1000000
 ```
 
 ## Monitoring and backups
@@ -211,13 +225,13 @@ Your users run the standard published client — they just override the
 relayer URL:
 
 ```bash
-SUBLY_RELAYER_URL=https://<your-domain> npx -y @subly_fi/pay@0.7.0 fetch <url>
+SUBLY_RELAYER_URL=https://<your-domain> npx -y @subly_fi/pay@0.7.1 fetch <url>
 # or put SUBLY_RELAYER_URL in the MCP server's env block
 ```
 
 No API token — buyer requests are wallet-signature authenticated. With
 `SUBLY_MANDATE_ENFORCEMENT=on` (recommended above), a user's **first action
-is the owner setup link** (`npx -y @subly_fi/pay@0.7.0 setup-link
+is the owner setup link** (`npx -y @subly_fi/pay@0.7.1 setup-link
 --initial-deposit 1010000`, or the `create_subly_setup_link` MCP tool): the
 owner signs the spending mandate and pre-approves the first deposit with one
 Face ID. A bare first deposit is refused with `mandate_required_for_deposit`,
@@ -308,7 +322,7 @@ the client uses its own copy to validate exactly which vault/share mint/farm
 it signs for. `GET /v1/vaults` advertises relayer support; it does not install
 or replace the signer's local trust anchors. Client catalogues can be a subset,
 but metadata must match for every selected vault. Restart processes after
-changing files. Use `@subly_fi/pay@0.7.0` or a newer compatible client on every machine.
+changing files. Use `@subly_fi/pay@0.7.1` or a newer compatible client on every machine.
 
 ### 3. Let the user choose
 

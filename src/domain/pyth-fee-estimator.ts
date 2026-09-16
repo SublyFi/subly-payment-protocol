@@ -9,6 +9,8 @@ export const PYTH_SOL_USD_FEED_ID =
 
 export interface PythHermesFeeEstimatorConfig {
   hermesBaseUrl: string;
+  /** Server-side bearer credential; never put it in a URL or client settings. */
+  apiKey?: string;
   priceFeedId: string;
   /** Total estimated fee: base signatures fee + priority fee + safety buffer. */
   estimatedFeeLamports: bigint;
@@ -16,6 +18,16 @@ export interface PythHermesFeeEstimatorConfig {
   maxFeeDebtRawUsdcPerPayment: bigint;
   maxPriceAgeMs: number;
   priceCacheTtlMs: number;
+}
+
+export function pythHermesConnectionFromEnv(
+  env: NodeJS.ProcessEnv = process.env
+): Partial<Pick<PythHermesFeeEstimatorConfig, "hermesBaseUrl" | "apiKey">> {
+  const apiKey = env.SUBLY_HERMES_API_KEY?.trim() || env.PYTH_API_KEY?.trim();
+  return {
+    ...(env.SUBLY_HERMES_BASE_URL ? { hermesBaseUrl: env.SUBLY_HERMES_BASE_URL } : {}),
+    ...(apiKey ? { apiKey } : {})
+  };
 }
 
 export const DEFAULT_PYTH_FEE_CONFIG: Omit<
@@ -52,10 +64,14 @@ export class PythHermesFeeEstimator implements FeeEstimator {
 
   constructor(config?: Partial<PythHermesFeeEstimatorConfig>) {
     this.config = {
-      hermesBaseUrl: "https://hermes.pyth.network",
+      hermesBaseUrl: "https://pyth.dourolabs.app/hermes",
       ...DEFAULT_PYTH_FEE_CONFIG,
       ...config
     };
+    this.config.hermesBaseUrl = this.config.hermesBaseUrl.replace(/\/$/, "");
+    if (this.config.apiKey && new URL(this.config.hermesBaseUrl).protocol !== "https:") {
+      throw new Error("Authenticated Hermes endpoints must use HTTPS");
+    }
   }
 
   async estimatePaymentFee(_input: FeeEstimateInput): Promise<FeeEstimate> {
@@ -111,8 +127,15 @@ export class PythHermesFeeEstimator implements FeeEstimator {
     const url = `${this.config.hermesBaseUrl}/v2/updates/price/latest?ids[]=${this.config.priceFeedId}&parsed=true`;
     let parsed: { price: string; expo: number; publishTime: number };
     try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(5_000) });
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(5_000),
+        redirect: "error",
+        ...(this.config.apiKey ? { headers: { Authorization: `Bearer ${this.config.apiKey}` } } : {})
+      });
       if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          throw new Error("Hermes authentication failed; configure SUBLY_HERMES_API_KEY (or PYTH_API_KEY)");
+        }
         throw new Error(`Hermes responded with HTTP ${response.status}`);
       }
       const body = (await response.json()) as {

@@ -51,8 +51,16 @@ export class PostgresLedger implements Ledger {
   private schemaReady: Promise<void> | null = null;
 
   constructor(config: PoolConfig | string) {
-    this.pool =
-      typeof config === "string" ? new Pool({ connectionString: config }) : new Pool(config);
+    this.pool = new Pool({
+      connectionTimeoutMillis: 5_000,
+      ...(typeof config === "string" ? { connectionString: config } : config)
+    });
+    // pg removes broken idle clients automatically. An unhandled pool error
+    // otherwise terminates Node (and can dump the client's connection secrets).
+    // Active query failures still reject normally; readiness checks the DB.
+    this.pool.on("error", () => {
+      console.warn("PostgreSQL idle connection lost; the next query will reconnect.");
+    });
   }
 
   async withSpendingMandateLock<T>(

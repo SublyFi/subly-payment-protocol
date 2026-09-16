@@ -28,14 +28,32 @@ try {
   const keyPath=join(directory,"agent.json");
   writeFileSync(keyPath,JSON.stringify(Array.from(nacl.sign.keyPair().secretKey)),{mode:0o600});
   const catalogue=JSON.parse(run(["vaults"]));
+  let rpcGenesisHash="5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
+  let readinessStatus=200;
   diagnosticsServer=createServer((request,response)=>{
     response.setHeader("content-type","application/json");
-    response.end(JSON.stringify(request.method === "POST" ? {jsonrpc:"2.0",id:1,result:"5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"} : request.url === "/v1/vaults" ? catalogue : {ok:true}));
+    if(request.url === "/readyz") response.statusCode=readinessStatus;
+    response.end(JSON.stringify(request.method === "POST" ? {jsonrpc:"2.0",id:1,result:rpcGenesisHash} : request.url === "/v1/vaults" ? catalogue : {ok:response.statusCode===200}));
   });
   await new Promise(resolve=>diagnosticsServer.listen(0,"127.0.0.1",resolve));
   const diagnosticUrl=`http://127.0.0.1:${diagnosticsServer.address().port}`;
   const diagnostic=await promisify(execFile)(process.execPath,[cli,"doctor"],{cwd:directory,env:{...env,SUBLY_RELAYER_URL:diagnosticUrl,SOLANA_RPC_URL:diagnosticUrl,SUBLY_DEMO_AGENT_KEYPAIR_PATH:keyPath},timeout:15000});
   assert.equal(JSON.parse(diagnostic.stdout).ok,true);
+  for(const invalidGenesis of ["5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", "GH7ome3EiwEr7tu9JuTh2dpYWBJK3z69Xm1ZE3MEE6JC"]) {
+    rpcGenesisHash=invalidGenesis;
+    await assert.rejects(promisify(execFile)(process.execPath,[cli,"doctor"],{cwd:directory,env:{...env,SUBLY_RELAYER_URL:diagnosticUrl,SOLANA_RPC_URL:diagnosticUrl,SUBLY_DEMO_AGENT_KEYPAIR_PATH:keyPath},timeout:15000}), error=>{
+      assert.equal(error.code,1);
+      assert.equal(JSON.parse(error.stdout).checks.find(c=>c.name==="Solana RPC").ok,false);
+      return true;
+    });
+  }
+  rpcGenesisHash="5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
+  readinessStatus=503;
+  await assert.rejects(promisify(execFile)(process.execPath,[cli,"doctor"],{cwd:directory,env:{...env,SUBLY_RELAYER_URL:diagnosticUrl,SOLANA_RPC_URL:diagnosticUrl,SUBLY_DEMO_AGENT_KEYPAIR_PATH:keyPath},timeout:15000}), error=>{
+    assert.equal(error.code,1);
+    assert.equal(JSON.parse(error.stdout).checks.find(c=>c.name==="relayer and vault").ok,false);
+    return true;
+  });
   transport=new StdioClientTransport({command:process.execPath,args:[cli,"mcp"],cwd:directory,env:{...env,SUBLY_DEMO_AGENT_KEYPAIR_PATH:keyPath},stderr:"pipe"});
   const client=new Client({name:"package-smoke",version:"1.0.0"});
   await client.connect(transport, {timeout:15000});

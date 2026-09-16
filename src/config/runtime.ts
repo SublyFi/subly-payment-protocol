@@ -10,7 +10,7 @@ import {
   defaultSublyService,
   SublyService
 } from "../domain/payment-service.js";
-import { PythHermesFeeEstimator } from "../domain/pyth-fee-estimator.js";
+import { PythHermesFeeEstimator, pythHermesConnectionFromEnv } from "../domain/pyth-fee-estimator.js";
 import { SpendingMandateService } from "../domain/spending-mandate-service.js";
 import { parseMandateEnforcementLevel } from "../domain/spending-mandate.js";
 import { VaultFlowService } from "../domain/vault-flow-service.js";
@@ -222,9 +222,7 @@ function buildFeeEstimator(env: NodeJS.ProcessEnv): {
   }
 
   const pyth = new PythHermesFeeEstimator({
-    ...(env.SUBLY_HERMES_BASE_URL === undefined
-      ? {}
-      : { hermesBaseUrl: env.SUBLY_HERMES_BASE_URL }),
+    ...pythHermesConnectionFromEnv(env),
     ...(env.SUBLY_ESTIMATED_FEE_LAMPORTS === undefined
       ? {}
       : { estimatedFeeLamports: BigInt(env.SUBLY_ESTIMATED_FEE_LAMPORTS) }),

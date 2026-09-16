@@ -19,11 +19,13 @@ function run(scenario: string, env: Record<string, string> = {}) {
         return Response.json({ value: 'test-identity-secret' });
       }
       assert.equal(calls, 2, 'Only identity and token exchange requests are allowed');
-      assert.equal(String(url), 'https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/%40subly_fi%2Fpay');
+      assert.equal(String(url), 'https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/@subly_fi%2fpay');
       assert.equal(options.method, 'POST');
       assert.equal(options.headers.Authorization, 'Bearer test-identity-secret');
       if (${JSON.stringify(scenario)} === 'rejected') return Response.json({ error: 'test-identity-secret' }, {status: 403});
       if (${JSON.stringify(scenario)} === 'invalid-json') return new Response('test-publish-secret');
+      if (${JSON.stringify(scenario)} === 'token-only') return Response.json({ token: 'test-publish-secret' });
+      if (${JSON.stringify(scenario)} === 'missing-token') return Response.json({ token_type: 'oidc' });
       return Response.json({
         token_type: 'oidc', token: 'test-publish-secret',
         expires: new Date(Date.now() + (${JSON.stringify(scenario)} === 'expired' ? -60_000 : 60_000)).toISOString()
@@ -49,15 +51,15 @@ function run(scenario: string, env: Record<string, string> = {}) {
 }
 
 describe("npm trust verification", () => {
-  it("exchanges a package-scoped token without publishing or exposing credentials", () => {
-    const result = run("success");
+  it.each(["success", "token-only"])("accepts %s exchange without publishing or exposing credentials", (scenario) => {
+    const result = run(scenario);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("PASS: npm accepted");
     expect(result.stdout).toContain("No package was published");
     expect(result.stdout + result.stderr).not.toContain("secret");
   });
 
-  it.each(["rejected", "expired", "invalid-json", "network"])("fails safely on %s", (scenario) => {
+  it.each(["rejected", "expired", "invalid-json", "network", "missing-token"])("fails safely on %s", (scenario) => {
     const result = run(scenario);
     expect(result.status).toBe(1);
     expect(result.stdout).not.toContain("PASS");

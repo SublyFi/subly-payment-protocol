@@ -44,13 +44,19 @@ async function main() {
     throw new Error("GitHub OIDC response contains no identity token");
   }
   const exchange = await requestJson(
-    `https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/${encodeURIComponent(packageName)}`,
-    { method: "POST", headers: { Authorization: `Bearer ${identity.value}` } },
+    // npm-package-arg's escapedName keeps @ and encodes only the scope slash.
+    `https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/${packageName.replaceAll("/", "%2f")}`,
+    { method: "POST", headers: { Accept: "application/json", Authorization: `Bearer ${identity.value}` } },
     "npm trusted publisher exchange"
   );
-  if (exchange?.token_type !== "oidc" || typeof exchange.token !== "string" || !exchange.token ||
-      !Number.isFinite(Date.parse(exchange.expires)) || Date.parse(exchange.expires) <= Date.now()) {
-    throw new Error("npm did not return a valid, unexpired OIDC publishing token");
+  // Like npm CLI, require the issued token. Registry responses need not include
+  // token_type or expires; reject expired metadata when it is actually supplied.
+  if (typeof exchange?.token !== "string" || !exchange.token) {
+    throw new Error("npm exchange response contains no publishing token");
+  }
+  if (exchange.expires !== undefined &&
+      (!Number.isFinite(Date.parse(exchange.expires)) || Date.parse(exchange.expires) <= Date.now())) {
+    throw new Error("npm exchange returned invalid or expired token metadata");
   }
   console.log(`PASS: npm accepted ${workflow} for ${packageName}.`);
   console.log("Package-scoped OIDC token issued and discarded. No package was published.");

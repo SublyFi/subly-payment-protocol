@@ -1,7 +1,8 @@
 import bs58 from "bs58";
 import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { SHARED_JS } from "../src/api/owner-pages.js";
+import { SHARED_JS, setupPageHtml } from "../src/api/owner-pages.js";
+import { defaultMandatePolicyWire } from "../src/domain/spending-mandate.js";
 import { canonicalJson, sha256HexOf } from "../src/lib/canonical-json.js";
 import { webAuthnChallengeFor } from "../src/domain/webauthn-owner.js";
 
@@ -81,5 +82,64 @@ describe("owner-page inline helpers match the server", () => {
     expect(helpers.esc(`<svg onload=x> & "quoted" 'single'`)).toBe(
       "&lt;svg onload=x&gt; &amp; &quot;quoted&quot; &#39;single&#39;"
     );
+  });
+});
+
+describe("setup page deposit approval scope", () => {
+  // Execute the shipped inline page. A replaced/expired mandate does not
+  // receive the first-registration deposit approval from the server.
+  function renderSetup(existingMandate: null | { status: string; ownerAuth: string }) {
+    const elements = new Map<string, {
+      innerHTML: string; textContent: string; className: string;
+      hidden: boolean; disabled: boolean; addEventListener: () => void;
+    }>();
+    const getElementById = (id: string) => {
+      if (!elements.has(id)) elements.set(id, {
+        innerHTML: "", textContent: "", className: "", hidden: true,
+        disabled: false, addEventListener() {}
+      });
+      return elements.get(id)!;
+    };
+    const session = {
+      wallet: "wallet", vault: "vault", policy: defaultMandatePolicyWire(),
+      initialDepositRawUsdc: "1010000", existingMandate,
+      mandateExpiresAtMs: Date.now() + 60_000
+    };
+    const script = setupPageHtml().match(/<script>([\s\S]*?)<\/script>/)![1]!;
+    const page = new Function("document", "location", "fetch", "initialSession", `${script}
+      session = initialSession; render(); return { complete };`)(
+      { getElementById }, { pathname: "/setup/test" },
+      () => new Promise(() => {}), session
+    ) as { complete(payload: unknown, signature: string): Promise<void> };
+    return { elements, page, script, session, getElementById };
+  }
+
+  it.each(["expired", "recovery_elapsed"])(
+    "requires a separate deposit approval when replacing a %s mandate", (status) => {
+      const { elements } = renderSetup({ status, ownerAuth: "ed25519" });
+      expect(elements.get("details")!.innerHTML).toContain("Deposit (separate approval required)");
+      expect(elements.get("details")!.innerHTML).not.toContain("First deposit");
+      expect(elements.get("btn-passkey")!.hidden).toBe(false);
+    }
+  );
+
+  it("includes a deposit only for the first owner registration", () => {
+    const { elements } = renderSetup(null);
+    expect(elements.get("details")!.innerHTML).toContain("First deposit (included in this approval)");
+    expect(elements.get("details")!.innerHTML).not.toContain("separate approval required");
+  });
+
+  it("reports a missing deposit approval after successful owner replacement", async () => {
+    const { script, session, getElementById, elements } = renderSetup({ status: "expired", ownerAuth: "ed25519" });
+    const complete = new Function("document", "location", "fetch", "initialSession", `${script}
+      session = initialSession; return complete;`)(
+      { getElementById }, { pathname: "/setup/test" },
+      (_url: string, init?: RequestInit) => init?.method === "POST"
+        ? Promise.resolve({ ok: true, json: async () => ({ initialDepositApproval: null }) })
+        : new Promise(() => {}), session
+    ) as (payload: unknown, signature: string) => Promise<void>;
+    await complete({}, "signature");
+    expect(elements.get("status")!.textContent).toContain("deposit still needs a separate owner approval");
+    expect(elements.get("status")!.textContent).not.toContain("pre-approved");
   });
 });

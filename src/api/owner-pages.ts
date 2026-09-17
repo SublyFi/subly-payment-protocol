@@ -241,8 +241,9 @@ export function setupPageHtml(): string {
     <button id="btn-passkey" class="primary" hidden>Approve with Face ID / passkey</button>
     <button id="btn-wallet" class="secondary" hidden>Sign with Solana wallet</button>
     <div id="status" class="status"></div>
-    <p class="note" id="note" hidden>Your credential is created on THIS device
-    and never leaves it. The agent cannot approve payments above the threshold,
+    <p class="note" id="note" hidden>Subly receives your passkey's public key
+    and signatures, never its private key. Your passkey provider may sync it
+    across your devices. The agent cannot approve payments above the threshold,
     change these limits, or deposit funds without it.</p>
     `,
     `
@@ -260,7 +261,9 @@ export function setupPageHtml(): string {
         row("Monthly API spend cap", capUsdc(p.monthlyApiSpendCapRawUsdc)) +
         row("Daily deposit cap", capUsdc(p.dailyDepositCapRawUsdc)) +
         (session.initialDepositRawUsdc
-          ? row("First deposit (approved now)", usdc(session.initialDepositRawUsdc))
+          ? row(session.existingMandate
+            ? "Deposit (separate approval required)"
+            : "First deposit (included in this approval)", usdc(session.initialDepositRawUsdc))
           : "") +
         row("Deposits", p.depositPolicy === "owner_approval_required"
           ? "always need your approval" : "agent may deposit within caps") +
@@ -326,7 +329,9 @@ export function setupPageHtml(): string {
         "Done — the mandate is active" +
         (result.initialDepositApproval
           ? " and the first deposit is pre-approved (valid ~15 min)"
-          : "") +
+          : session.initialDepositRawUsdc
+            ? ". The deposit still needs a separate owner approval"
+            : "") +
         ". You can return to the chat; your agent picks this up automatically.");
     }
 

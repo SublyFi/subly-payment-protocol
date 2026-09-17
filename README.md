@@ -17,9 +17,10 @@ Subly provides an open-source relayer and an MCP/CLI client. An agent deposits U
 
 **Status:** MIT-licensed OSS, version `0.x` (beta). Mainnet vault operations use real funds. There has been no external security audit. Yield limits and owner mandates are enforced by the relayer; they do not guarantee principal value or prevent an agent with its own key from transacting elsewhere. See the [security model](docs/security-model.md) and [dependency status](docs/dependencies.md).
 
-Version 0.7.2 has passed a small real-funds mainnet withdrawal/redeposit and a
-full payment flow in a disposable local fork. See [validation status](docs/validation.md)
-for the evidence, scope and remaining checks.
+Real-funds mainnet checks cover vault operations, browser passkey approval,
+separate fee sponsorship and an external x402 test payment/refund. The complete
+yield-funded payment flow has been exercised in a disposable local fork.
+See [validation status](docs/validation.md) for the evidence and remaining checks.
 
 ## What is included
 
@@ -53,10 +54,10 @@ The relayer and the seller's **x402 facilitator** have different roles. The rela
 Install Node.js 24 and choose a relayer operator you trust. No repository clone is needed:
 
 ```bash
-npx -y @subly_fi/pay@0.7.2 --help
+npx -y @subly_fi/pay@0.7.3 --help
 export SUBLY_RELAYER_URL=https://your-relayer.example.com
 export SUBLY_DEMO_AGENT_KEYPAIR_PATH=/absolute/path/to/agent.json
-npx -y @subly_fi/pay@0.7.2 doctor
+npx -y @subly_fi/pay@0.7.3 doctor
 ```
 
 Continue with the [client guide](packages/pay/README.md): review the vault, create an owner setup link, approve the policy, deposit, and check the budget before buying an API call. It also includes MCP configuration, custody signers and troubleshooting.

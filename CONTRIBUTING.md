@@ -70,6 +70,11 @@ payment: this verifies transaction/policy behavior, not actual accrued yield
 or a third-party facilitator. Stop the fork afterward to discard its state.
 It is opt-in because it needs a current mainnet datasource and Pyth access.
 
+For the published verification scope and guidance on a separately authorized
+real-funds check, see [validation status](docs/validation.md). Mainnet payment
+tests must use real accrued yield; never apply the fork's ledger fixture to
+a mainnet relayer.
+
 ## Repository map
 
 - `packages/pay/`: published CLI/MCP entry points and package build.

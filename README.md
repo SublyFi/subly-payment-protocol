@@ -17,6 +17,10 @@ Subly provides an open-source relayer and an MCP/CLI client. An agent deposits U
 
 **Status:** MIT-licensed OSS, version `0.x` (beta). Mainnet vault operations use real funds. There has been no external security audit. Yield limits and owner mandates are enforced by the relayer; they do not guarantee principal value or prevent an agent with its own key from transacting elsewhere. See the [security model](docs/security-model.md) and [dependency status](docs/dependencies.md).
 
+Version 0.7.2 has passed a small real-funds mainnet withdrawal/redeposit and a
+full payment flow in a disposable local fork. See [validation status](docs/validation.md)
+for the evidence, scope and remaining checks.
+
 ## What is included
 
 - **Client:** `@subly_fi/pay` exposes setup, deposits, budgets, withdrawals and paid API requests through CLI and stdio MCP.

@@ -192,6 +192,15 @@ npx -y @subly_fi/pay@0.7.2 deposit 1010000
 npx -y @subly_fi/pay@0.7.2 withdraw 1000000
 ```
 
+The payment step needs enough verified yield for the price, vault charges and
+fee headroom. A new ledger treats pre-existing vault value conservatively as
+principal, so a funded vault does not necessarily have a spendable budget.
+Keep the ledger between runs and allow yield to accrue. Check confirmed
+USDC/share changes and stored receipts before declaring the test successful;
+do not lower the baseline to bypass an insufficient-yield result. See
+[validation status](../docs/validation.md) for the checks already completed
+and their limits.
+
 ## Monitoring and backups
 
 `GET /v1/admin/monitoring` (admin bearer token) returns error counters,

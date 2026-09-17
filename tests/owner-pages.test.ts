@@ -105,7 +105,8 @@ describe("setup page deposit approval scope", () => {
       initialDepositRawUsdc: "1010000", existingMandate,
       mandateExpiresAtMs: Date.now() + 60_000
     };
-    const script = setupPageHtml().match(/<script>([\s\S]*?)<\/script>/)![1]!;
+    // Extract the script from our own generated page, not user-provided HTML.
+    const script = setupPageHtml().match(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/i)![1]!;
     const page = new Function("document", "location", "fetch", "initialSession", `${script}
       session = initialSession; render(); return { complete };`)(
       { getElementById }, { pathname: "/setup/test" },

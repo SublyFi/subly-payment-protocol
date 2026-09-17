@@ -105,8 +105,14 @@ describe("setup page deposit approval scope", () => {
       initialDepositRawUsdc: "1010000", existingMandate,
       mandateExpiresAtMs: Date.now() + 60_000
     };
-    // Extract the script from our own generated page, not user-provided HTML.
-    const script = setupPageHtml().match(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/i)![1]!;
+    // This fixture has one script with literal template delimiters. Assert that
+    // contract; this is not a general HTML parser or a sanitization filter.
+    const [, scriptAndFooter, extraScript] = setupPageHtml().split("<script>");
+    expect(scriptAndFooter).toBeDefined();
+    expect(extraScript).toBeUndefined();
+    const [script, footer, extraFooter] = scriptAndFooter!.split("</script>");
+    expect(footer).toBeDefined();
+    expect(extraFooter).toBeUndefined();
     const page = new Function("document", "location", "fetch", "initialSession", `${script}
       session = initialSession; render(); return { complete };`)(
       { getElementById }, { pathname: "/setup/test" },

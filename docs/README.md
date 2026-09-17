@@ -6,7 +6,7 @@
 | Relayer operators | [Deployment, vault configuration, backups and upgrades](../deploy/README.md) |
 | Contributors | [Development and tests](../CONTRIBUTING.md) |
 | Integrators | [API reference](api.md) · [Architecture](architecture.md) |
-| Everyone | [Security model](security-model.md) · [Troubleshooting](troubleshooting.md) |
+| Everyone | [Validation status](validation.md) · [Security model](security-model.md) · [Troubleshooting](troubleshooting.md) |
 | Maintainers | [Release process](../RELEASE.md) · [Dependency status](dependencies.md) |
 
 Detailed implementation references: [custody wallet providers](agent-wallet-providers.md), [spending mandates](spending-mandate-design.md). These describe internals; start with the guides above. Source and tests are authoritative where older design notes differ.

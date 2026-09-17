@@ -9,42 +9,42 @@ Version 0.7 is beta software and has not had an external security audit. Vault o
 You need **Node.js 24+**, a Solana agent wallet with mainnet USDC, a trusted relayer URL, and a mainnet RPC endpoint that supports transaction simulation with inner instructions. Your wallet can be a local keypair or a supported custody signer. The owner who approves spending controls can use a passkey or a separate Solana wallet.
 
 ```bash
-npx -y @subly_fi/pay@0.7.2 --help
+npx -y @subly_fi/pay@0.7.3 --help
 export SUBLY_RELAYER_URL=https://your-relayer.example.com
 export SOLANA_RPC_URL=https://your-mainnet-rpc.example.com
 export SUBLY_DEMO_AGENT_KEYPAIR_PATH=/absolute/path/to/agent.json
-npx -y @subly_fi/pay@0.7.2 doctor
-npx -y @subly_fi/pay@0.7.2 vaults
+npx -y @subly_fi/pay@0.7.3 doctor
+npx -y @subly_fi/pay@0.7.3 vaults
 ```
 
 Use an existing dedicated agent wallet, or create one with `solana-keygen new -o agent.json`. Keep its recovery material private and restrict the file to its owner (`chmod 600 agent.json`). Fund its public address with **USDC on Solana mainnet**. Subly does not create or fund wallets. Vault fees require a funded relayer sponsor; the final API payment requires the seller's facilitator fee payer.
 
 1. Review the selected vault, its curator, fees and liquidity. For a catalogue supplied by your operator, install the reviewed file locally and set `SUBLY_VAULTS_FILE=/absolute/path/vaults.json`. `SUBLY_VAULT_ADDRESS` selects one listed vault for CLI commands. Never install transaction trust anchors merely because a remote response says to.
-2. Create an owner setup link. This example pre-approves a **1.01 USDC** deposit; the selected vault's minimum can differ:
+2. Create an owner setup link. On the first owner registration, this example pre-approves a **1.01 USDC** deposit; the selected vault's minimum can differ:
 
    ```bash
-   npx -y @subly_fi/pay@0.7.2 setup-link --initial-deposit 1010000
+   npx -y @subly_fi/pay@0.7.3 setup-link --initial-deposit 1010000
    ```
 
-   Open the returned `setupUrl`, review the wallet, vault and limits, then approve with your passkey or wallet. Links expire in 10 minutes. Treat setup and approval links as private capabilities. The first person completing an initial setup becomes the owner for that wallet/vault.
+   Open the returned `setupUrl`, review the wallet, vault and limits, then approve with your passkey or wallet. Links expire in 10 minutes. Treat setup and approval links as private capabilities. The first person completing an initial setup becomes the owner for that wallet/vault. Replacing an existing mandate requires a separate deposit approval; follow the approval link returned by the deposit command.
 3. Check completion and deposit promptly; initial deposit approval lasts about 15 minutes:
 
    ```bash
-   npx -y @subly_fi/pay@0.7.2 setup-status <sessionId>
-   npx -y @subly_fi/pay@0.7.2 deposit 1010000
-   npx -y @subly_fi/pay@0.7.2 budget
+   npx -y @subly_fi/pay@0.7.3 setup-status <sessionId>
+   npx -y @subly_fi/pay@0.7.3 deposit 1010000
+   npx -y @subly_fi/pay@0.7.3 budget
    ```
 
 4. Wait until **spendable yield** covers the price and vault fees. A new deposit does not immediately provide a payment budget. Then request a compatible API:
 
    ```bash
-   npx -y @subly_fi/pay@0.7.2 fetch https://seller.example.com/paid-resource
+   npx -y @subly_fi/pay@0.7.3 fetch https://seller.example.com/paid-resource
    ```
 
 5. Withdraw funds back to the same agent wallet when needed:
 
    ```bash
-   npx -y @subly_fi/pay@0.7.2 withdraw 1000000
+   npx -y @subly_fi/pay@0.7.3 withdraw 1000000
    ```
 
 All amounts are raw USDC integers: `1000000` = 1 USDC. `fetch` defaults to a **0.01 USDC cap**, configurable with `SUBLY_MCP_MAX_AMOUNT_RAW_USDC` or `fetch <URL> <capRawUSDC>`. The owner mandate may set stricter limits. `setup-link --help` lists policy options. A withdrawal can include principal and is subject to liquidity, fees and the owner's policy. A revoked mandate also blocks relayer withdrawals.
@@ -60,7 +60,7 @@ Add this to the MCP configuration of your editor or agent host. Replace all exam
   "mcpServers": {
     "subly": {
       "command": "npx",
-      "args": ["-y", "@subly_fi/pay@0.7.2", "mcp"],
+      "args": ["-y", "@subly_fi/pay@0.7.3", "mcp"],
       "env": {
         "SUBLY_RELAYER_URL": "https://your-relayer.example.com",
         "SOLANA_RPC_URL": "https://your-mainnet-rpc.example.com",

@@ -4,6 +4,14 @@ All notable changes to the repository and the published client are recorded here
 
 ## [Unreleased]
 
+## 0.7.3 — 2026-09-17
+
+- Correct owner setup pages that described a deposit as approved when replacing an existing mandate. First-deposit approval is issued only on the first registration; replacements now explain the separate approval both before and after setup.
+- Explain that passkey providers may synchronize credentials across devices. Subly receives the public key and signatures, never the passkey private key.
+- Record real Chrome passkey registration/approval/revocation, separate-sponsor mainnet vault operations, and a finalized external PayAI Echo payment/refund using the package's official x402 transport. The external test used a normal withdrawal; actual yield-funded external payment remains unverified. No artificial mainnet yield or principal baseline reduction was used to fund it.
+
+Rebuild the relayer for the owner-page fix. Client transaction behavior, dependencies and database schema are unchanged.
+
 ## 0.7.2 — 2026-09-17
 
 - Reserve bounded rounding headroom for yield realization; refuse a preview or confirmed receipt that cannot fund the exact API price. Preserve the pending withdrawal record so retries cannot realize twice or silently use unrelated wallet USDC.

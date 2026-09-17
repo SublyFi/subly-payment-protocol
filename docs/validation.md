@@ -5,6 +5,11 @@ This records what was exercised on **0.7.2**, source commit
 checks that configuration and chain state at that time; each operator must
 validate their own deployment.
 
+Version **0.7.3** adds owner-page wording fixes found during these checks.
+Its local verification passed 391 tests, including PostgreSQL, plus root/client
+type checks, builds, documentation links, clean package installation and all
+eight MCP tools. It does not change transaction behavior or the ledger schema.
+
 | Check | Evidence and scope |
 | --- | --- |
 | Automated checks | 387 tests, including PostgreSQL; root/client type checks, builds, package installation, CLI and eight MCP tools. [CI run](https://github.com/SublyFi/subly-payment-protocol/actions/runs/35131509253). |
@@ -13,15 +18,27 @@ validate their own deployment.
 | Real mainnet funds | A small withdrawal and redeposit through the actual HTTP client and relayer both finalized successfully. USDC and share changes matched the confirmed receipts. The two transactions cost 10,002 lamports total (0.000010002 SOL); this is the observed network fee, not a future fee quote or total investment cost. |
 | Accounting and authorization | PostgreSQL stored confirmed receipts, chain-derived principal and Pyth-converted fee debt. The exact-amount deposit approval was consumed after confirmation. Records survived a database restart. |
 | Principal protection | A fresh ledger conservatively treated the existing vault value as principal. A yield-realization request with insufficient yield was rejected before signing or sending. No artificial yield was introduced on mainnet. |
+| Real browser passkey | A user operated Chrome's real passkey creation, deposit approval and revocation pages. The server verified the assertions; after revocation, authenticated deposit/withdrawal preparation returned `mandate_revoked`. |
+| Separate mainnet sponsor | A dedicated in-memory signer paid for a small withdrawal and redeposit. The agent's SOL balance did not change during those two transactions; the sponsor's remaining SOL was returned and its final balance was zero. |
+| External mainnet x402 transport | The package's official SVM transport paid 0.01 USDC to [PayAI's Echo test API](https://x402.payai.network/), received HTTP 200 and a v2 receipt. The payment and the seller's full refund were independently verified as finalized on-chain. Funding came from a normal withdrawal, not accrued yield. |
 | Full payment pipeline in a local fork | Generated keys, simulated passkey approval, deposit, synthetic yield fixture, official x402 transport, local seller settlement, v2 receipt report-back and withdrawal. See the [reproducible fork test](../CONTRIBUTING.md#mainnet-fork-integration-test). |
 
-The real-funds run used the same wallet as agent, owner and fee payer, with an
-Ed25519 owner signature and a dedicated local relayer/database. It verifies
-real chain execution and receipt accounting. It does not verify separate
-mainnet sponsor custody, browser passkey UX, an external seller/facilitator,
-actual yield-funded payment, or a public relayer deployment. Its temporary
-mandate was revoked after the run. Wallet keys, private RPC URLs, database
-dumps and wallet-specific evidence are not published in this repository.
+The first real-funds run used the same wallet as agent, owner and fee payer.
+A subsequent run used a real browser passkey and a separate sponsor, preserving
+the same PostgreSQL principal/fee ledger. Both temporary mandates were revoked.
+The second run paid 40,002 lamports in total network fees from user-controlled
+wallets, including preparation and recovery of a first sponsor after an unsigned
+withdrawal expired. That expired withdrawal was rejected before broadcast.
+The external payment and refund fees were paid by the external service.
+
+These checks used a dedicated local relayer/database. They do **not** verify
+an actual yield-funded external API payment: available accrued yield was below
+the existing fee debt and payment headroom. The external transport test did not
+run through Subly's yield realizer or create a yield-payment report-back record.
+The Echo service is a refunding test merchant. Public relayer deployment,
+production sponsor custody and non-localhost passkey origins remain operator
+checks. Wallet keys, private RPC URLs, database dumps and wallet-specific
+evidence are not published in this repository.
 
 The project remains beta and has not undergone an external security audit.
 The client production dependency audit passed; four known relayer dependency

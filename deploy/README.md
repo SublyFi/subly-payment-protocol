@@ -62,17 +62,17 @@ secrets/sponsor.json    <- sponsor key (host only, never baked into the image)
 
 ## Get the code onto the host
 
-Use the reviewed `pay-v0.7.2` source tag. You can clone anonymously:
+Use the reviewed `pay-v0.7.3` source tag. You can clone anonymously:
 
 ```bash
-git clone --branch pay-v0.7.2 --depth 1 https://github.com/SublyFi/subly-payment-protocol.git
+git clone --branch pay-v0.7.3 --depth 1 https://github.com/SublyFi/subly-payment-protocol.git
 ```
 
 Alternatively ship a tarball from that tag. Everything below assumes the repo lives at `/opt/subly`:
 
 ```bash
 # locally
-git archive --format=tar.gz -o /tmp/subly.tar.gz pay-v0.7.2
+git archive --format=tar.gz -o /tmp/subly.tar.gz pay-v0.7.3
 scp /tmp/subly.tar.gz <user>@<host>:/tmp/
 # on the server
 sudo mkdir -p /opt/subly && sudo tar xzf /tmp/subly.tar.gz -C /opt/subly
@@ -186,10 +186,10 @@ the client README's "Wallet" section for keypair options):
 ```bash
 export SUBLY_RELAYER_URL=https://<your-domain>
 export SUBLY_DEMO_AGENT_KEYPAIR_PATH=<test wallet keypair.json>
-npx -y @subly_fi/pay@0.7.2 setup-link --initial-deposit 1010000   # owner signs on your domain
-npx -y @subly_fi/pay@0.7.2 deposit 1010000
-# ...once yield has accrued: npx -y @subly_fi/pay@0.7.2 fetch <x402 url>
-npx -y @subly_fi/pay@0.7.2 withdraw 1000000
+npx -y @subly_fi/pay@0.7.3 setup-link --initial-deposit 1010000   # owner signs on your domain
+npx -y @subly_fi/pay@0.7.3 deposit 1010000
+# ...once yield has accrued: npx -y @subly_fi/pay@0.7.3 fetch <x402 url>
+npx -y @subly_fi/pay@0.7.3 withdraw 1000000
 ```
 
 The payment step needs enough verified yield for the price, vault charges and
@@ -243,16 +243,17 @@ Your users run the standard published client — they just override the
 relayer URL:
 
 ```bash
-SUBLY_RELAYER_URL=https://<your-domain> npx -y @subly_fi/pay@0.7.2 fetch <url>
+SUBLY_RELAYER_URL=https://<your-domain> npx -y @subly_fi/pay@0.7.3 fetch <url>
 # or put SUBLY_RELAYER_URL in the MCP server's env block
 ```
 
 No API token — buyer requests are wallet-signature authenticated. With
 `SUBLY_MANDATE_ENFORCEMENT=on` (recommended above), a user's **first action
-is the owner setup link** (`npx -y @subly_fi/pay@0.7.2 setup-link
+is the owner setup link** (`npx -y @subly_fi/pay@0.7.3 setup-link
 --initial-deposit 1010000`, or the `create_subly_setup_link` MCP tool): the
 owner signs the spending mandate and pre-approves the first deposit with one
-Face ID. A bare first deposit is refused with `mandate_required_for_deposit`,
+passkey approval. Replacing an existing mandate requires a separate deposit
+approval. A bare first deposit is refused with `mandate_required_for_deposit`,
 and later deposits also require owner approval under the default policy.
 
 Things worth telling your users up front: the minimum deposit depends on the vault (the example uses `1010000` raw), each payment needs
@@ -340,7 +341,7 @@ the client uses its own copy to validate exactly which vault/share mint/farm
 it signs for. `GET /v1/vaults` advertises relayer support; it does not install
 or replace the signer's local trust anchors. Client catalogues can be a subset,
 but metadata must match for every selected vault. Restart processes after
-changing files. Use `@subly_fi/pay@0.7.2` or a newer compatible client on every machine.
+changing files. Use `@subly_fi/pay@0.7.3` or a newer compatible client on every machine.
 
 ### 3. Let the user choose
 

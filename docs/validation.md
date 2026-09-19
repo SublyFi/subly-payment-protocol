@@ -1,11 +1,12 @@
 # Validation status
 
-## 0.8.3 source candidate — 2026-09-20
+## 0.8.3 release verification — 2026-09-20
 
-The candidate passed 584 tests with disposable PostgreSQL 18.6; the one
-Docker Compose backup/restore integration test was skipped because the local
-Docker daemon was unavailable. Root/client type checks, builds, documentation
-links, clean packed CLI installation and all thirteen MCP tools passed. Chromium
+The release commit passed all 585 tests in CI, including disposable PostgreSQL
+16 and Docker Compose backup/restore, with no skips. Root/client type checks,
+builds, documentation links, container checks, and clean packed CLI installation
+on Linux, macOS and Windows passed. MCP startup and discovery of all thirteen
+tools passed. Chromium
 with a virtual WebAuthn authenticator verified reuse of the original credential
 for policy changes, recovery cancellation, revocation and reactivation.
 PostgreSQL reopening and injected write failures verified that owner actions and
@@ -36,11 +37,20 @@ During initial validation, the npm advisory endpoint returned maintenance HTTP
 503. Both new audit gates retried four times and correctly refused release.
 The advisory service subsequently recovered for the GitHub checks: both
 production dependency audits passed with zero reported vulnerabilities. The
-previously published 0.8.1 also passed a clean registry installation, SHA-512
-integrity, CLI and nine MCP tool checks. The 0.8.3 release workflow verifies its
-exact registry installation before creating a GitHub release; a source tag by
-itself must not be presented as npm availability. See [release status](https://github.com/SublyFi/subly-payment-protocol/actions/workflows/release-pay.yml)
-for the actual publication outcome.
+published 0.8.3 passed clean registry installation, SHA-512 integrity,
+source-commit and provenance-metadata checks, CLI/MCP startup and discovery of
+all thirteen MCP tools before its GitHub release was created. The source commit is
+`de824384d7ab84d2adbbc27f352fe832a5c2ebca`. These provenance checks inspect
+registry metadata; they are not an independent cryptographic attestation
+verification. See the [release checks](https://github.com/SublyFi/subly-payment-protocol/actions/runs/35459211601)
+for the publication and verification results.
+
+The first 0.8.3 publication was accepted by npm, but registry verification
+stopped after 50 seconds because the version was still unavailable during
+post-publication processing. After registry visibility, the same immutable
+commit's failed jobs were rerun successfully without republishing. The
+unreleased follow-up extends availability polling to a bounded 20 minutes for
+future source releases; it does not change the 0.8.3 tag or its workflow.
 
 ## 0.8.0 verification — 2026-09-19
 

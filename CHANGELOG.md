@@ -4,11 +4,13 @@ All notable changes to the repository and the published client are recorded here
 
 ## [Unreleased]
 
+- Wait up to 20 minutes for npm's post-publication scanning and registry availability, without changing dependency audit gates. Fail immediately on invalid metadata or permanent errors, and report prolonged unavailability instead of creating a release.
+
 ## 0.8.3 — 2026-09-20
 
 - Preserve confirmed deposit and withdrawal receipts when a delayed simulation or status request fails. Reconcile ambiguous submissions by their existing signature; keep them pending until receipt or expiry evidence is available. Add concurrent submit/recovery/expiry regression tests for both operations.
 - Add owner management links, browser reuse of the existing passkey or wallet, and CLI/MCP commands for policy updates, reactivation, revocation, recovery cancellation and the existing 72-hour lost-credential recovery process. Preserve policy fields and expiry unless changed explicitly. Stale management links fail closed; the agent cannot override an owner's revocation.
-- Retry transient npm audit failures with a bounded delay while still rejecting vulnerabilities according to the existing thresholds. Verify registry availability, integrity, source provenance and clean CLI/MCP installation before creating a GitHub release.
+- Retry transient npm audit failures with a bounded delay while still rejecting vulnerabilities according to the existing thresholds. Verify registry availability, artifact integrity, source commit and provenance metadata, and clean CLI/MCP installation before creating a GitHub release.
 - Correct the security policy's outdated dependency-status wording and provide a source-build path when the candidate is not yet available on npm.
 
 Upgrade the relayer and client together. Preserve the ledger and pending-payment
@@ -98,4 +100,4 @@ Compatibility: Node.js 24+ is now required. Withdrawal RPCs must support simulat
 - Published client baseline before the OSS release-readiness work.
 
 [0.6.2]: https://github.com/SublyFi/subly-payment-protocol/compare/pay-v0.6.1...pay-v0.6.2
-[Unreleased]: https://github.com/SublyFi/subly-payment-protocol/compare/pay-v0.8.2...HEAD
+[Unreleased]: https://github.com/SublyFi/subly-payment-protocol/compare/pay-v0.8.3...HEAD

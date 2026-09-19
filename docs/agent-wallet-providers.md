@@ -1,278 +1,303 @@
-# Agent Wallet Providers — 対応状況と追加実装の設計
+# Agent Wallet Providers — Support Status and Integration Designs
 
-作成: 2026-07-06 JST / Status: **記録 + 設計のみ(Turnkey 以降は実装未着手)**。
-実装済み部分の検証手順は `docs/custody-wallet-smoke-test.md`、実装の入口は
-`src/client/signer-env.ts`。
+Created: 2026-07-06 JST. **Historical implementation record and design notes;
+Turnkey and the providers listed after it have not been implemented.**
+The implemented signer choices are local keypairs, Circle and Privy; their
+entry point is `src/client/signer-env.ts`. See the [client guide](../packages/pay/README.md)
+for configuration and [validation status](validation.md) for current verification
+scope. The former custody-wallet smoke-test document is available in Git history;
+it is not a current onboarding guide.
 
-> 背景: Subly のエージェントウォレットは「秘密鍵をエクスポートできる
-> ローカル鍵」に加え、カストディ/MPC 型のエージェントウォレットを
-> `RemoteSignerTransport`(4 メンバーの薄い境界)で受ける構造にした。
-> 2026-07 時点の Solana エージェントウォレット市場は Turnkey / Privy /
-> Coinbase CDP / Crossmint の 4 社+αに収斂しており、中身はいずれも
-> 「MPC/TEE 保持の ed25519 EOA + REST 署名 API + ポリシーエンジン」。
-> つまり**この土俵の製品はすべて同じパターンで追加できる**。
+The provider descriptions, API assumptions and priorities below record the
+July 2026 design review. Verify them against each provider's current official
+API documentation before implementing a proposed transport. They do not add
+supported signer choices to the released client.
 
-## 1. 対応状況マトリクス(2026-07-06)
+> Background: in addition to local keys whose private material can be exported,
+> Subly accepts custody/MPC agent wallets through `RemoteSignerTransport`, a
+> narrow interface with four members. The July 2026 design assessment focused
+> on Turnkey, Privy, Coinbase CDP and Crossmint, among others, using the pattern
+> “MPC/TEE-held ed25519 EOA + REST signing API + policy engine.” Products that
+> meet those requirements can follow the same integration pattern.
 
-| プロバイダ | 中身 | 状態 | 備考 |
-|---|---|---|---|
-| local keypair | 自前 ed25519 | ✅ 実装済み | デフォルト。自ホスト TEE 運用も実質これ |
-| Privy server wallets(agentic/owner-key 含む) | MPC EOA + authorization key | ✅ 実装済み | `privy-authorization-signature`(RFC8785→SHA-256→P-256 DER)対応済み。ユニットテストで実鍵検証 |
-| Circle developer-controlled wallets | MPC EOA | ✅ 実装済み | Circle のエージェント向け Solana 正規ルート |
-| **Turnkey** | Nitro Enclave 内 ed25519 + policy engine | 📝 本書 §3 設計済み | **次の本命**。SendAI Solana Agent Kit の標準署名レイヤー |
-| **Coinbase CDP / Agentic Wallets** | Server Wallet v2(MPC + Nitro)+ policy | 📝 本書 §4 設計済み | AgentKit + x402 ネイティブ。2026-02 ローンチ |
-| Crossmint agent wallets | フルスタック(signer は Turnkey/Privy 等をプラグ) | 📝 本書 §5 設計済み(構成分岐あり) | EOA 型 signer 構成なら載る。smart wallet 構成は要注意 |
-| Dfns | MPC カストディ + User Action Signing | 📝 本書 §6 設計済み | 機関向け。認証が 2 段(challenge-response) |
-| Fireblocks | MPC カストディ(RAW signing) | 📝 本書 §7 設計済み | 機関向け。非同期署名(ポーリング)+ RAW 署名の事前有効化が必要 |
-| Para(旧 Capsule) | MPC 2/2(SDK 主体) | 📝 本書 §8 設計済み(要調査多) | REST が薄く SDK 依存になる見込み |
-| Squads Grid / Smart Account | スマートアカウント(プログラム) | ❌ 対象外 | ウォレットアドレスが署名鍵でない。relayer の wallet-auth とオンチェーン署名の両方の仕様変更が必要 → §9 |
-| Circle CLI「agent wallet」 | **EVM SCA(Base 等)** | ❌ 原理的に不可 | Solana に存在せず ed25519 鍵も署名 API もない。どんな実装でも不可 |
-| ブラウザウォレット(Phantom 等) | 対話型 | 対象外 | 非対話エージェント運用と不整合(鍵エクスポートすれば local で可) |
+## 1. Support matrix recorded on 2026-07-06
 
-フレームワーク(SendAI Solana Agent Kit / ElizaOS / Coinbase AgentKit)は
-ウォレットではなく統合層で、裏の署名者が上記のどれか。**Turnkey + CDP を
-足すとフレームワーク経由の実質カバレッジがほぼ 100% になる**。
+| Provider | Model | Status | Notes |
+| --- | --- | --- | --- |
+| Local keypair | Self-managed ed25519 | Implemented | Default; a self-hosted TEE exposing a local key uses this path too. |
+| Privy server wallets, including agentic/owner-key wallets | MPC EOA + authorization key | Implemented | Supports `privy-authorization-signature` (RFC8785 → SHA-256 → P-256 DER); unit tests verify signatures with actual keys. |
+| Circle developer-controlled wallets | MPC EOA | Implemented | Circle's Solana developer-controlled wallet integration. |
+| **Turnkey** | ed25519 in Nitro Enclave + policy engine | Proposed in section 3 | First candidate in the historical plan; identified as Solana Agent Kit's standard signing layer. |
+| **Coinbase CDP / Agentic Wallets** | Server Wallet v2 (MPC + Nitro) + policy | Proposed in section 4 | AgentKit and x402 integration; the design record dates its launch to 2026-02. |
+| Crossmint agent wallets | Full stack with pluggable signers such as Turnkey/Privy | Proposed in section 5; configuration-dependent | EOA signer configurations fit the model; smart-wallet configurations require separate consideration. |
+| Dfns | MPC custody + User Action Signing | Proposed in section 6 | Institutional use; two-stage challenge-response authentication. |
+| Fireblocks | MPC custody with RAW signing | Proposed in section 7 | Institutional use; asynchronous signing/polling and prior RAW-signing enablement. |
+| Para, formerly Capsule | MPC 2/2, primarily SDK-based | Proposed in section 8; substantial research remains | Limited REST surface; likely to require an SDK dependency. |
+| Squads Grid / Smart Account | Program-based smart account | Out of scope | The wallet address is not the signing key. Both relayer wallet authentication and on-chain signing would need changes; see section 9. |
+| Circle CLI “agent wallet” | **EVM SCA, such as Base** | Incompatible with this signer model | The EVM product assessed here has no Solana ed25519 key or signing API. It cannot be used as this Solana signer. |
+| Browser wallets, such as Phantom | Interactive | Outside the non-interactive agent signer path | An exported compatible key can use the local provider. This does not exclude browser wallets from human owner approval. |
 
-## 2. 共通パターン — プロバイダ追加の標準手順
+Frameworks such as SendAI Solana Agent Kit, ElizaOS and Coinbase AgentKit are
+integration layers rather than wallets; their underlying signer determines
+compatibility. The historical plan estimated that Turnkey and CDP would cover
+nearly 100% of its targeted framework integrations. That was a planning
+assumption, not a measured compatibility result.
 
-新プロバイダ 1 社の追加 = 以下の 5 点セット(Privy/Circle が参照実装)。
-検証境界(intent 検証 → 署名依頼 → 返却署名を自前バイト列+公開鍵で検証)
-には一切手を入れないこと。
+## 2. Shared pattern for adding a provider
 
-1. **transport 1 ファイル** `src/client/signer-transports/<provider>.ts`
-   - 実装は `RemoteSignerTransport` の 4 メンバーのみ:
-     `provider` / `walletAddress` / `signMessage(bytes)→64byte 署名` /
-     `signTransaction(base64)→署名済み wire tx base64`
-   - 共有ヘルパーを使う: `providerJsonRequest`(HTTP+エラー整形)、
-     `verifiedEd25519Signature`(エンコーディング正規化。**全候補が
-     ed25519 検証でゲートされるので誤受理は構造的に不可能**)、
-     `RemoteSigningError`
-   - factory 起動時にウォレットを GET してアドレスを pin +
-     **チェーン厳格チェック**(mainnet Solana 以外は設定時点で fail)
-2. **env 分岐 1 つ** `src/client/signer-env.ts`(判別可能ユニオンに 1 腕追加。
-   credential は `requireVar`/`pickVar` 経由 = SUBLY\_ プレフィックス上書き対応)
-3. **スタブ E2E テスト** `tests/<provider>-transport.test.ts`
-   (`fetchImpl` 注入でリクエスト認証・署名検証まで実鍵で回す。
-   `tests/privy-transport.test.ts` が雛形)
-4. **ドキュメント**: `packages/pay/README.md` の env 表 +
-   `docs/custody-wallet-smoke-test.md` に Part 追加(3 つの未知数の
-   フレームは全プロバイダ共通: ①非 fee-payer 署名 ②生バイト message
-   署名 ③複雑 tx 許容)
-5. **実クレデンシャル smoke test**(手順書どおり。~1.02 USDC / SOL 不要)
+Each new provider needs five pieces, using Privy/Circle as reference
+implementations. Preserve the validation boundary: validate the transaction
+intent, request a signature, then verify the returned signature against Subly's
+own bytes and the pinned public key.
 
-規模感: 1 プロバイダ = transport ~150 行 + テスト ~150 行 + doc。半日 + smoke。
+1. **One transport file:** `src/client/signer-transports/<provider>.ts`.
+   Implement only the four `RemoteSignerTransport` members: `provider`,
+   `walletAddress`, `signMessage(bytes)` returning a 64-byte signature, and
+   `signTransaction(base64)` returning a signed wire transaction in base64.
+   Reuse `providerJsonRequest` for HTTP/error handling,
+   `verifiedEd25519Signature` for encoding normalization and verification of
+   every candidate signature before acceptance, and `RemoteSigningError`.
+   At factory initialization, GET the wallet to pin its address and strictly
+   check the chain: reject anything other than Solana mainnet during setup.
+2. **One environment-selection branch:** `src/client/signer-env.ts`.
+   Add a member to the discriminated union. Read credentials through
+   `requireVar`/`pickVar` to retain `SUBLY_`-prefixed overrides.
+3. **Stubbed end-to-end tests:** `tests/<provider>-transport.test.ts`.
+   Inject `fetchImpl` and use actual test keys to exercise request
+   authentication and signature verification. Use
+   `tests/privy-transport.test.ts` as a template.
+4. **Documentation:** extend the environment table in `packages/pay/README.md`
+   and record provider-specific verification in [validation status](validation.md).
+   The former custody-wallet smoke-test plan is archived in Git history.
+   Its three shared questions still apply: (1) signing when the wallet is not
+   the fee payer, (2) signing raw message bytes, and (3) accepting complex
+   transactions.
+5. **A smoke test with real provider credentials:** the historical test plan
+   budgeted approximately 1.02 USDC and no SOL in the agent wallet, relying on
+   sponsorship. This is a planning figure, not a current fee quote or evidence
+   that a provider has passed. Record the actual scope and result.
 
-## 3. Turnkey 設計(優先度 1)
+Historical effort estimate per provider: approximately 150 lines of transport,
+150 lines of tests, and documentation; half a day plus the smoke test.
 
-採用理由: Solana Agent Kit v2 の標準署名レイヤーで Solana エージェントでの
-採用実績が最も厚い。policy engine(tx 上限、アドレス allowlist、承認フロー)
-が spending mandate と二重の安全網になる。
+## 3. Turnkey proposal — priority 1
 
-- **認証**: API リクエストごとに **X-Stamp ヘッダ**。
-  `{publicKey, scheme: "SIGNATURE_SCHEME_TK_API_P256", signature}` を
-  base64url した「stamp」で、signature は **リクエスト body の JSON 文字列
-  そのものへの ECDSA P-256 署名**(Privy の RFC8785 正規化と違い、
-  送った body のバイト列に対して署名 — 送信 body と署名対象を同一文字列に
-  すること)。API キーは Turnkey dashboard で発行する P-256 ペア。
-- **署名 API**(activity 形式。POST /public/v1/submit/...):
-  - message 署名: `ACTIVITY_TYPE_SIGN_RAW_PAYLOAD_V2` —
-    `signWith`(ウォレットアドレス可)、`payload`(hex)、
-    `encoding: PAYLOAD_ENCODING_HEXADECIMAL`、
-    `hashFunction: HASH_FUNCTION_NOT_APPLICABLE`(ed25519 は生バイト署名)。
-    → 未知数②のリスクが構造的に低い(生バイト署名が仕様で明示できる)
-  - tx 署名: `ACTIVITY_TYPE_SIGN_TRANSACTION_V2` —
-    `type: TRANSACTION_TYPE_SOLANA`、`unsignedTransaction`(hex)。
-    → signedTransaction が返る
-  - レスポンスは activity envelope(`activity.result....`)。非同期
-    (consensus 待ち)になり得る点に注意: ポリシーで即時承認になる構成のみ
-    サポートし、`ACTIVITY_STATUS_COMPLETED` 以外は typed error で fail。
-- **env 案**: `SUBLY_SIGNER_PROVIDER=turnkey` +
-  `TURNKEY_API_PUBLIC_KEY` / `TURNKEY_API_PRIVATE_KEY`(P-256 hex)/
-  `TURNKEY_ORGANIZATION_ID` / `TURNKEY_SIGN_WITH`(Solana アドレス)。
-  wire の signerProvider は `"turnkey"`。
-- **実装前の要確認**(上記は 2026-01 時点の知識ベース。着手時に必ず
-  <https://docs.turnkey.com> の API リファレンスで確認):
-  - [ ] stamp の正確なフィールド名と base64url 形式
-  - [ ] SIGN_RAW_PAYLOAD / SIGN_TRANSACTION の最新 activity type バージョン
-  - [ ] Solana signTransaction の入出力エンコーディング(hex か base64 か)
-  - [ ] signWith にアドレスを渡せるか(private key id が必要か)
+Historical rationale: its role as Solana Agent Kit v2's standard signing layer
+and adoption among Solana agents. Its transaction limits, address allowlists
+and approval policies could complement Subly's spending mandate.
 
-## 4. Coinbase CDP / Agentic Wallets 設計(優先度 2)
+- **Authentication:** an **X-Stamp header** for each API request. The stamp is
+  base64url-encoded `{publicKey, scheme: "SIGNATURE_SCHEME_TK_API_P256", signature}`.
+  The signature covers the **exact JSON request-body string using ECDSA P-256**,
+  unlike Privy's RFC8785 normalization. Serialize once and sign exactly the
+  bytes sent. The API key is a P-256 pair issued through the Turnkey dashboard.
+- **Signing API:** activity requests under `POST /public/v1/submit/...`.
+  - Message signing: `ACTIVITY_TYPE_SIGN_RAW_PAYLOAD_V2`, with `signWith`
+    (potentially a wallet address), hex `payload`,
+    `encoding: PAYLOAD_ENCODING_HEXADECIMAL`, and
+    `hashFunction: HASH_FUNCTION_NOT_APPLICABLE` for raw ed25519 signing.
+    Explicit raw-byte signing would reduce uncertainty (2) above.
+  - Transaction signing: `ACTIVITY_TYPE_SIGN_TRANSACTION_V2`, with
+    `type: TRANSACTION_TYPE_SOLANA` and hex `unsignedTransaction`;
+    the response contains `signedTransaction`.
+  - Responses use an activity envelope (`activity.result....`). Consensus
+    can make signing asynchronous. The proposed transport supports policies
+    with immediate approval and returns a typed error unless the status is
+    `ACTIVITY_STATUS_COMPLETED`.
+- **Proposed environment:** `SUBLY_SIGNER_PROVIDER=turnkey`,
+  `TURNKEY_API_PUBLIC_KEY`, `TURNKEY_API_PRIVATE_KEY` (P-256 hex),
+  `TURNKEY_ORGANIZATION_ID`, and `TURNKEY_SIGN_WITH` (Solana address).
+  The wire `signerProvider` would be `"turnkey"`.
+- **Verify before implementation:** the API assumptions above originally came
+  from January 2026 reference material. Check the [official API documentation](https://docs.turnkey.com).
+  - [ ] Exact stamp field names and base64url representation.
+  - [ ] Current SIGN_RAW_PAYLOAD / SIGN_TRANSACTION activity versions.
+  - [ ] Solana signTransaction input/output encoding: hex or base64.
+  - [ ] Whether signWith accepts an address or requires a private-key ID.
 
-採用理由: Agentic Wallets(2026-02)は AgentKit + x402 前提でストーリー
-相性が最良。中身は CDP Server Wallet v2 の Solana アカウント(EOA)。
+## 4. Coinbase CDP / Agentic Wallets proposal — priority 2
 
-- **認証(2 層)**:
-  1. Bearer JWT — CDP API キー(Ed25519 or ES256)で署名。claims に
-     メソッド+ホスト+パスの `uris` を含む短命 JWT(~2 分)
-  2. `X-Wallet-Auth` JWT — **Wallet Secret** で署名する account 操作用の
-     追加 JWT(sign 系エンドポイントで必須)
-  - JWT 生成は自前実装だと重いので、**公式 `@coinbase/cdp-sdk` を
-    devDependency ではなく optional peer にして dynamic import する案**と、
-    JWT 2 種を自前生成する案の 2 択。transport の外部依存を増やさない
-    方針なら自前生成(node:crypto で可能)だが、claims 仕様の変更リスクを
-    負う。着手時に判断。
-- **署名 API**: `POST /platform/v2/solana/accounts/{address}/sign-message`
-  と `/sign-transaction`(base64 tx → signedTransaction base64)。
-- **env 案**: `SUBLY_SIGNER_PROVIDER=coinbase` +
-  `CDP_API_KEY_ID` / `CDP_API_KEY_SECRET` / `CDP_WALLET_SECRET` /
-  `CDP_SOLANA_ADDRESS`。wire の signerProvider は `"coinbase-cdp"`。
-- **実装前の要確認**:
-  - [ ] JWT claims の正確な仕様(`uris` 形式、有効期限、nonce)
-  - [ ] X-Wallet-Auth の payload(リクエストハッシュを含むか)
-  - [ ] sign-message が生バイト署名か(未知数②)
-  - [ ] Agentic Wallet のポリシーエンジンが非 fee-payer tx を通すか(未知数①)
-  - [ ] sandbox/mainnet の切り替えとレート制限
+Historical rationale: the February 2026 Agentic Wallets offering aligned with
+AgentKit and x402. The proposed integration targets a Solana EOA in CDP Server
+Wallet v2.
 
-## 5. Crossmint 設計(優先度 3・構成分岐あり)
+- **Authentication has two layers:**
+  1. A short-lived Bearer JWT, approximately two minutes, signed with a CDP API
+     key (Ed25519 or ES256). Its `uris` claims contain method, host and path.
+  2. An additional account-operation JWT in `X-Wallet-Auth`, signed with the
+     **Wallet Secret** and required for signing endpoints.
+  Two implementation options remain: dynamically import the official
+  `@coinbase/cdp-sdk` as an optional peer rather than a devDependency, or
+  generate both JWTs directly with `node:crypto`. Direct generation keeps
+  transport dependencies small but requires tracking changes to the claims
+  specification. Decide when implementation starts.
+- **Signing API:** `POST /platform/v2/solana/accounts/{address}/sign-message`
+  and `/sign-transaction`, with a base64 transaction and base64
+  `signedTransaction` result.
+- **Proposed environment:** `SUBLY_SIGNER_PROVIDER=coinbase`, `CDP_API_KEY_ID`,
+  `CDP_API_KEY_SECRET`, `CDP_WALLET_SECRET`, and `CDP_SOLANA_ADDRESS`.
+  The wire `signerProvider` would be `"coinbase-cdp"`.
+- **Verify before implementation:**
+  - [ ] Exact JWT claims: `uris` format, expiry and nonce.
+  - [ ] X-Wallet-Auth payload, including whether it contains a request hash.
+  - [ ] Whether sign-message signs raw bytes: uncertainty (2).
+  - [ ] Whether the policy engine permits transactions with another fee payer: uncertainty (1).
+  - [ ] Sandbox/mainnet selection and rate limits.
 
-採用理由: フルスタック(決済・オンランプ・コンプラ込み)でエージェント
-開発者の入口になりやすい。ただし **Solana の Crossmint ウォレットには
-2 構成があり、載るのは片方だけ**:
+## 5. Crossmint proposal — priority 3, configuration-dependent
 
-- **構成 A: カストディ/MPC ウォレット(server-side admin signer)** —
-  ed25519 EOA。transport パターンで対応可能。**これが対応対象**。
-- **構成 B: Solana embedded smart wallet(プログラム型 + delegated
-  signers)** — Squads と同じ「アドレス ≠ 署名鍵」問題で対象外(§9)。
-  ただし delegated signer として登録された agent keypair をユーザーが
-  Subly の local provider に直接渡す運用は可能(Crossmint API を経由しない)。
+Historical rationale: payments, on-ramping and compliance in a full-stack
+product could make it an entry point for agent developers. The design identifies
+**two Solana wallet configurations, only one of which fits the transport model**:
 
-- **認証**: サーバー API キー(`X-API-KEY` ヘッダ)。scope は wallets 系。
-- **署名 API**(wallets API `2022-06-09`):
-  - message 署名: `POST /api/2022-06-09/wallets/{walletLocator}/signatures`
-    — Solana は message 型シグネチャをサポート(Create Signature
-    エンドポイント)。作成 → (自動)approve → GET で署名取得、の
-    **非同期 2 段**になる可能性が高い(custodial は自動 approve)。
-  - tx 署名: `POST .../transactions` に**外部構築 tx(base64)を渡せるか
-    が最大の要確認点**。Crossmint が tx を構築する approve フロー専用
-    だと、Subly の「準備済みバイト列に署名」モデルに合わない。
-- **env 案**: `SUBLY_SIGNER_PROVIDER=crossmint` +
-  `CROSSMINT_API_KEY` / `CROSSMINT_WALLET_LOCATOR`。wire は `"crossmint"`。
-- **実装前の要確認**:
-  - [ ] Solana カストディウォレット(EOA)を API で作れるか、それとも
-        smart wallet のみか(EOA 不可なら対応自体を見送り、構成 B の
-        delegated-signer 運用を README で案内する)
-  - [ ] signatures エンドポイントの Solana message パラメータ形式と
-        署名の返却エンコーディング
-  - [ ] 外部構築 tx への署名可否(上記)
-  - [ ] 署名完了までのポーリング要否とレイテンシ
+- **Configuration A: custody/MPC wallet with a server-side admin signer.**
+  An ed25519 EOA can fit the transport pattern. **This is the proposed target.**
+- **Configuration B: Solana embedded smart wallet with delegated signers.**
+  This has the same wallet-address/signing-key mismatch as Squads and is out
+  of scope; see section 9. A user could instead supply the compatible agent
+  keypair registered as a delegated signer directly to Subly's local provider,
+  without using the Crossmint API.
 
-## 6. Dfns 設計(優先度 4・機関向け)
+- **Authentication:** a server API key in `X-API-KEY`, with wallet scopes.
+- **Signing API:** wallets API `2022-06-09`.
+  - Message signing: `POST /api/2022-06-09/wallets/{walletLocator}/signatures`
+    through Create Signature. The anticipated flow is create, automatically
+    approve for a custodial wallet, then GET the signature. It may require
+    **two asynchronous stages**.
+  - Transaction signing: the main question is whether `POST .../transactions`
+    accepts an **externally constructed base64 transaction**. A flow limited
+    to approval of Crossmint-built transactions would not fit Subly's model
+    of signing already-prepared bytes.
+- **Proposed environment:** `SUBLY_SIGNER_PROVIDER=crossmint`,
+  `CROSSMINT_API_KEY`, and `CROSSMINT_WALLET_LOCATOR`.
+  The wire provider would be `"crossmint"`.
+- **Verify before implementation:**
+  - [ ] Whether the API can create Solana custodial EOAs or only smart wallets.
+        If no EOA is available, defer the integration and document the local
+        delegated-signer alternative for configuration B.
+  - [ ] Exact Solana message parameters and returned signature encoding.
+  - [ ] Support for externally constructed transactions.
+  - [ ] Whether polling is required, and expected signing latency.
 
-- **認証(2 段)**: ①service account の Bearer token、②**User Action
-  Signing** — すべての変更系 API は
-  `POST /auth/action/init` で challenge を取得 → **Key credential
-  (P-256/EdDSA 鍵)で challenge に署名** → `POST /auth/action` で
-  signing token を得て `X-DFNS-USERACTION` ヘッダに載せる、という
-  challenge-response が **リクエストごと**に必要。transport 内に
-  この 3 往復をカプセル化する(署名 1 回 = HTTP 4 往復になる点は
-  レイテンシ注意)。
-- **署名 API**: `POST /wallets/{walletId}/signatures`
-  (`wallets.generateSignature`)。Solana は `kind: "Transaction"` で
-  unsigned tx を受ける — **Dfns は placeholder(0 埋め)署名スロット付きの
-  serialized tx を期待する**と明記されており、Subly の prepare 済み tx は
-  この形なのでそのまま渡せる見込み。message 署名は `kind: "Message"`
-  (生バイト hex)。レスポンスは signature オブジェクト(r/s ではなく
-  ed25519 の 64 バイトが返るか要確認)。
-- **env 案**: `SUBLY_SIGNER_PROVIDER=dfns` + `DFNS_API_TOKEN` /
-  `DFNS_CREDENTIAL_ID` / `DFNS_CREDENTIAL_PRIVATE_KEY`(User Action 用)/
-  `DFNS_WALLET_ID`。wire は `"dfns"`。
-- **実装前の要確認**:
-  - [ ] User Action Signing の challenge 署名ペイロード形式
-        (clientData 構造・base64url)
-  - [ ] Solana `generateSignature` のレスポンスから 64 バイト署名を
-        取り出す形式(signed tx が返るか signature 単体か)
-  - [ ] `kind: "Message"` が Solana ウォレットで生バイト ed25519 になるか
-        (未知数②)
-  - [ ] service account のポリシー(Policy Engine)が非 fee-payer tx を
-        通すか(未知数①)
+## 6. Dfns proposal — priority 4, institutional use
 
-## 7. Fireblocks 設計(優先度 4・機関向け)
+- **Two-stage authentication:** a service-account Bearer token plus **User
+  Action Signing**. For each mutating request, obtain a challenge with
+  `POST /auth/action/init`, sign it with a **key credential (P-256/EdDSA)**,
+  obtain a signing token with `POST /auth/action`, then send the token in
+  `X-DFNS-USERACTION`. Encapsulate those three authentication exchanges in
+  the transport. One signature would require four HTTP round trips in total,
+  which matters for latency.
+- **Signing API:** `POST /wallets/{walletId}/signatures`
+  (`wallets.generateSignature`). For Solana, `kind: "Transaction"` accepts an
+  unsigned transaction. The design reference specifies a serialized transaction
+  with **zero-filled placeholder signature slots**, matching Subly's prepared
+  representation. Message signing uses `kind: "Message"` with raw bytes in hex.
+  Verify that the returned signature object contains a 64-byte ed25519
+  signature, rather than an r/s representation.
+- **Proposed environment:** `SUBLY_SIGNER_PROVIDER=dfns`, `DFNS_API_TOKEN`,
+  `DFNS_CREDENTIAL_ID`, `DFNS_CREDENTIAL_PRIVATE_KEY` for User Action Signing,
+  and `DFNS_WALLET_ID`. The wire provider would be `"dfns"`.
+- **Verify before implementation:**
+  - [ ] User Action Signing challenge payload: clientData structure and base64url.
+  - [ ] How to extract the 64-byte Solana signature from generateSignature:
+        signed transaction or standalone signature.
+  - [ ] Whether `kind: "Message"` performs raw-byte ed25519 signing for Solana: uncertainty (2).
+  - [ ] Whether service-account policies permit another fee payer: uncertainty (1).
 
-- **認証**: API キー + **リクエストごとの JWT**(RSA 秘密鍵で署名。claims
-  に uri・nonce・**body の SHA-256 ハッシュ**を含む)。`X-API-Key` +
-  `Authorization: Bearer <jwt>`。
-- **署名 API**: Fireblocks は「トランザクション」として署名要求を作る
-  **非同期モデル**:
-  - `POST /v1/transactions` で `operation: "RAW"`, `assetId: "SOL"`,
-    `extraParameters.rawMessageData.messages[].content = <hex>`
-    (message 署名・tx messageBytes 署名の両方ともこの RAW 経路)
-  - → `GET /v1/transactions/{txId}` を **COMPLETED までポーリング** →
-    `signedMessages[].signature`(ed25519)を取得
-  - transport 内にポーリング(上限付き backoff)をカプセル化。
-    Fireblocks の Transaction Authorization Policy(TAP)が承認待ちに
-    すると数秒〜無期限になり得るので、タイムアウトを typed error で返す。
-- **重要な前提**: **RAW signing は既定で無効**。Fireblocks サポートに
-  依頼してワークスペースで有効化してもらう必要がある(機関契約前提)。
-  RAW を使うため、tx として渡すのではなく messageBytes への署名になる —
-  Subly 側は `signTransaction` も「messageBytes に RAW 署名 → 自前で
-  attach」で成立する(検証境界はそのまま)。ただし transport の
-  `signTransaction` 契約は「署名済み wire tx を返す」なので、Fireblocks
-  transport は**内部で署名を自前 tx に attach してから返す**実装になる
-  (`attachExternalSignatureToTransaction` を transport 側で利用)。
-- **env 案**: `SUBLY_SIGNER_PROVIDER=fireblocks` + `FIREBLOCKS_API_KEY` /
-  `FIREBLOCKS_SECRET_KEY_PATH`(RSA PEM)/ `FIREBLOCKS_VAULT_ACCOUNT_ID`。
-  wire は `"fireblocks"`。
-- **実装前の要確認**:
-  - [ ] JWT claims の正確な仕様(uri, nonce, bodyHash, exp 55 秒制限)
-  - [ ] RAW signing の Solana(ed25519)対応形式と signature 返却形式
-  - [ ] TAP と非 fee-payer tx(未知数①相当は TAP 設定次第)
-  - [ ] ポーリング間隔・レート制限
+## 7. Fireblocks proposal — priority 4, institutional use
 
-## 8. Para(旧 Capsule)設計(優先度 5・要調査多)
+- **Authentication:** an API key plus a **JWT for each request**, signed with
+  an RSA private key. Claims include uri, nonce and the **SHA-256 body hash**.
+  Send `X-API-Key` and `Authorization: Bearer <jwt>`.
+- **Signing API:** an asynchronous model that represents signing requests as
+  Fireblocks transactions.
+  - Create with `POST /v1/transactions`, `operation: "RAW"`, `assetId: "SOL"`,
+    and `extraParameters.rawMessageData.messages[].content = <hex>`.
+    Both message signing and transaction messageBytes signing use this path.
+  - Poll `GET /v1/transactions/{txId}` until **COMPLETED**, then read the
+    ed25519 signature from `signedMessages[].signature`.
+  - Encapsulate polling with bounded backoff. Transaction Authorization Policy
+    (TAP) approval can take seconds or remain pending indefinitely, so return
+    a typed timeout error.
+- **Prerequisite identified in the design:** **RAW signing is disabled by
+  default** and must be enabled for the workspace through Fireblocks support,
+  under the relevant institutional arrangement. Sign transaction messageBytes
+  through RAW and attach the signature locally. Keep the validation boundary
+  unchanged. Because the transport's `signTransaction` contract returns a
+  signed wire transaction, attach the signature inside the transport with
+  `attachExternalSignatureToTransaction` before returning it.
+- **Proposed environment:** `SUBLY_SIGNER_PROVIDER=fireblocks`,
+  `FIREBLOCKS_API_KEY`, `FIREBLOCKS_SECRET_KEY_PATH` (RSA PEM), and
+  `FIREBLOCKS_VAULT_ACCOUNT_ID`. The wire provider would be `"fireblocks"`.
+- **Verify before implementation:**
+  - [ ] Exact JWT claims: uri, nonce, bodyHash and the 55-second exp limit.
+  - [ ] Solana/ed25519 RAW input and returned signature formats.
+  - [ ] TAP handling of another fee payer; uncertainty (1) depends on policy.
+  - [ ] Polling intervals and rate limits.
 
-- **モデル**: MPC 2/2(ユーザーシェア + Para シェア)。サーバー側は
-  `@getpara/server-sdk` で **session を import して署名**する SDK 主体の
-  設計で、**素の REST 署名 API が公開されているかが未確認**。
-  Subly transport は「依存を増やさない生 REST」を基本方針にしてきたが、
-  Para は SDK の dynamic import(provider=para のときだけ import)に
-  なる見込み — この方針転換を許容するかが最初の判断点。
-- **署名**: SDK の Solana アダプタ(`@getpara/solana-web3.js-*`)経由で
-  signMessage / signTransaction。pregenerated wallets(エージェント用に
-  サーバーで事前生成)なら session 管理が単純になる。
-- **env 案**: `SUBLY_SIGNER_PROVIDER=para` + `PARA_API_KEY` /
-  `PARA_SESSION`(または pregen wallet の識別子)。wire は `"para"`。
-- **実装前の要確認**:
-  - [ ] REST 直叩きの署名 API の有無(あれば SDK 不要で他と同型にできる)
-  - [ ] session の寿命・更新(非対話エージェントで維持できるか)
-  - [ ] pregenerated wallet の生バイト message 署名可否(未知数②)
+## 8. Para, formerly Capsule — priority 5, further research required
 
-## 9. Squads(スマートアカウント)を将来やる場合の論点(対象外の記録)
+- **Model:** MPC 2/2, with one user share and one Para share. The server SDK
+  `@getpara/server-sdk` imports a session to sign. Availability of a **plain
+  REST signing API is unverified**. Subly transports have favored direct REST
+  without additional dependencies; Para may require a dynamic SDK import only
+  when provider=para is selected. Accepting that change is the first decision.
+- **Signing:** signMessage / signTransaction through a Solana SDK adapter,
+  `@getpara/solana-web3.js-*`. Pregenerated server-side agent wallets may
+  simplify session management.
+- **Proposed environment:** `SUBLY_SIGNER_PROVIDER=para`, `PARA_API_KEY`, and
+  `PARA_SESSION` or a pregenerated-wallet identifier.
+  The wire provider would be `"para"`.
+- **Verify before implementation:**
+  - [ ] Availability of a direct REST signing API, avoiding an SDK dependency.
+  - [ ] Session lifetime and renewal for a non-interactive agent.
+  - [ ] Raw-byte message signing for pregenerated wallets: uncertainty (2).
 
-現行の前提「ウォレットアドレス = ed25519 署名鍵」が崩れるため、
-transport 追加では対応できない。必要になるのは:
-1. relayer の wallet-auth を「スマートアカウント + 署名メンバー鍵」の
-   2 段検証に拡張(`x-subly-wallet` ≠ 署名者)
-2. vault ポジション所有者・tx 署名者をスマートアカウントの
-   authority 構造に合わせて分離
-3. x402 支払いレグ(@x402/svm)は EOA 署名前提のため、facilitator 側の
-   対応も必要 — Subly 単独では閉じない
-需要(DAO treasury をエージェント資金源にする等)が出るまで凍結。
-Crossmint の smart wallet 構成(§5 構成 B)も同じ理由でここに入る。
+## 9. Future smart-account work: Squads and related designs
 
-## 10. 優先順位まとめ
+This remains **out of scope**. A smart account breaks the current assumption
+that the wallet address is an ed25519 signing key, so adding a transport is
+insufficient. Supporting it would require:
 
-| 順 | プロバイダ | 根拠 | 主リスク |
-|---|---|---|---|
-| 1 | Turnkey | Solana Agent Kit 標準・採用最多 | activity 非同期(consensus 構成) |
-| 2 | Coinbase CDP | Agentic Wallets + x402 文脈 | JWT 2 層の仕様追随 |
-| 3 | Crossmint | フルスタック入口 | EOA 構成の有無(不可なら見送り) |
-| 4 | Dfns / Fireblocks | 機関需要が出たら | 認証多段・非同期署名・契約前提 |
-| 5 | Para | 需要次第 | REST 不在なら SDK 依存の方針転換 |
+1. Two-stage relayer wallet authentication for the smart account and its member
+   signing key: `x-subly-wallet` would differ from the signer.
+2. Separation of vault position ownership from transaction signing, following
+   the smart account's authority structure.
+3. Facilitator support for the x402 payment leg, because `@x402/svm` assumes
+   an EOA signer. Subly cannot implement this independently.
 
-## 11. 記録 — ここまでの経緯
+The historical plan defers this work until a concrete need emerges, such as an
+agent funded by a DAO treasury. Crossmint's smart-wallet configuration B belongs
+in the same category.
 
-- 2026-07-05: local/circle/privy の 3 プロバイダ実装、8 観点レビュー →
-  全指摘修正(詳細は git log と memory)。Circle CLI agent wallet が
-  EVM SCA で原理的に不可と確定。
-- 2026-07-05(同日後半): Privy authorization key(agentic wallets)対応。
-  実 P-256 鍵でヘッダ署名を検証するユニットテスト付き。
-- 2026-07-06: 本書作成。Turnkey / CDP / Crossmint / Dfns / Fireblocks /
-  Para の 6 プロバイダ分の transport 設計を記録(いずれも実装未着手。
-  各節の「実装前の要確認」チェックリストを潰してから着手すること)。
-- smoke test は全プロバイダ未実施(手順: `docs/custody-wallet-smoke-test.md`)。
+## 10. Historical priority summary
 
-参考資料: [Crossmint Create Signature](https://docs.crossmint.com/api-reference/wallets/create-signature),
+| Priority | Provider | Rationale at the time | Main risk |
+| --- | --- | --- | --- |
+| 1 | Turnkey | Solana Agent Kit default and observed adoption | Asynchronous activities under consensus policies. |
+| 2 | Coinbase CDP | Agentic Wallets and x402 fit | Maintaining two JWT authentication layers. |
+| 3 | Crossmint | Full-stack entry point | EOA availability; defer if no compatible configuration exists. |
+| 4 | Dfns / Fireblocks | Institutional demand, when present | Multi-stage authentication, asynchronous signing and commercial prerequisites. |
+| 5 | Para | Demand-dependent | Changing dependency policy if there is no REST interface. |
+
+## 11. Implementation history
+
+- 2026-07-05: implemented local, Circle and Privy providers. An eight-area review
+  was completed and its findings addressed; see Git history for details. The
+  Circle CLI agent wallet assessed then was an EVM SCA and incompatible with
+  the Solana signer model.
+- 2026-07-05, later that day: added Privy authorization-key support for agentic
+  wallets, with unit tests verifying header signatures using actual P-256 keys.
+- 2026-07-06: recorded the six proposed transports for Turnkey, CDP, Crossmint,
+  Dfns, Fireblocks and Para. None was implemented. Complete the verification
+  checklist for a provider before starting its implementation.
+- At the time of that record, provider smoke tests had not been run. The former
+  custody-wallet smoke-test procedure is archived in Git history. For current
+  evidence and its limits, use [validation status](validation.md); do not treat
+  this historical note as a current test report.
+
+Historical references: [Crossmint Create Signature](https://docs.crossmint.com/api-reference/wallets/create-signature),
 [Crossmint Solana Embedded Smart Wallets](https://blog.crossmint.com/solana-embedded-smart-wallets/),
 [Dfns Solana Generate Signature](https://docs.dfns.co/api-reference/sign/solana),
 [Dfns User Action Signing](https://docs.dfns.co/d/api-docs/authentication/user-action-signing),

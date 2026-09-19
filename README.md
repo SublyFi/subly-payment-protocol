@@ -11,7 +11,7 @@ Subly provides an open-source relayer and an MCP/CLI client. An agent deposits U
 | I want to… | Start here |
 | --- | --- |
 | Set up with Claude Code, Codex or ChatGPT | [Copy a user or operator setup prompt](docs/ai-setup-prompts.md) |
-| 日本語で始める | [利用者・運営者のスタートガイド](docs/getting-started.ja.md) |
+| Understand the setup options | [Getting started](docs/getting-started.md) |
 | Use Subly with an agent or the CLI | [Client quick start](packages/pay/README.md#quick-start) |
 | Operate my own relayer | [Operator guide](deploy/README.md) |
 | Try the API locally without funds | [Local development](#try-it-locally) |
@@ -58,7 +58,7 @@ Start with the [step-by-step client guide](packages/pay/README.md#quick-start), 
 With Node.js 24 or later installed, you can view the available commands without configuring a wallet:
 
 ```bash
-npx -y @subly_fi/pay@0.8.1 --help
+npx -y @subly_fi/pay@0.8.2 --help
 ```
 
 After configuration, follow the guide to review the vault, create an owner setup link, approve the policy, deposit, and check the budget before buying an API call. An approval page records permission; tell your chat agent you finished, or return to the terminal and continue the original command as instructed. A fresh deposit needs time to earn a spendable budget.

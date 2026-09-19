@@ -1,30 +1,31 @@
 # Subly Demo Notes
 
-現在のデモ主導線は、既存 standard x402 Seller のうち Solana USDC
-`exact` rail と facilitator `extra.feePayer` を出す API に対して、Buyer
-側から yield 支払いする flow である。
+The current demo path pays existing standard x402 sellers from the buyer's
+vault yield. The API must offer a Solana USDC `exact` rail with a facilitator
+`extra.feePayer`.
 
-推奨デモ:
+Follow the [client setup guide](../packages/pay/README.md) before running the
+recommended demo:
 
 ```bash
-npx -y @subly_fi/pay fetch <standard-x402-url> [maxAmountRawUsdc]
+npx -y @subly_fi/pay@0.8.2 fetch <standard-x402-url> [maxAmountRawUsdc]
 ```
 
-この flow では Seller は Subly を知らない。Seller から見ると通常の x402
-USDC payment であり、Subly は Buyer 側で spendable yield を確認し、必要分を
-realize してから標準 x402 payment を行う。EVM only / Solana feePayer なしの
-challenge は支払い対象外で、yield を動かす前に拒否する。realize は relayer
-側でも `purpose: "yield_realize"` として spendable yield 超過を拒否する
-(元本保護はクライアント任せではない)。
+The seller needs no Subly integration: it receives a normal x402 USDC payment.
+On the buyer side, Subly checks spendable yield, realizes the required amount,
+and then makes the standard x402 payment. EVM-only challenges and Solana
+challenges without a fee payer are rejected before any yield is moved. The
+relayer also rejects a `purpose: "yield_realize"` withdrawal that exceeds
+spendable yield; that check is not left solely to the client.
 
-MCP サーバ (`npx -y @subly_fi/pay mcp`、または env を読む薄いラッパー
-`demo/run-mcp.sh`) は支払いに加えて
-`deposit_to_subly_vault` / `withdraw_from_subly_vault` /
-`get_subly_yield_budget` ツールを公開しており、エージェントは MCP だけで
-入金 → 利回り確認 → 支払い → 出金のライフサイクルを完結できる
-(ガスはすべてスポンサー負担、エージェント wallet に SOL は不要)。
+The MCP server (`npx -y @subly_fi/pay@0.8.2 mcp`, or the environment-loading
+wrapper `demo/run-mcp.sh`) exposes `deposit_to_subly_vault`,
+`withdraw_from_subly_vault` and `get_subly_yield_budget` alongside payment.
+An agent can use MCP for the deposit → budget check → payment → withdrawal
+lifecycle. With the required relayer and facilitator sponsorship, the agent
+wallet does not need SOL for gas.
 
-`demo/seller.ts`、`demo/buyer.ts`、`demo/pay.ts` は旧
-`subly-yield-exact` / hosted Seller 検証用の legacy demo であり、現在の
-最終デモやGTMの正ではない。実行する場合の npm scripts は
-`demo:legacy:seller`、`demo:legacy:buyer`、`demo:legacy:pay` としている。
+`demo/seller.ts`, `demo/buyer.ts` and `demo/pay.ts` are legacy demos for the
+previous `subly-yield-exact` / hosted-seller validation path. They are not the
+current demo or product introduction. Their npm scripts are
+`demo:legacy:seller`, `demo:legacy:buyer` and `demo:legacy:pay`.

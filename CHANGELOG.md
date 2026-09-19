@@ -4,6 +4,15 @@ All notable changes to the repository and the published client are recorded here
 
 ## [Unreleased]
 
+## 0.8.2 — 2026-09-20
+
+- Standardize current repository documentation and setup prompts on English for an international audience.
+- Replace the Japanese getting-started guide with `docs/getting-started.md` and consolidate the AI setup instructions into two complete English prompts: one for users and one for operators.
+- Translate the wallet-provider and spending-mandate design references, demo guide, environment comments and script messages. Preserve the distinction between historical design proposals and implemented behavior.
+- Update navigation, package documentation and contribution guidance to use English consistently.
+
+This is a documentation and wording release. Payment behavior, dependencies and database schema are unchanged. Preserve pending-payment state when updating the client.
+
 ## 0.8.1 — 2026-09-19
 
 - Reorganize first-time setup into ordered user and operator guides with expected outcomes, Windows configuration, and clear approval and recovery steps.
@@ -76,4 +85,4 @@ Compatibility: Node.js 24+ is now required. Withdrawal RPCs must support simulat
 - Published client baseline before the OSS release-readiness work.
 
 [0.6.2]: https://github.com/SublyFi/subly-payment-protocol/compare/pay-v0.6.1...pay-v0.6.2
-[Unreleased]: https://github.com/SublyFi/subly-payment-protocol/compare/pay-v0.8.1...HEAD
+[Unreleased]: https://github.com/SublyFi/subly-payment-protocol/compare/pay-v0.8.2...HEAD

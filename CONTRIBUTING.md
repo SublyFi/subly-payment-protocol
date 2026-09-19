@@ -2,6 +2,8 @@
 
 Subly welcomes bug reports, documentation fixes and code contributions under the MIT license. Discuss changes to signing, accounting, owner policies or public APIs in an issue first. Report vulnerabilities privately via [SECURITY.md](SECURITY.md). See the [Code of conduct](CODE_OF_CONDUCT.md).
 
+Write documentation, setup prompts, examples, code comments and user-facing messages in English for an international audience.
+
 ## Local development
 
 Use Node.js 24 and npm 11 (`.nvmrc` pins the development major).

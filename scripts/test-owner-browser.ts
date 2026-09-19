@@ -73,7 +73,7 @@ try {
   page.on("pageerror", error => pageErrors.push(error.message));
   const cdp = await context.newCDPSession(page);
   await cdp.send("WebAuthn.enable");
-  await cdp.send("WebAuthn.addVirtualAuthenticator", {
+  const { authenticatorId } = await cdp.send("WebAuthn.addVirtualAuthenticator", {
     options: {
       protocol: "ctap2", transport: "internal", hasResidentKey: true,
       hasUserVerification: true, isUserVerified: true,
@@ -126,6 +126,50 @@ try {
     error => error instanceof SublyError && error.code === "mandate_revoked",
   );
   console.log("Browser: revocation blocks even a previously approved deposit.");
+
+  // Manage the existing passkey without registering a new credential.
+  const createOwnerLink = async (policy = {}) => {
+    const response = await server.inject({
+      method: "POST", url: `/v1/wallets/${wallet}/owner-sessions`,
+      headers: { authorization: `Bearer ${adminToken}` }, payload: { vault, policy },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    return response.json<{ sessionId: string }>().sessionId;
+  };
+  const beforeCredentials = await cdp.send("WebAuthn.getCredentials", { authenticatorId });
+  const ownerSessionId = await createOwnerLink({ dailyApiSpendCapRawUsdc: "70000000" });
+  await page.goto(`${origin}/owner/${ownerSessionId}`);
+  await page.locator("#btn-update").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#btn-update").innerText(), "Restore access with these limits");
+  page.once("dialog", dialog => dialog.accept());
+  await page.locator("#btn-update").click();
+  await expectStatus("the mandate is active");
+  assert.equal((await mandateService.getMandate(wallet, vault)).effectiveStatus, "active");
+  const updated = await mandateService.getOwnerSession(ownerSessionId);
+  assert.equal(updated.status, "completed");
+  const afterCredentials = await cdp.send("WebAuthn.getCredentials", { authenticatorId });
+  assert.deepEqual(afterCredentials.credentials.map(item => item.credentialId),
+    beforeCredentials.credentials.map(item => item.credentialId));
+  await page.reload();
+  await expectStatus("already completed");
+
+  await mandateService.scheduleRecoveryRevoke(wallet, vault);
+  const cancelSessionId = await createOwnerLink();
+  await page.goto(`${origin}/owner/${cancelSessionId}`);
+  await page.locator("#btn-cancel-recovery").waitFor({ state: "visible" });
+  page.once("dialog", dialog => dialog.accept());
+  await page.locator("#btn-cancel-recovery").click();
+  await expectStatus("Recovery cancelled");
+  assert.equal((await mandateService.getMandate(wallet, vault)).recoveryAtMs, null);
+
+  const revokeSessionId = await createOwnerLink();
+  await page.goto(`${origin}/owner/${revokeSessionId}`);
+  await page.locator("#btn-revoke").waitFor({ state: "visible" });
+  page.once("dialog", dialog => dialog.accept());
+  await page.locator("#btn-revoke").click();
+  await expectStatus("Revoked");
+  assert.equal((await mandateService.getMandate(wallet, vault)).effectiveStatus, "revoked");
+  console.log("Browser: existing passkey restored access, changed limits, cancelled recovery and revoked access without creating another credential.");
 
   // Exercise the alternate wallet owner path using a generated, unfunded key.
   const owner = nacl.sign.keyPair();

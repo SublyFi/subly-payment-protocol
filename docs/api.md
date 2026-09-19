@@ -36,7 +36,7 @@ The timestamp must be within five minutes of server time. Serialize the body onc
 
 Prepare bodies include `wallet`, positive integer string `amountRawUsdc`, optional `vault` and optional `approvalId`. A yield realization also binds the intended external payment. Use the client implementation for the full binding rather than inventing values. Submit bodies include the returned intent ID, serialized transaction and agent signature.
 
-After a timeout, run `npx -y @subly_fi/pay@0.8.2 status <dep_... or wdr_...>` or MCP `check_subly_vault_operation` with `intentId`. Both require a 0.8.0 or newer relayer, issue an authenticated GET with `?resubmit=false` for the original ID, and check that its wallet and vault match the current selection. The returned view contains status, requested/actual raw USDC amounts, transaction signature, error code and next action; transaction bytes and approval capabilities are omitted. Status lookup never prepares or submits a replacement and does not run a wallet sync. Authentication signs only the API request message, including the `resubmit=false` query string. On relayers before 0.8.0 this query option is not supported: upgrade the server before using status lookup.
+After a timeout, run `npx -y @subly_fi/pay@0.8.3 status <dep_... or wdr_...>` or MCP `check_subly_vault_operation` with `intentId`. Both require a 0.8.0 or newer relayer, issue an authenticated GET with `?resubmit=false` for the original ID, and check that its wallet and vault match the current selection. The returned view contains status, requested/actual raw USDC amounts, transaction signature, error code and next action; transaction bytes and approval capabilities are omitted. Status lookup never prepares or submits a replacement and does not run a wallet sync. Authentication signs only the API request message, including the `resubmit=false` query string. On relayers before 0.8.0 this query option is not supported: upgrade the server before using status lookup.
 
 Both intent GET routes accept optional `resubmit=false` to reconcile receipts and expiry without rebroadcasting. Omitting the parameter or setting `resubmit=true` preserves the existing recovery behavior, which may rebroadcast the same stored signed transaction while its blockhash is valid. The query string is part of wallet authentication and must be signed exactly as sent. Other parameter values are rejected.
 
@@ -49,3 +49,24 @@ Errors use `{"error":{"code":"...","message":"...","details":{...}}}`. A 409 wit
 Position sync returns `409 vault_flow_pending` while a submitted deposit or withdrawal awaits reconciliation. Read the original intent's status endpoint first, then sync again. `409 stale_position_snapshot` means a receipt or another sync updated the ledger during the chain read, or the RPC returned an older slot; fetch a fresh snapshot instead of reusing the old values. These refusals preserve the recorded principal.
 
 `insufficient_yield`, unavailable liquidity, simulation failure and an unknown external payment outcome are deliberate refusals. [Troubleshooting](troubleshooting.md) explains recovery. `/v1/x402/*` is the disabled-by-default legacy seller rail; new sellers use standard x402 and their own facilitator.
+
+## Owner management (0.8.3+)
+
+- `POST /v1/wallets/:wallet/owner-sessions`: wallet/admin authenticated; body
+  `{vault?, policy?, mandateTtlDays?}`. Creates a 10-minute proposal bound to the
+  current mandate and lifecycle state. Omitted policy values and expiry are retained.
+  Returns `sessionId` and private `ownerUrl`.
+- `GET /v1/owner-sessions/:sessionId`: capability read, pending/completed/expired.
+- `POST /v1/owner-sessions/:sessionId/complete`: `{document}` signed by the
+  existing owner with the exact proposed values; updates/reactivates the mandate.
+- `POST /v1/owner-sessions/:sessionId/action`: `{action, mandateHash, signedAtMs,
+  signature}`, where action is `revoke` or `cancel_recovery`; the existing owner
+  signs the corresponding action message. Links are single-use and stale links fail.
+- `POST /v1/wallets/:wallet/mandate/recovery-revoke?vault=...`: existing wallet-auth
+  lost-credential recovery, now exposed through CLI/MCP. The 72-hour grace period
+  and current-owner cancellation remain unchanged. Explicit revocation cannot be bypassed.
+
+CLI: `owner-link`, `owner-status`, `recovery-start`, `recovery-status`. MCP:
+`create_subly_owner_link`, `check_subly_owner_session`, `get_subly_owner_status`,
+`start_subly_owner_recovery`. No owner-management command sends token transactions.
+See the [owner guide](../packages/pay/README.md#manage-the-owner-and-recover-access).

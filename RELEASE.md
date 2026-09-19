@@ -7,26 +7,30 @@ The relayer is distributed as tagged source and a source-built Docker image. `@s
 1. Update root/client versions, both lockfiles, changelog and pinned command examples. Review for credentials or generated files.
 2. Run `npm ci --ignore-scripts`, `npm ci --prefix packages/pay --ignore-scripts`, `npm run check`, `npm run check --prefix packages/pay`, `npm run test:package` and `node scripts/audit-relayer.mjs`.
 3. Run all tests with a disposable `SUBLY_TEST_POSTGRES_URL`, including migration and approval persistence regressions.
-4. Run `npm audit --prefix packages/pay --omit=dev --audit-level=high` and review [relayer dependency status](docs/dependencies.md).
+4. Run `node scripts/audit-client.mjs` and review [relayer dependency status](docs/dependencies.md). Both audit scripts retry only temporary registry/rate-limit/network failures, at most four attempts with 5/15/30-second delays. Invalid reports, persistent outages and vulnerabilities at the configured threshold still fail the release; never bypass the audit to recover publication.
 5. Build the Docker image, check its non-root detached health endpoint, and test SIGTERM shutdown. Inspect the package tarball allowlist. No keys, source server SDK or local state belong in the npm package.
 6. Run `npx playwright install chromium` and `npm run test:browser`. Wait for all three client OS checks, browser checks, dependency review and CodeQL before merging the reviewed PR. Record any limits to mainnet validation in release notes. Automated tests never substitute for an external security audit.
 
 ## Publish
 
-Tag the merged commit as `pay-v<package version>`. The release workflow calls the full reusable CI workflow (PostgreSQL, client tarball/MCP, Docker, audit) before publishing. npm uses GitHub OIDC trusted publishing; configure the package's trusted publisher as organization `SublyFi`, repository `subly-payment-protocol`, workflow filename `release-pay.yml`. Node 24's npm supports this flow. No long-lived npm token is stored in GitHub.
+Tag the merged commit as `pay-v<package version>`. The release workflow calls the full reusable CI workflow (PostgreSQL, client tarball/MCP, Docker, audit) before publishing. npm uses GitHub OIDC trusted publishing; configure the package's trusted publisher as organization `SublyFi`, repository `subly-payment-protocol`, workflow filename `release-pay.yml`. Node 24's npm supports this flow. No long-lived npm token is stored in GitHub. Prepare source changes as a new version; an existing public tag always refers to its original commit.
 
 ```bash
-git tag -a pay-v0.8.2 -m "Subly 0.8.2"
-git push origin pay-v0.8.2
+git tag -a pay-v0.8.3 -m "Subly 0.8.3"
+git push origin pay-v0.8.3
 ```
 
-The publisher checks tag/version equality and uses `npm publish --access public --provenance`. If publication fails, inspect the workflow and npm trusted-publisher settings; do not move an existing public tag. Re-run the failed job after fixing configuration. Publishing the same npm version twice is not possible.
+The publisher checks tag/version equality and uses `npm publish --access public --provenance`. If publication fails, inspect the workflow and npm trusted-publisher settings; do not move an existing public tag. Re-run the failed job after fixing configuration or after an upstream outage ends. Publishing the same npm version twice is not possible. To resume after publication succeeded but verification failed, the workflow skips a second publish only when the registry version has the same `gitHead`, valid integrity metadata and npm provenance metadata. Any different commit or malformed registry response blocks the job.
+
+The `pay-v0.8.2` tag was created before these workflow changes, and its initial release run stopped at npm's audit maintenance response before publication. Re-running that tag uses its original workflow. Do not retag it to pick up newer source or retry logic; ship the corrected source under a new version.
 
 Verify trusted publishing with an actual version release through this workflow and then verify its registry provenance. Saving the npm settings, `npm whoami`, and `npm publish --dry-run` do not prove publishing works. Use npm CLI's supported OIDC handling; never log or persist exchanged credentials in custom diagnostic scripts.
 
 An authorized local maintainer can use `npm publish --access public` after the same checks and any required registry authentication. GitHub provenance cannot be generated from a normal local shell; never claim provenance for that fallback. Record the publication method in release notes.
 
-After publication verify `npm view @subly_fi/pay version dist-tags dist.attestations --json`, install the exact registry version in a clean directory, and check `--version`, `--help` and MCP initialization. Create a GitHub release for the immutable matching tag with release notes and optional npm tarball/checksum.
+After publication the workflow runs `node scripts/verify-published-package.mjs --require-provenance`. It waits briefly for exact-version registry availability, checks registry version/commit/provenance metadata, installs that version in a temporary directory without lifecycle scripts or local credentials, matches installed SHA-512 integrity, and checks `--version`, `--help` and MCP initialization/tool discovery without sending transactions. Provenance metadata presence is checked here; this is not a separate cryptographic attestation verifier. Only successful verification permits the final job to create the GitHub release for the immutable matching tag. Release creation does not change npm versions or deploy the relayer.
+
+For a read-only check of any already published client version, run `node scripts/verify-published-package.mjs --version <exact-version> --require-provenance`. Set `RELEASE_COMMIT` to the expected full commit hash when also checking source identity. A local fallback published without GitHub provenance can be inspected by omitting `--require-provenance`; that does not satisfy the automated workflow's provenance requirement.
 
 ## Operator upgrade
 

@@ -32,6 +32,8 @@ Please give us a reasonable window to ship a fix before public disclosure. This 
 
 ## Dependency status
 
-The published client dependency lock is checked by CI and must pass a high-severity npm audit before release. The source-distributed relayer has a separate dependency graph; its current Kamino SDK/Solana transitive chain can report upstream npm advisories that require a coordinated SDK upgrade and compatibility review. A clean client audit must not be interpreted as a clean relayer audit. Dependabot and the advisory security workflow keep this distinction visible until that upgrade is completed.
+The published client dependency lock is checked by CI and must pass a high-severity npm audit before release. The source-distributed relayer has a separate dependency graph and rejects every reported production dependency vulnerability, at any severity. Reviewed dependency overrides remove the previously reported upstream advisories; their scope and compatibility tests are documented below. A clean client audit must not be interpreted as a clean relayer audit.
+
+Both audit gates retry temporary registry, network and rate-limit failures a bounded number of times. Missing, malformed or inconsistent vulnerability data and persistent outages block the release; retries never waive findings or lower severity thresholds. Dependabot, CI and the weekly security workflow check the two dependency graphs independently. The release workflow creates a GitHub release only after publication and clean installation of the exact registry version pass verification.
 
 See the versioned [dependency status and mitigations](docs/dependencies.md).

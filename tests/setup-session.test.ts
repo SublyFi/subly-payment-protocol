@@ -8,6 +8,7 @@ import {
   mandateHashOf,
   mandateSigningMessage,
   revokeSigningMessage,
+  recoveryCancelSigningMessage,
   type MandatePolicyWire,
   type SpendingMandateDocument,
   type SpendingMandatePayload
@@ -415,5 +416,112 @@ describe("setup sessions", () => {
       }),
       "approval_signature_invalid"
     );
+  });
+});
+
+describe("owner management sessions", () => {
+  async function onboard() {
+    const state = buildService();
+    const passkey = createTestPasskey();
+    const created = await state.service.createSetupSession({
+      wallet: AGENT_PUB, vault: VAULT,
+      policy: { dailyApiSpendCapRawUsdc: "70000000", withdrawalPolicy: "owner_approval_required" },
+      initialDepositRawUsdc: "1000000"
+    });
+    const view = await state.service.getSetupSession(created.sessionId) as PendingSessionView;
+    const registered = await state.service.completeSetupSession({
+      sessionId: created.sessionId, document: signSetupDocument(view, passkey, NOW_MS)
+    });
+    state.advance(1_000);
+    return { ...state, passkey, registered };
+  }
+
+  it("updates with the existing passkey, preserves omitted policy and expiry, and never issues another deposit approval", async () => {
+    const { service, passkey, registered } = await onboard();
+    const link = await service.createOwnerSession({ wallet: AGENT_PUB, vault: VAULT,
+      policy: { monthlyApiSpendCapRawUsdc: "90000000" } });
+    expect(link.ownerUrl).toBe(`https://app.subly.fi/owner/${link.sessionId}`);
+    const view = await service.getOwnerSession(link.sessionId);
+    expect(view).toMatchObject({ wallet: AGENT_PUB, vault: VAULT, initialDepositRawUsdc: null,
+      mandateExpiresAtMs: registered.expiresAtMs,
+      policy: { dailyApiSpendCapRawUsdc: "70000000", monthlyApiSpendCapRawUsdc: "90000000", withdrawalPolicy: "owner_approval_required" },
+      currentMandate: { ownerCredential: passkey.credential } });
+    const result = await service.completeOwnerSession({ sessionId: link.sessionId,
+      document: signSetupDocument(view as PendingSessionView, passkey, NOW_MS + 1_000) });
+    expect(result.initialDepositApproval).toBeNull();
+    expect(result.mandateHash).not.toBe(registered.mandateHash);
+    expect(await service.getOwnerSession(link.sessionId)).toMatchObject({
+      wallet: AGENT_PUB, vault: VAULT, status: "completed", action: "update" });
+    await expectCode(service.completeOwnerSession({ sessionId: link.sessionId,
+      document: signSetupDocument(view as PendingSessionView, passkey, NOW_MS + 2_000) }), "setup_session_used");
+  });
+
+  it("rejects another credential, tampered policy, stale state and expired links", async () => {
+    const { service, passkey, registered, advance } = await onboard();
+    const link = await service.createOwnerSession({ wallet: AGENT_PUB, vault: VAULT });
+    const view = await service.getOwnerSession(link.sessionId) as PendingSessionView;
+    await expectCode(service.completeOwnerSession({ sessionId: link.sessionId,
+      document: signSetupDocument(view, createTestPasskey(), NOW_MS + 1_000) }), "owner_session_credential_mismatch");
+    await expectCode(service.completeOwnerSession({ sessionId: link.sessionId,
+      document: signSetupDocument(view, passkey, NOW_MS + 1_000, payload => ({ ...payload,
+        policy: { ...payload.policy, dailyApiSpendCapRawUsdc: "80000000" } })) }), "setup_session_mismatch");
+    await service.revokeMandate({ wallet: AGENT_PUB, mandateHash: registered.mandateHash,
+      signedAtMs: NOW_MS + 1_000,
+      signature: passkey.signAssertion(revokeSigningMessage(registered.mandateHash, NOW_MS + 1_000)) });
+    await expectCode(service.completeOwnerSession({ sessionId: link.sessionId,
+      document: signSetupDocument(view, passkey, NOW_MS + 1_000) }), "owner_session_stale");
+    const fresh = await service.createOwnerSession({ wallet: AGENT_PUB, vault: VAULT });
+    const freshView = await service.getOwnerSession(fresh.sessionId) as PendingSessionView;
+    advance(10 * 60_000);
+    expect(await service.getOwnerSession(fresh.sessionId)).toMatchObject({
+      status: "expired", wallet: AGENT_PUB, vault: VAULT });
+    await expectCode(service.completeOwnerSession({ sessionId: fresh.sessionId,
+      document: signSetupDocument(freshView, passkey, NOW_MS + 1_001) }), "setup_session_expired");
+  });
+
+  it("revokes and restores only with the same owner; recovery cannot bypass revocation", async () => {
+    const { service, passkey, registered, advance } = await onboard();
+    const link = await service.createOwnerSession({ wallet: AGENT_PUB, vault: VAULT });
+    const action = { sessionId: link.sessionId, action: "revoke" as const,
+      mandateHash: registered.mandateHash, signedAtMs: NOW_MS + 1_000 };
+    await expectCode(service.completeOwnerAction({ ...action, signature: createTestPasskey().signAssertion(
+      revokeSigningMessage(action.mandateHash, action.signedAtMs)) }), "revoke_signature_invalid");
+    await service.completeOwnerAction({ ...action, signature: passkey.signAssertion(
+      revokeSigningMessage(action.mandateHash, action.signedAtMs)) });
+    expect(await service.getOwnerSession(link.sessionId)).toMatchObject({ status: "completed", action: "revoke" });
+    await expectCode(service.scheduleRecoveryRevoke(AGENT_PUB, VAULT), "mandate_revoked");
+    advance(1_000);
+    const restore = await service.createOwnerSession({ wallet: AGENT_PUB, vault: VAULT });
+    const view = await service.getOwnerSession(restore.sessionId) as PendingSessionView;
+    await expectCode(service.completeOwnerSession({ sessionId: restore.sessionId,
+      document: signSetupDocument(view, createTestPasskey(), NOW_MS + 2_000) }), "owner_session_credential_mismatch");
+    await service.completeOwnerSession({ sessionId: restore.sessionId,
+      document: signSetupDocument(view, passkey, NOW_MS + 2_000) });
+    expect((await service.getMandate(AGENT_PUB, VAULT)).effectiveStatus).toBe("active");
+  });
+
+  it("lets the current owner cancel recovery and retains the full 72-hour wait before new-owner setup", async () => {
+    const { service, passkey, registered, advance } = await onboard();
+    const scheduled = await service.scheduleRecoveryRevoke(AGENT_PUB, VAULT);
+    expect(scheduled.recoveryAtMs).toBe(NOW_MS + 1_000 + 72 * 60 * 60_000);
+    const link = await service.createOwnerSession({ wallet: AGENT_PUB, vault: VAULT });
+    await service.completeOwnerAction({ sessionId: link.sessionId, action: "cancel_recovery",
+      mandateHash: registered.mandateHash, signedAtMs: NOW_MS + 1_000,
+      signature: passkey.signAssertion(recoveryCancelSigningMessage(registered.mandateHash, NOW_MS + 1_000)) });
+    expect((await service.getMandate(AGENT_PUB, VAULT)).effectiveStatus).toBe("active");
+    expect(await service.getOwnerSession(link.sessionId)).toMatchObject({ action: "cancel_recovery" });
+    await service.scheduleRecoveryRevoke(AGENT_PUB, VAULT);
+    const newOwner = createTestPasskey();
+    const early = await service.createSetupSession({ wallet: AGENT_PUB, vault: VAULT });
+    await expectCode(service.completeSetupSession({ sessionId: early.sessionId,
+      document: signSetupDocument(await service.getSetupSession(early.sessionId) as PendingSessionView,
+        newOwner, NOW_MS + 1_000) }), "owner_rotation_requires_current_owner");
+    advance(72 * 60 * 60_000);
+    expect((await service.getMandate(AGENT_PUB, VAULT)).effectiveStatus).toBe("recovery_elapsed");
+    const ready = await service.createSetupSession({ wallet: AGENT_PUB, vault: VAULT });
+    await service.completeSetupSession({ sessionId: ready.sessionId,
+      document: signSetupDocument(await service.getSetupSession(ready.sessionId) as PendingSessionView,
+        newOwner, scheduled.recoveryAtMs) });
+    expect((await service.getMandate(AGENT_PUB, VAULT)).effectiveStatus).toBe("active");
   });
 });

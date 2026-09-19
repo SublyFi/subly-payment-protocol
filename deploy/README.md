@@ -1,9 +1,8 @@
 # Running your own Subly relayer (operator guide)
 
-The commands below describe release 0.8.3. Verify its immutable source tag
-and npm availability before deploying. For candidate evaluation, use this reviewed source checkout
-instead of attempting to clone a tag that does not yet exist. Preserve existing
-deployments until the release checks pass.
+This guide targets Subly 0.8.4 and installs the relayer from tagged source.
+See the [validation records](../docs/validation.md) for completed release checks
+and the checks required for your own deployment.
 
 This `deploy/` directory is a Docker Compose bundle for the Subly relayer —
 the buyer-side vault / budget / yield-realize API. Anyone can run one: the
@@ -123,7 +122,7 @@ configuration steps transfers funds. Preserve a secure backup of this key.
 
 ## Get the code onto the host
 
-Use the reviewed `pay-v0.8.3` source tag. **Choose one** of the following
+Use the reviewed `pay-v0.8.4` source tag. **Choose one** of the following
 methods. Both install into `/opt/subly`, owned by the operator account, and
 stop if that path already exists. For an existing installation use
 [Updating a running deployment](#updating-a-running-deployment); do not repeat
@@ -139,7 +138,7 @@ Clone anonymously on the host:
     exit 1
   fi
   sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0750 /opt/subly
-  git clone --branch pay-v0.8.3 --depth 1 https://github.com/SublyFi/subly-payment-protocol.git /opt/subly
+  git clone --branch pay-v0.8.4 --depth 1 https://github.com/SublyFi/subly-payment-protocol.git /opt/subly
 )
 ```
 
@@ -148,8 +147,8 @@ and transfer it:
 
 ```bash
 # On your workstation, in the repository:
-git archive --format=tar.gz -o /tmp/subly-pay-v0.8.3.tar.gz pay-v0.8.3
-scp /tmp/subly-pay-v0.8.3.tar.gz <operator>@<host>:/tmp/
+git archive --format=tar.gz -o /tmp/subly-pay-v0.8.4.tar.gz pay-v0.8.4
+scp /tmp/subly-pay-v0.8.4.tar.gz <operator>@<host>:/tmp/
 ```
 
 Then extract as the operator, not as root:
@@ -157,13 +156,13 @@ Then extract as the operator, not as root:
 ```bash
 (
   set -euo pipefail
-  test -f /tmp/subly-pay-v0.8.3.tar.gz
+  test -f /tmp/subly-pay-v0.8.4.tar.gz
   if [ -e /opt/subly ] || [ -L /opt/subly ]; then
     echo '/opt/subly already exists; inspect it or use the upgrade procedure.' >&2
     exit 1
   fi
   sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0750 /opt/subly
-  tar --no-same-owner -xzf /tmp/subly-pay-v0.8.3.tar.gz -C /opt/subly
+  tar --no-same-owner -xzf /tmp/subly-pay-v0.8.4.tar.gz -C /opt/subly
 )
 ```
 
@@ -389,8 +388,8 @@ export SUBLY_DEMO_AGENT_KEYPAIR_PATH=/absolute/path/to/test-agent.json
 # Read the client RPC credential without putting it in shell history:
 read -r -s -p 'Client Solana RPC URL: ' SOLANA_RPC_URL; printf '\n'
 export SOLANA_RPC_URL
-npx -y @subly_fi/pay@0.8.3 doctor && \
-npx -y @subly_fi/pay@0.8.3 setup-link --initial-deposit 1010000
+npx -y @subly_fi/pay@0.8.4 doctor && \
+npx -y @subly_fi/pay@0.8.4 setup-link --initial-deposit 1010000
 ```
 
 Stop here. The owner opens the returned `setupUrl`, reviews the domain, policy
@@ -398,27 +397,27 @@ and initial deposit, and approves. Then replace `st_SESSION_ID` below with the
 returned setup session ID (or pass the complete setup URL):
 
 ```bash
-npx -y @subly_fi/pay@0.8.3 setup-status st_SESSION_ID
+npx -y @subly_fi/pay@0.8.4 setup-status st_SESSION_ID
 ```
 
 Continue only when setup status is `completed` and the agreed initial deposit
 is approved. This next command sends the deposit:
 
 ```bash
-npx -y @subly_fi/pay@0.8.3 deposit 1010000
+npx -y @subly_fi/pay@0.8.4 deposit 1010000
 ```
 
 After the deposit is confirmed, check the budget and let yield accrue:
 
 ```bash
-npx -y @subly_fi/pay@0.8.3 budget
+npx -y @subly_fi/pay@0.8.4 budget
 ```
 
 Only when sufficient verified yield exists and the specific purchase is
 authorized, run the paid request in a separate step:
 
 ```bash
-npx -y @subly_fi/pay@0.8.3 fetch <compatible-x402-url>
+npx -y @subly_fi/pay@0.8.4 fetch <compatible-x402-url>
 ```
 
 Verify that request's outcome before continuing. At the separately agreed time,
@@ -426,12 +425,12 @@ test the withdrawal; if it requests owner approval, complete that approval and
 retry the original command with its approval ID:
 
 ```bash
-npx -y @subly_fi/pay@0.8.3 withdraw 1000000
+npx -y @subly_fi/pay@0.8.4 withdraw 1000000
 ```
 
 The example deposit minimum depends on the selected vault. Check confirmed
 USDC/share changes and stored receipts. For a submitted/timeout result, retain
-the original ID and run `npx -y @subly_fi/pay@0.8.3 status <dep_or_wdr_id>` with
+the original ID and run `npx -y @subly_fi/pay@0.8.4 status <dep_or_wdr_id>` with
 the same wallet, vault and relayer; do not submit the same operation again.
 
 The payment needs verified yield for the price, vault fees and fee headroom.
@@ -612,13 +611,13 @@ Your users run the standard published client — they just override the
 relayer URL:
 
 ```bash
-SUBLY_RELAYER_URL=https://<your-domain> npx -y @subly_fi/pay@0.8.3 fetch <url>
+SUBLY_RELAYER_URL=https://<your-domain> npx -y @subly_fi/pay@0.8.4 fetch <url>
 # or put SUBLY_RELAYER_URL in the MCP server's env block
 ```
 
 No API token — buyer requests are wallet-signature authenticated. With
 `SUBLY_MANDATE_ENFORCEMENT=on` (recommended above), a user's **first action
-is the owner setup link** (`npx -y @subly_fi/pay@0.8.3 setup-link
+is the owner setup link** (`npx -y @subly_fi/pay@0.8.4 setup-link
 --initial-deposit 1010000`, or the `create_subly_setup_link` MCP tool): the
 owner signs the spending mandate and pre-approves the first deposit with one
 passkey approval. Replacing an existing mandate requires a separate deposit
@@ -710,7 +709,7 @@ the client uses its own copy to validate exactly which vault/share mint/farm
 it signs for. `GET /v1/vaults` advertises relayer support; it does not install
 or replace the signer's local trust anchors. Client catalogues can be a subset,
 but metadata must match for every selected vault. Restart processes after
-changing files. Use `@subly_fi/pay@0.8.3` or a newer compatible client on every machine.
+changing files. Use `@subly_fi/pay@0.8.4` or a newer compatible client on every machine.
 
 ### 3. Let the user choose
 
@@ -811,8 +810,8 @@ tag and check it out without a forced reset:
 
 ```bash
 cd /opt/subly
-git fetch --depth 1 origin tag pay-v0.8.3
-git checkout --detach pay-v0.8.3
+git fetch --depth 1 origin tag pay-v0.8.4
+git checkout --detach pay-v0.8.4
 ```
 
 For an archive installation, create and transfer the reviewed tag's archive
@@ -821,7 +820,7 @@ operator into the existing source directory (do not repeat the new-directory
 check or use sudo for extraction):
 
 ```bash
-tar --no-same-owner -xzf /tmp/subly-pay-v0.8.3.tar.gz -C /opt/subly
+tar --no-same-owner -xzf /tmp/subly-pay-v0.8.4.tar.gz -C /opt/subly
 ```
 
 A `git archive` from the reviewed source tag contains no host-only environment
@@ -834,7 +833,7 @@ docker compose config --quiet
 docker compose build relayer
 docker compose up -d --wait --remove-orphans relayer
 curl --fail https://<your-domain>/readyz
-printf '%s\n' 'pay-v0.8.3' > /opt/subly/DEPLOYED_VERSION
+printf '%s\n' 'pay-v0.8.4' > /opt/subly/DEPLOYED_VERSION
 ```
 
 Readiness still only checks the ledger/schema. Repeat the relevant read-only

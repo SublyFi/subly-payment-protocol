@@ -1,5 +1,30 @@
 # Validation status
 
+## 0.8.4 validation scope
+
+This revision corrects the setup and owner-management continuation commands,
+updates onboarding documentation and adds the bounded 20-minute wait for npm
+post-publication availability. It does not change payment rules, dependencies
+or the database schema. The [release workflow](https://github.com/SublyFi/subly-payment-protocol/actions/workflows/release-pay.yml)
+records checks and registry verification for each release; the completed records
+below apply to their named versions, not automatically to 0.8.4.
+
+Local checks for this revision passed root/client type checking, client build and
+tarball inspection, clean packed CLI/MCP startup and discovery of all thirteen
+tools, the existing Chromium owner flows and 42 focused owner/client/API tests.
+The bundled agent skill passed its format validator and a read-only exercise
+covering an unknown prior payment and the current successful payment response.
+
+Actual accrued-yield payment to an external mainnet API and an independent
+security audit remain outstanding. Documentation changes and release checks do
+not complete either validation.
+
+The remaining functional acceptance check is an authorized external API purchase
+funded by independently accrued mainnet yield: confirm the yield-realization and
+seller-payment transactions, successful delivery, verified report-back, preserved
+recorded principal and resolved pending state. This does not substitute for an
+independent security audit.
+
 ## 0.8.3 release verification — 2026-09-20
 
 The release commit passed all 585 tests in CI, including disposable PostgreSQL
@@ -48,9 +73,9 @@ for the publication and verification results.
 The first 0.8.3 publication was accepted by npm, but registry verification
 stopped after 50 seconds because the version was still unavailable during
 post-publication processing. After registry visibility, the same immutable
-commit's failed jobs were rerun successfully without republishing. The
-unreleased follow-up extends availability polling to a bounded 20 minutes for
-future source releases; it does not change the 0.8.3 tag or its workflow.
+commit's failed jobs were rerun successfully without republishing. The 0.8.4
+source extends availability polling to a bounded 20 minutes; it does not change
+the 0.8.3 tag or its workflow.
 
 ## 0.8.0 verification — 2026-09-19
 

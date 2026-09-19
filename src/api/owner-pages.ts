@@ -243,8 +243,8 @@ export function setupPageHtml(): string {
     <div id="status" class="status"></div>
     <p class="note" id="note" hidden>Subly receives your passkey's public key
     and signatures, never its private key. Your passkey provider may sync it
-    across your devices. The agent cannot approve payments above the threshold,
-    change these limits, or deposit funds without it.</p>
+    across your devices. The relayer requires your approval for changes to these
+    limits and for operations that the displayed policy reserves for you.</p>
     `,
     `
     const sessionId = location.pathname.split("/").filter(Boolean).pop();
@@ -284,15 +284,17 @@ export function setupPageHtml(): string {
       if (blocking && existing.ownerAuth === "passkey") {
         setStatus("err",
           "This vault already has a passkey owner for this wallet (mandate " +
-          existing.status + "). A new owner can only be appointed after the " +
-          "mandate expires or via the agent's recovery flow.");
+          existing.status + "). Ask your agent for an owner-link to update " +
+          "the policy or restore access with the existing passkey. Explicit " +
+          "revocation cannot be bypassed by expiry or lost-credential recovery.");
         return;
       }
       if (blocking) {
         setStatus("err",
           "This vault already has a registered owner for this wallet (mandate " +
-          existing.status + "). Only that same owner wallet can re-sign — " +
-          "use the Solana wallet option with the original owner wallet.");
+          existing.status + "). Use owner-link for policy changes or " +
+          "reactivation with the original owner wallet. Only that same " +
+          "owner wallet can re-sign here.");
       } else {
         $("btn-passkey").hidden = false;
       }
@@ -420,10 +422,11 @@ export function ownerPageHtml(): string {
     <div id="details"></div>
     <button id="btn-update" class="primary" hidden>Approve these limits</button>
     <button id="btn-cancel-recovery" class="secondary" hidden>Cancel pending recovery</button>
-    <button id="btn-revoke" class="danger" hidden>Revoke all relayer access</button>
+    <button id="btn-revoke" class="danger" hidden>Revoke access for this vault</button>
     <div id="status" class="status"></div>
-    <p class="note">Revocation blocks deposits, API payments and withdrawals
-    through this relayer. The same owner can restore access with a new owner link.
+    <p class="note">Revocation blocks new deposits, API payments and withdrawals
+    for this vault through this relayer. It cannot cancel transactions already
+    broadcast. The same owner can restore access with a new owner link.
     If your passkey is lost, use recovery-start in your terminal or ask your agent
     to start owner recovery. The existing 72-hour delay still applies, and a revoked
     mandate cannot use that recovery path. No action here sends funds.</p>
@@ -482,7 +485,7 @@ export function ownerPageHtml(): string {
     }
     $("btn-update").addEventListener("click", async () => {
       if (!confirm(session.currentMandate.status === "revoked"
-        ? "Restore this agent's relayer access with the displayed limits?"
+        ? "Restore this agent's relayer access for this vault with the displayed limits?"
         : "Approve the displayed limits? This replaces the current mandate and cancels any pending recovery.")) return;
       try {
         busy(true);
@@ -503,7 +506,7 @@ export function ownerPageHtml(): string {
     });
     async function performAction(action) {
       if (!confirm(action === "revoke"
-        ? "Revoke all new relayer operations, including withdrawals?"
+        ? "Revoke new relayer operations for this vault, including withdrawals?"
         : "Cancel pending recovery and retain the existing owner?")) return;
       try {
         busy(true);
@@ -512,7 +515,7 @@ export function ownerPageHtml(): string {
         const prefix = action === "revoke" ? "subly-mandate-revoke:v1:" : "subly-mandate-recovery-cancel:v1:";
         const signature = await signAsCurrentOwner(prefix + mandateHash + ":" + signedAtMs);
         await postJson("/v1/owner-sessions/" + sessionId + "/action", { action, mandateHash, signedAtMs, signature });
-        finish(action === "revoke" ? "Revoked — relayer withdrawals are blocked too." : "Recovery cancelled — the existing owner remains active.");
+        finish(action === "revoke" ? "Revoked for this vault — relayer withdrawals are blocked too." : "Recovery cancelled — the existing owner remains active.");
       } catch (error) { fail(error); } finally { busy(false); }
     }
     $("btn-revoke").addEventListener("click", () => performAction("revoke"));
@@ -626,9 +629,9 @@ export function revokePageHtml(): string {
     `
     <span class="badge">Subly kill switch</span>
     <h1>Revoke your agent's spending mandate</h1>
-    <p class="sub">This immediately blocks ALL payments, deposits and
-    withdrawals by the agent wallet below. Only a new mandate signed by the
-    same owner can re-enable them.</p>
+    <p class="sub">This blocks new relayer payments, deposits and withdrawals
+    for the wallet and vault below. It cannot cancel transactions already
+    broadcast. The same owner can use an owner-link to restore access.</p>
     <div id="details"></div>
     <button id="btn-revoke" class="danger" hidden>Revoke now</button>
     <div id="status" class="status"></div>
@@ -655,7 +658,7 @@ export function revokePageHtml(): string {
     })();
 
     $("btn-revoke").addEventListener("click", async () => {
-      if (!confirm("Revoke the mandate and block all agent spending?")) return;
+      if (!confirm("Revoke this mandate and block new relayer operations for this vault?")) return;
       try {
         $("btn-revoke").disabled = true;
         const signedAtMs = Date.now();

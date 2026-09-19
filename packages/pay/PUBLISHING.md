@@ -1,55 +1,47 @@
-# Publishing @subly_fi/pay (operator)
+# Publishing @subly_fi/pay
 
-The client package that users run via `npx`. The canonical release checklist is
-[`../../RELEASE.md`](../../RELEASE.md); this file contains the package-specific
-notes. Publishing needs npm credentials for the `@subly_fi` org, or a
-configured npm trusted publisher for the GitHub Actions workflow.
+Follow the [canonical release process](../../RELEASE.md) for validation,
+immutable tags, trusted publishing and recovery of interrupted releases.
+These notes cover the client package only. Publishing the package does not
+deploy a relayer.
 
-## One-time
+## Prerequisites and build inputs
 
-```bash
-npm login                 # an account that is a member of the @subly_fi org
-npm org ls subly_fi        # confirm membership (create the org on npmjs.com if new)
-```
+Use Node.js 24 and npm 11. Normal publication uses the configured GitHub Actions
+trusted publisher for `@subly_fi/pay`; a local maintainer fallback requires an
+account authorized to publish that package and registry authentication.
 
-## Local maintainer fallback
-
-Use the tagged GitHub Actions workflow in the canonical release checklist for
-normal releases with provenance. The fallback below requires explicit registry
-authentication and does not generate GitHub provenance. Complete the same
-version, validation and review checks in that checklist first.
+The client bundles shared source from the repository, so install both dependency
+graphs from the repository root before following the release checks:
 
 ```bash
-cd packages/pay
-npm ci
-npm run typecheck
-npm run pack:check         # builds/inspects the package dry-run tarball
-npm publish --access public
-
-# CONFIRM IT IS PUBLIC (scoped packages can publish as restricted despite
-# publishConfig; restricted = npx fails for everyone but you):
-npm access get status @subly_fi/pay      # must print "public"
-# if it prints "restricted", flip it (needs your npm OTP):
-#   npm access set status=public @subly_fi/pay
-
-# sanity check the published artifact from a clean temporary dir (allow ~1-2 min for the
-# registry/CDN to serve a newly public package before this resolves).
-# Resolving + printing usage proves the bin works without spending anything:
-cd /tmp && npx -y @subly_fi/pay@latest --help
-# optional paid check against a real standard-x402 seller (0.01 USDC):
-#   SUBLY_DEMO_AGENT_KEYPAIR_PATH=... npx -y @subly_fi/pay@latest fetch <x402-url>
+npm ci --ignore-scripts
+npm ci --prefix packages/pay --ignore-scripts
 ```
 
-## Notes
+- `dist/` is gitignored. The client build and `prepack` rebuild it; the package's
+  `files` allowlist includes the resulting bundles, README and license.
+- Runtime dependencies stay external. The package contains client code, without
+  the relayer, seller, Kamino server SDK or PostgreSQL dependency.
+- Keep root/client manifest and lockfile versions aligned as required by the
+  release checklist. Review package contents with the prescribed tarball checks.
 
-- `dist/` is gitignored and rebuilt by `npm run build`; `prepack` also
-  rebuilds it during packing and publishing. It is included in the published tarball via
-  the `files` field.
-- The package bundles only client code (runtime dependencies stay external);
-  it must never pull in the facilitator, seller, Kamino SDK, or `pg`. If the
-  bundle size jumps, check what new import crossed into the client path.
-- Bump the version and regenerate `package-lock.json` in lockstep with any
-  client-flow change so `npx -y @subly_fi/pay@<version>` is reproducible.
-- Scoped packages can still be misconfigured as restricted. Always run the
-  access check above after publishing. A newly-public package can 404 briefly
-  while the registry/CDN propagates the release.
+## Verify the exact published version
+
+After publication, run the registry verifier from the repository root, using
+the exact released version:
+
+```bash
+node scripts/verify-published-package.mjs --version 0.8.4 --require-provenance
+```
+
+The verifier waits for registry availability, installs the exact public version
+in isolation, and checks artifact integrity, CLI startup and MCP discovery.
+It sends no transactions. Set `RELEASE_COMMIT` to the expected full commit hash
+to check source identity too; the release workflow does this automatically.
+The canonical process documents the bounded wait and failed-verification recovery.
+
+The authenticated local fallback in the release process does not generate
+GitHub provenance. Omit `--require-provenance` only when inspecting that fallback,
+and record the publication method in its release notes. Neither a local dry run
+nor provenance metadata alone establishes cryptographic attestation verification.

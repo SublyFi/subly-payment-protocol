@@ -4,8 +4,6 @@
  * vault yield via the Subly relayer. Payment uses the official @x402/svm client
  * and currently requires a Solana USDC exact rail with facilitator feePayer.
  *
- * Usage:
- *   pay fetch <url> [maxAmountRawUsdc]
  * Env:
  *   SUBLY_SIGNER_PROVIDER   local (default) | circle | privy; credentials
  *                           per provider — see src/client/signer-env.ts
@@ -116,9 +114,8 @@ try {
   if (error instanceof StandardX402PayError) {
     // detail carries the next step on approval_required refusals
     // (approvalId / approveUrl / expiresAtMs): paste approveUrl to the
-    // owner, then rerun the printed retry command. It must repeat the SAME
-    // client cap — approval-needing prices exceed the default cap, so
-    // dropping it would refuse with amount_exceeds_client_cap instead.
+    // owner, then rerun the printed retry command with the same request and
+    // client cap. Owner approval and the client's price limit are independent.
     const refusalApprovalId =
       error.reason === "approval_required"
         ? (error.detail as { approvalId?: string } | null)?.approvalId

@@ -132,7 +132,7 @@ if (submitted.txSignature !== null) {
 }
 if (submitted.status === "submitted") {
   fail(
-    "[deposit] broadcast but not yet confirmed — it may still land. Do NOT " +
+    "[deposit] submission outcome unresolved — it may have been broadcast and may still land. Do NOT " +
       `resubmit; run ${PAY_COMMAND} status ${submitted.depositId} with the same wallet, vault and relayer first`
   );
 }

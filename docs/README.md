@@ -11,7 +11,9 @@
 | Everyone | [Validation status](validation.md) · [Security model](security-model.md) · [Troubleshooting](troubleshooting.md) |
 | Maintainers | [Release process](../RELEASE.md) · [Dependency status](dependencies.md) |
 
-Detailed implementation references: [custody wallet providers](agent-wallet-providers.md), [spending mandates](spending-mandate-design.md). These describe internals; start with the guides above. Source and tests are authoritative where older design notes differ.
+For supported custody signers, see [wallet providers](agent-wallet-providers.md).
+The [original spending-mandate design](spending-mandate-design.md) is a historical
+record. Use the client guide and security model above for current owner controls.
 
 This project supports Solana **mainnet-beta USDC Kamino Earn vaults**. The detached local development API has no on-chain actions. It is not a devnet deployment of the Kamino integration.
 

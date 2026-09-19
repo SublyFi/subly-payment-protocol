@@ -2,11 +2,6 @@
 
 **Pay for x402 APIs with the yield from a Kamino USDC vault on Solana.**
 
-This guide targets **0.8.3**. A GitHub tag alone does not establish npm availability.
-Before following versioned install commands, run `npm view @subly_fi/pay@0.8.3 version`.
-If it is unavailable, use the [source checkout instructions](packages/pay/README.md#run-an-unpublished-source-checkout)
-to evaluate this candidate. Do not assume an older published client contains these fixes.
-
 [![CI](https://github.com/SublyFi/subly-payment-protocol/actions/workflows/ci.yml/badge.svg)](https://github.com/SublyFi/subly-payment-protocol/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/%40subly_fi%2Fpay)](https://www.npmjs.com/package/@subly_fi/pay)
 [![MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -63,7 +58,7 @@ Start with the [step-by-step client guide](packages/pay/README.md#quick-start), 
 With Node.js 24 or later installed, you can view the available commands without configuring a wallet:
 
 ```bash
-npx -y @subly_fi/pay@0.8.3 --help
+npx -y @subly_fi/pay@0.8.4 --help
 ```
 
 After configuration, follow the guide to review the vault, create an owner setup link, approve the policy, deposit, and check the budget before buying an API call. An approval page records permission; tell your chat agent you finished, or return to the terminal and continue the original command as instructed. A fresh deposit needs time to earn a spendable budget.

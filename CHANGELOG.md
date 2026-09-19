@@ -4,7 +4,18 @@ All notable changes to the repository and the published client are recorded here
 
 ## [Unreleased]
 
+## 0.8.4 — 2026-09-20
+
+- Make setup and owner-management continuation instructions use version-pinned `npx` commands, so users do not need a global `pay` installation.
+- Remove obsolete candidate-installation and superseded-release instructions from current onboarding guides. Clarify separate client and relayer installation, and list all thirteen MCP tools together.
+- Align browser, CLI and MCP wording with conditional initial-deposit approval, vault-specific revocation and unresolved submission outcomes. Update the bundled agent skill to the current payment result format and recovery procedure.
 - Wait up to 20 minutes for npm's post-publication scanning and registry availability, without changing dependency audit gates. Fail immediately on invalid metadata or permanent errors, and report prolonged unavailability instead of creating a release.
+
+Update the client for corrected terminal instructions and rebuild the relayer for
+the owner-page wording. Payment rules, dependencies
+and database schema are unchanged. Preserve the ledger and pending-payment files.
+Publication and verification are recorded separately in the release workflow and
+[validation status](docs/validation.md).
 
 ## 0.8.3 — 2026-09-20
 
@@ -26,7 +37,7 @@ establish a real-yield external payment or an independent audit.
 - Translate the wallet-provider and spending-mandate design references, demo guide, environment comments and script messages. Preserve the distinction between historical design proposals and implemented behavior.
 - Update navigation, package documentation and contribution guidance to use English consistently.
 
-This is a documentation and wording release. Payment behavior, dependencies and database schema are unchanged. Preserve pending-payment state when updating the client.
+This was a source-only documentation and wording release; npm publication did not complete, and 0.8.3 superseded it. Payment behavior, dependencies and database schema were unchanged.
 
 ## 0.8.1 — 2026-09-19
 
@@ -100,4 +111,4 @@ Compatibility: Node.js 24+ is now required. Withdrawal RPCs must support simulat
 - Published client baseline before the OSS release-readiness work.
 
 [0.6.2]: https://github.com/SublyFi/subly-payment-protocol/compare/pay-v0.6.1...pay-v0.6.2
-[Unreleased]: https://github.com/SublyFi/subly-payment-protocol/compare/pay-v0.8.3...HEAD
+[Unreleased]: https://github.com/SublyFi/subly-payment-protocol/compare/pay-v0.8.4...HEAD

@@ -5,7 +5,8 @@
 The release commit passed all 585 tests in CI, including disposable PostgreSQL
 16 and Docker Compose backup/restore, with no skips. Root/client type checks,
 builds, documentation links, container checks, and clean packed CLI installation
-on Linux, macOS and Windows passed. All thirteen MCP tools passed. Chromium
+on Linux, macOS and Windows passed. MCP startup and discovery of all thirteen
+tools passed. Chromium
 with a virtual WebAuthn authenticator verified reuse of the original credential
 for policy changes, recovery cancellation, revocation and reactivation.
 PostgreSQL reopening and injected write failures verified that owner actions and
@@ -37,8 +38,8 @@ During initial validation, the npm advisory endpoint returned maintenance HTTP
 The advisory service subsequently recovered for the GitHub checks: both
 production dependency audits passed with zero reported vulnerabilities. The
 published 0.8.3 passed clean registry installation, SHA-512 integrity,
-source-commit and provenance-metadata checks, CLI startup and all thirteen MCP
-tool checks before its GitHub release was created. The source commit is
+source-commit and provenance-metadata checks, CLI/MCP startup and discovery of
+all thirteen MCP tools before its GitHub release was created. The source commit is
 `de824384d7ab84d2adbbc27f352fe832a5c2ebca`. These provenance checks inspect
 registry metadata; they are not an independent cryptographic attestation
 verification. See the [release checks](https://github.com/SublyFi/subly-payment-protocol/actions/runs/35459211601)

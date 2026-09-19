@@ -10,6 +10,8 @@
  * Env:
  *   SUBLY_RELAYER_URL   Subly relayer API; default https://api.demo.sublyfi.com
  */
+import { PAY_COMMAND } from "../../../demo/cli-command.js";
+
 function fail(message: string): never {
   process.stderr.write(`${message}\n`);
   process.exit(1);
@@ -17,7 +19,7 @@ function fail(message: string): never {
 
 const arg = process.argv[2];
 if (arg === undefined) {
-  fail("Usage: pay setup-status <st_sessionId | setupUrl>");
+  fail(`Usage: ${PAY_COMMAND} setup-status <st_sessionId | setupUrl>`);
 }
 // Accept the full setupUrl too — agents often have only the pasted link.
 const match = arg.match(/st_[0-9a-f]+/i);

@@ -23,6 +23,7 @@ import { agentWalletSignerFromEnv } from "../src/client/signer-env.js";
 import { VaultFlowClient, VaultFlowClientError } from "../src/client/vault-flows.js";
 import { createRpc } from "../src/solana/rpc.js";
 import { fail, formatRawUsdc } from "./shared.js";
+import { PAY_COMMAND } from "./cli-command.js";
 
 const relayerBaseUrl =
   process.env.SUBLY_RELAYER_URL ??
@@ -32,7 +33,7 @@ const relayerBaseUrl =
 const amountRawUsdc = process.argv[2];
 if (amountRawUsdc === undefined || !/^[1-9]\d*$/.test(amountRawUsdc)) {
   fail(
-    "Usage: pay withdraw <amountRawUsdc> [apr_<approvalId>]  " +
+    `Usage: ${PAY_COMMAND} withdraw <amountRawUsdc> [apr_<approvalId>]  ` +
       "(positive integer, e.g. 1000000 = 1 USDC)"
   );
 }
@@ -86,7 +87,7 @@ try {
             message:
               "This withdrawal needs the owner's approval. Paste approveUrl " +
               "to the user; once they approve, retry: " +
-              `pay withdraw ${amountRawUsdc} ${details.approvalId ?? "<approvalId>"}`
+              `${PAY_COMMAND} withdraw ${amountRawUsdc} ${details.approvalId ?? "<approvalId>"}`
           },
           null,
           2
@@ -110,13 +111,13 @@ if (submitted.txSignature !== null) {
 if (submitted.status === "submitted") {
   fail(
     "[withdraw] broadcast but not yet confirmed — it may still land. Do NOT " +
-      `resubmit; run pay status ${submitted.withdrawalId} with the same wallet, vault and relayer first`
+      `resubmit; run ${PAY_COMMAND} status ${submitted.withdrawalId} with the same wallet, vault and relayer first`
   );
 }
 if (submitted.status !== "confirmed") {
   fail(
     `[withdraw] not confirmed (errorCode=${submitted.errorCode}); ` +
-      `run pay status ${submitted.withdrawalId} and ask the operator to reconcile it`
+      `run ${PAY_COMMAND} status ${submitted.withdrawalId} and ask the operator to reconcile it`
   );
 }
 console.log(

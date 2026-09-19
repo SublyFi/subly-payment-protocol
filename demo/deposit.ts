@@ -23,6 +23,7 @@ import { agentWalletSignerFromEnv } from "../src/client/signer-env.js";
 import { VaultFlowClient, VaultFlowClientError } from "../src/client/vault-flows.js";
 import { createRpc } from "../src/solana/rpc.js";
 import { fail, formatRawUsdc } from "./shared.js";
+import { PAY_COMMAND } from "./cli-command.js";
 
 const relayerBaseUrl =
   process.env.SUBLY_RELAYER_URL ??
@@ -32,7 +33,7 @@ const relayerBaseUrl =
 const amountRawUsdc = process.argv[2];
 if (amountRawUsdc === undefined || !/^[1-9]\d*$/.test(amountRawUsdc)) {
   fail(
-    "Usage: pay deposit <amountRawUsdc> [apr_<approvalId>]  " +
+    `Usage: ${PAY_COMMAND} deposit <amountRawUsdc> [apr_<approvalId>]  ` +
       "(positive integer, e.g. 60000000 = 60 USDC)"
   );
 }
@@ -91,7 +92,7 @@ try {
             message:
               "This deposit needs the owner's approval. Paste approveUrl to " +
               "the user; once they approve (Face ID / wallet sign), retry: " +
-              `pay deposit ${amountRawUsdc} ${details.approvalId ?? "<approvalId>"}`
+              `${PAY_COMMAND} deposit ${amountRawUsdc} ${details.approvalId ?? "<approvalId>"}`
           },
           null,
           2
@@ -107,7 +108,7 @@ try {
             setupRequired: true,
             message:
               "Deposits require a registered owner. Create a setup link " +
-              `(pay setup-link --initial-deposit ${amountRawUsdc}), paste ` +
+              `(${PAY_COMMAND} setup-link --initial-deposit ${amountRawUsdc}), paste ` +
               "the setupUrl to the user, wait for their Face ID, then " +
               "deposit again — the first deposit is pre-approved."
           },
@@ -132,13 +133,13 @@ if (submitted.txSignature !== null) {
 if (submitted.status === "submitted") {
   fail(
     "[deposit] broadcast but not yet confirmed — it may still land. Do NOT " +
-      `resubmit; run pay status ${submitted.depositId} with the same wallet, vault and relayer first`
+      `resubmit; run ${PAY_COMMAND} status ${submitted.depositId} with the same wallet, vault and relayer first`
   );
 }
 if (submitted.status !== "confirmed") {
   fail(
     `[deposit] not confirmed (errorCode=${submitted.errorCode}); ` +
-      `run pay status ${submitted.depositId} and ask the operator to reconcile it`
+      `run ${PAY_COMMAND} status ${submitted.depositId} and ask the operator to reconcile it`
   );
 }
 console.log(

@@ -4,6 +4,15 @@ All notable changes to the repository and the published client are recorded here
 
 ## [Unreleased]
 
+## 0.8.1 — 2026-09-19
+
+- Reorganize first-time setup into ordered user and operator guides with expected outcomes, Windows configuration, and clear approval and recovery steps.
+- Add Japanese getting-started documentation and Japanese/English setup prompts for Claude Code, Codex and ChatGPT. Prompts distinguish local execution from guided instructions, protect existing configuration and secrets, and require an explicit decision before real-funds operations.
+- Correct operator installation paths, file ownership, sponsor-key copying, Compose working directories and monitoring cron instructions.
+- Make CLI recovery commands copyable without a global install and pin them to the running package version. Owner pages now direct users back to their chat or terminal instead of promising automatic continuation.
+
+Upgrade the client for the corrected CLI guidance and rebuild the relayer for the owner-page wording. Payment rules, transaction behavior, dependencies and database schema are unchanged. Preserve pending-payment files.
+
 ## 0.8.0 — 2026-09-19
 
 - Prevent wallet synchronization from counting a submitted deposit or withdrawal as an external balance change. Reject stale chain snapshots when ledger accounting has changed during the read.
@@ -67,4 +76,4 @@ Compatibility: Node.js 24+ is now required. Withdrawal RPCs must support simulat
 - Published client baseline before the OSS release-readiness work.
 
 [0.6.2]: https://github.com/SublyFi/subly-payment-protocol/compare/pay-v0.6.1...pay-v0.6.2
-[Unreleased]: https://github.com/SublyFi/subly-payment-protocol/compare/pay-v0.7.2...HEAD
+[Unreleased]: https://github.com/SublyFi/subly-payment-protocol/compare/pay-v0.8.1...HEAD

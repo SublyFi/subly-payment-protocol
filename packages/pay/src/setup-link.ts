@@ -18,6 +18,7 @@
 import { agentWalletSignerFromEnv } from "../../../src/client/signer-env.js";
 import { VaultFlowClient, VaultFlowClientError } from "../../../src/client/vault-flows.js";
 import { createRpc } from "../../../src/solana/rpc.js";
+import { PAY_COMMAND } from "../../../demo/cli-command.js";
 
 function fail(message: string): never {
   process.stderr.write(`${message}\n`);
@@ -25,7 +26,7 @@ function fail(message: string): never {
 }
 
 const USAGE =
-  "Usage: pay setup-link [--initial-deposit <rawUsdc>] " +
+  `Usage: ${PAY_COMMAND} setup-link [--initial-deposit <rawUsdc>] ` +
   "[--approval-threshold <rawUsdc>] [--per-payment-cap <rawUsdc>] " +
   "[--daily-api-cap <rawUsdc>] [--daily-deposit-cap <rawUsdc>] [--ttl-days <days>]";
 

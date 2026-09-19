@@ -97,14 +97,19 @@ do not invent a receipt field or substitute the realization for the seller payme
 - `paid: true` with a successful HTTP status and payment receipt means the
   paid request completed. `paid: false` does not establish payment.
 - A refusal has `paid: false` and a `reason`:
-  - `insufficient_yield` → not enough vault yield accrued yet. This is normal;
-    tell the user to wait (yield accrues over time) — do NOT retry in a loop.
+  - `realize_failed` means yield realization was refused before submission.
+    Inspect `detail.error.code`; `insufficient_yield` means the available yield
+    does not cover this payment. Check the budget and wait rather than retrying
+    in a loop. Other causes need their own diagnosis.
   - `amount_exceeds_client_cap` → the price exceeds the cap. Only re-run with a
     higher cap if the user confirms the price is expected.
-  - `payment_outcome_unknown` → a previous external x402 attempt may already
-    have settled. Preserve the pending state and investigate the original
-    seller/facilitator outcome with the operator. Do not force a new payment
-    or delete state to bypass uncertainty.
+  - `payment_outcome_unknown` can refer to unfinished yield realization or
+    an external payment. Preserve state and inspect its stage. Follow the
+    recovery guide to resume the original withdrawal when supported; for
+    `external_outcome_unknown`, investigate the original seller/facilitator
+    outcome with the operator. Do not force a new payment or delete state.
+  - `realize_underfunded` means the realized amount was below the required
+    price. Preserve the operation evidence and reconcile with the operator.
   - `approval_required` → the price exceeds the owner's approval threshold;
     NOTHING was paid. The output carries an `approveUrl`, an `approvalId`,
     and a ready-made `retry` command: paste the approveUrl to the user, and

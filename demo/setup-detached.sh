@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Detached 予行演習のセットアップ: agent wallet 登録 -> liquidity policy 登録 ->
-# 手動 sync で position を seed -> signerProvider 付きで activate。
-# facilitator (detached) を起動した状態で、リポジトリルートから実行する:
+# Set up a detached rehearsal: register the agent wallet and liquidity policy,
+# seed the position through manual sync, then activate it with signerProvider.
+# With the detached facilitator running, execute from the repository root:
 #   bash demo/setup-detached.sh
 set -euo pipefail
 
@@ -28,10 +28,10 @@ post /v1/wallets/agent "{\"wallet\":\"$WALLET\",\"signingPolicyId\":\"demo\",\"s
 
 post /v1/admin/liquidity-policies '{"sellerClass":"default","expectedPaymentSizeRawUsdc":"10000","minInstantLiquidityRawUsdc":"0","targetBudgetIlliquidRate":1}'
 
-# 100 USDC 相当の shares + exchange rate 1.1 => spendable yield 10 USDC を seed
+# Seed shares worth 100 USDC at exchange rate 1.1 => 10 USDC spendable yield.
 post "/v1/wallets/$WALLET/sync" '{"totalSharesRaw":"100000000","exchangeRateScaled":"1100000000000","instantRedeemCapacityRawUsdc":"1000000000","principalBasisRawUsdc":"100000000","principalBasisSource":"manual_trusted_seed"}'
 
 post /v1/wallets/agent "{\"wallet\":\"$WALLET\",\"signingPolicyId\":\"demo\",\"signingMode\":\"non_interactive\",\"signerValidationMode\":\"structured_intent_transaction\",\"signerProvider\":\"local-keypair\",\"activateForPayments\":true}"
 
 echo
-echo "done: buyer を実行すると budget 表示 -> 402 -> prepare -> transaction_builder_unavailable まで進む"
+echo "done: run the buyer to display the budget, then reach 402 -> prepare -> transaction_builder_unavailable"

@@ -4,7 +4,7 @@ CLI and stdio MCP client for paying compatible x402 APIs with Kamino USDC vault 
 
 Version 0.8 is beta software and has not had an external security audit. Vault operations use real mainnet funds. Yield accounting and owner policies depend on your relayer operator. Read the [security model](https://github.com/SublyFi/subly-payment-protocol/blob/main/docs/security-model.md).
 
-[日本語の導入ガイド](https://github.com/SublyFi/subly-payment-protocol/blob/main/docs/getting-started.ja.md) · [Set up with an AI assistant](https://github.com/SublyFi/subly-payment-protocol/blob/main/docs/ai-setup-prompts.md)
+[Getting started](https://github.com/SublyFi/subly-payment-protocol/blob/main/docs/getting-started.md) · [Set up with an AI assistant](https://github.com/SublyFi/subly-payment-protocol/blob/main/docs/ai-setup-prompts.md)
 
 ## Quick start
 
@@ -18,11 +18,11 @@ Follow the steps in order. Every Subly command below uses `npx`; no repository c
 - Use a **dedicated agent wallet** with USDC on Solana mainnet. This wallet holds funds and signs transactions. The human owner's passkey or separate wallet approves spending controls. Supported custody signers are described under [Configuration](#configuration).
 
 ```sh
-npx -y @subly_fi/pay@0.8.1 --version
-npx -y @subly_fi/pay@0.8.1 --help
+npx -y @subly_fi/pay@0.8.2 --version
+npx -y @subly_fi/pay@0.8.2 --help
 ```
 
-The version should be `0.8.1`. A help screen alone does not check your wallet or endpoints.
+The version should be `0.8.2`. A help screen alone does not check your wallet or endpoints.
 
 ### 2. Prepare and fund the agent wallet
 
@@ -84,8 +84,8 @@ Use absolute paths valid where the client runs. Windows and WSL home directories
 For a custom operator catalogue, review and install the file, then set `SUBLY_VAULTS_FILE` to its absolute path using your shell's syntax above. `SUBLY_VAULT_ADDRESS` selects one listed vault. Configure this before checking the relayer; never install transaction trust anchors merely because a remote response says to.
 
 ```sh
-npx -y @subly_fi/pay@0.8.1 doctor
-npx -y @subly_fi/pay@0.8.1 vaults
+npx -y @subly_fi/pay@0.8.2 doctor
+npx -y @subly_fi/pay@0.8.2 vaults
 ```
 
 Continue when `doctor` returns `"ok": true` and the selected local vault matches the operator's catalogue. It checks configuration and reachability, not balance, simulation support, available yield or vault safety. Review the vault's curator, fees, minimum deposit and liquidity with the operator. `vaults` prints trusted local metadata, not a live balance.
@@ -95,7 +95,7 @@ Continue when `doctor` returns `"ok": true` and the selected local vault matches
 Use the same raw amount for setup and deposit. Amounts are six-decimal USDC integers: `1000000` = 1 USDC, `1010000` = 1.01 USDC, `10000` = 0.01 USDC.
 
 ```sh
-npx -y @subly_fi/pay@0.8.1 setup-link --initial-deposit 1010000
+npx -y @subly_fi/pay@0.8.2 setup-link --initial-deposit 1010000
 ```
 
 The result contains `sessionId` and `setupUrl`. Open `setupUrl` on your device, review the wallet, vault and limits, then approve with your passkey or owner wallet. Links expire in 10 minutes. Treat them as private capabilities: the first person completing initial setup becomes the owner for that wallet/vault.
@@ -103,7 +103,7 @@ The result contains `sessionId` and `setupUrl`. Open `setupUrl` on your device, 
 After approval, **return to this terminal**, replacing the placeholder with the returned ID:
 
 ```sh
-npx -y @subly_fi/pay@0.8.1 setup-status st_YOUR_SESSION_ID
+npx -y @subly_fi/pay@0.8.2 setup-status st_YOUR_SESSION_ID
 ```
 
 Continue only on `"status": "completed"`. `pending` means approval is unfinished; `expired` means create a fresh setup link. On first registration, `initialDepositApproval` should be present and approved. Deposit promptly: it lasts about 15 minutes. Browser approval saves authorization; it does not run a CLI command. With MCP, tell the agent that approval is complete so it can check and continue.
@@ -111,7 +111,7 @@ Continue only on `"status": "completed"`. `pending` means approval is unfinished
 Review policy options **before first registration**:
 
 ```sh
-npx -y @subly_fi/pay@0.8.1 setup-link --help
+npx -y @subly_fi/pay@0.8.2 setup-link --help
 ```
 
 **Current limitation:** another setup link does not update an existing active or revoked passkey mandate. CLI/MCP has no passkey policy-change, owner-recovery or revoke-reversal workflow. Ask the operator about the supported low-level procedure; do not assume a new link or credential can unlock it. Revocation also blocks relayer withdrawals. An existing wallet owner can re-sign where allowed, but replacement requires a separate deposit approval.
@@ -119,13 +119,13 @@ npx -y @subly_fi/pay@0.8.1 setup-link --help
 ### 5. Deposit and inspect the budget
 
 ```sh
-npx -y @subly_fi/pay@0.8.1 deposit 1010000
+npx -y @subly_fi/pay@0.8.2 deposit 1010000
 ```
 
 Success prints `status: confirmed`, a `depositId`, a transaction link and the confirmed amount. Keep the ID. For `submitted`, use the [status procedure](#check-an-interrupted-deposit-or-withdrawal); the transaction may still land, so do not deposit again.
 
 ```sh
-npx -y @subly_fi/pay@0.8.1 budget
+npx -y @subly_fi/pay@0.8.2 budget
 ```
 
 Inspect `spendableYieldRawUsdc`. A new deposit does **not** immediately provide a payment budget; principal is not spendable yield. Wait until yield covers the API price and vault fees, then check again. There is no guaranteed waiting time: performance, fees, deposited amount and liquidity matter. The 1.01 USDC example demonstrates setup and deposit, not an immediate paid call. A budget read can return the last synced view if refresh fails; live payment checks still decide whether it can proceed.
@@ -135,13 +135,13 @@ Inspect `spendableYieldRawUsdc`. A new deposit does **not** immediately provide 
 Obtain a real paid URL from its seller; the hostname below is a placeholder. Supported offers are **Solana mainnet USDC `exact`** with `extra.feePayer`. EVM, other tokens and unsponsored rails are refused. A seller name alone does not prove compatibility.
 
 ```sh
-npx -y @subly_fi/pay@0.8.1 fetch https://seller.example.com/paid-resource
+npx -y @subly_fi/pay@0.8.2 fetch https://seller.example.com/paid-resource
 ```
 
 The default client cap is **0.01 USDC**. An explicit cap of 0.02 USDC looks like this:
 
 ```sh
-npx -y @subly_fi/pay@0.8.1 fetch https://seller.example.com/paid-resource 20000
+npx -y @subly_fi/pay@0.8.2 fetch https://seller.example.com/paid-resource 20000
 ```
 
 The owner policy may impose stricter limits. A successful paid call returns `"paid": true`, an HTTP 2xx `status` and the API response `body`. `paid: false` is not a confirmed paid call; read its reason or HTTP response. If the endpoint did not require payment, no payment was made.
@@ -149,7 +149,7 @@ The owner policy may impose stricter limits. A successful paid call returns `"pa
 For `approval_required`, open the returned `approveUrl`, approve, return to the terminal, and repeat the **same URL, request and cap** with the returned approval ID:
 
 ```sh
-npx -y @subly_fi/pay@0.8.1 fetch https://seller.example.com/paid-resource 20000 apr_YOUR_APPROVAL_ID
+npx -y @subly_fi/pay@0.8.2 fetch https://seller.example.com/paid-resource 20000 apr_YOUR_APPROVAL_ID
 ```
 
 Replace the placeholder ID. For MCP, tell the agent approval is complete and ask it to resume the same operation with that ID. An unknown payment outcome is not an approval retry; follow [Recovery and troubleshooting](#recovery-and-troubleshooting).
@@ -159,19 +159,19 @@ Replace the placeholder ID. For MCP, tell the agent approval is complete and ask
 A withdrawal can include principal and is subject to liquidity, fees and owner policy. This requests 1 USDC back to the **same agent wallet**:
 
 ```sh
-npx -y @subly_fi/pay@0.8.1 withdraw 1000000
+npx -y @subly_fi/pay@0.8.2 withdraw 1000000
 ```
 
 Success prints `status: confirmed`, a `withdrawalId`, a transaction link and the confirmed amount. An approval-required result includes `approveUrl` and `approvalId`. After approval, repeat the same amount with that ID:
 
 ```sh
-npx -y @subly_fi/pay@0.8.1 withdraw 1000000 apr_YOUR_APPROVAL_ID
+npx -y @subly_fi/pay@0.8.2 withdraw 1000000 apr_YOUR_APPROVAL_ID
 ```
 
 Later deposits use the same approval pattern:
 
 ```sh
-npx -y @subly_fi/pay@0.8.1 deposit 1010000 apr_YOUR_APPROVAL_ID
+npx -y @subly_fi/pay@0.8.2 deposit 1010000 apr_YOUR_APPROVAL_ID
 ```
 
 Only use an ID issued for that exact operation. Moving withdrawn funds onward to another wallet is a separate action outside this CLI.
@@ -181,7 +181,7 @@ Only use an ID issued for that exact operation. Moving withdrawn funds onward to
 Keep the original `depositId` (`dep_...`) or `withdrawalId` (`wdr_...`). Replace this placeholder with its full ID:
 
 ```sh
-npx -y @subly_fi/pay@0.8.1 status wdr_YOUR_WITHDRAWAL_ID
+npx -y @subly_fi/pay@0.8.2 status wdr_YOUR_WITHDRAWAL_ID
 ```
 
 Use the original wallet, selected vault and relayer. Status requires **relayer 0.8.0 or newer** and reconciles with `?resubmit=false`: it does not prepare, sign or send another transaction. Wallet-auth message signing is required, but no client RPC call is needed.
@@ -206,7 +206,7 @@ Replace every example value. Use the **same absolute pending-state path as the C
   "mcpServers": {
     "subly": {
       "command": "npx",
-      "args": ["-y", "@subly_fi/pay@0.8.1", "mcp"],
+      "args": ["-y", "@subly_fi/pay@0.8.2", "mcp"],
       "env": {
         "SUBLY_RELAYER_URL": "https://your-relayer.example.com",
         "SOLANA_RPC_URL": "https://your-mainnet-rpc.example.com",
@@ -248,7 +248,7 @@ Only sellers offering **Solana mainnet USDC `exact`** with `extra.feePayer` are 
 - For interrupted yield realization, retry the same request with the same wallet, vault, relayer, method, body and headers. A saved checkpoint resumes the original withdrawal and reuses its confirmed funds; even `forceNewPayment` cannot replace an unfinished realization. If no withdrawal ID was saved or it ended unsuccessfully, ask the operator to reconcile it before a new payment.
 - Older pending records without a resumable withdrawal remain blocked for investigation. Keep the file; do not downgrade while a realization is pending.
 - Concurrent clients sharing the state file serialize payments with a `.lock` file. After a crash, stop **all** clients using it before removing only a stale `.lock`. Preserve the JSON. Another path or machine cannot coordinate with the old file.
-- For an interrupted manual deposit or withdrawal, use `npx -y @subly_fi/pay@0.8.1 status <intentId>` or MCP `check_subly_vault_operation` with the original ID and configuration, rather than repeating the financial operation.
+- For an interrupted manual deposit or withdrawal, use `npx -y @subly_fi/pay@0.8.2 status <intentId>` or MCP `check_subly_vault_operation` with the original ID and configuration, rather than repeating the financial operation.
 - A withdrawal preview failure is a refusal to sign. Check RPC simulation support and liquidity; do not disable validation.
 - Passkeys bind to the operator's domain. Use the original domain and credential. Lost-passkey recovery and existing passkey policy changes have no CLI/MCP command; contact the operator before attempting low-level recovery.
 

@@ -25,6 +25,14 @@ All three registry tarballs were downloaded and inspected at the pinned versions
 | `toml@4.2.0` | [BinaryMuse/toml-node](https://github.com/BinaryMuse/toml-node), MIT; [release history](https://github.com/BinaryMuse/toml-node/blob/master/CHANGELOG.md) | CommonJS entry and generated JavaScript parser, with the protected table handling and default maximum nesting depth of 500; no runtime dependencies. We pin 4.2.0 rather than adopting later changes unrelated to these fixes. |
 | `jayson@5.0.0` | [tedeh/jayson](https://github.com/tedeh/jayson), MIT | Browser client retains request generation, callbacks, batching, error propagation, and response parsing. The relevant functional change is its local crypto ID generator. Neither `stream-json` nor `uuid` remains in its dependency list. |
 
+## GitHub alias identity correction
+
+At review, GitHub's dependency-graph API reports the installed alias as `pkg:npm/bigint-buffer@1.1.5-exodus.1` rather than `pkg:npm/%40exodus/bigint-buffer@1.1.5-exodus.1`, incorrectly attaching the original package's native-code advisory. The registry tarball and lockfile `name` identify the reviewed Exodus fork. This false positive is separate from npm audit, which reports no vulnerabilities and has no advisory exceptions.
+
+The Dependency Review job runs `scripts/review-bigint-buffer-alias.mjs` before the upstream action. It inspects every tracked npm lockfile, requiring every bigint-buffer entry to match the reviewed fork's name, exact version, registry tarball URL, and SHA-512 integrity. Native packages, a new fork version, changed integrity, changed override, install hooks, unsupported package-manager locks, or missing npm locks fail the job. Only a successful match emits the single `GHSA-3gc7-fjrx-p6mg` correction for the action. Removing the aliases emits no exception. This does not permit that advisory for an arbitrary version or let the original native package return.
+
+`tests/dependency-review-alias.test.ts` verifies the allowed artifact and those rejection cases. Remove the correction when GitHub resolves the alias identity, or replace it with a verified complete dependency submission. The [current action consumes GitHub's comparison response](https://github.com/actions/dependency-review-action/blob/main/src/dependency-graph.ts), so upgrading the action alone does not repair the returned package identity. GitHub's [dependency submission API](https://docs.github.com/en/rest/dependency-graph/dependency-submission) can supply correct package URLs and takes precedence over static analysis; adopting it requires complete manifest coverage and write permission.
+
 ## Compatibility validation and limits
 
 `tests/dependency-compatibility.test.ts` exercises the installed resolver paths rather than separate copies of the replacements:

@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { setTimeout } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -13,8 +14,22 @@ const packageName = "@subly_fi/pay";
 const registry = "https://registry.npmjs.org";
 const packageDirectory = fileURLToPath(new URL("../packages/pay/", import.meta.url));
 const isNotFound = result => !result.error && !result.signal && result.status === 1 && parseJson(result.stdout)?.error?.code === "E404";
+const publicationWaitMs = 20 * 60 * 1000;
+
+function isAvailabilityPending(result) {
+  if (result.status === 0) return false;
+  const report = parseJson(result.stdout);
+  if (result.stdout?.trim() && (!report || typeof report !== "object" || Array.isArray(report) ||
+      !(report.error || report.code || report.statusCode || report.message))) return false;
+  // Explicit error codes outrank incidental text about an earlier registry outage.
+  const code = report?.error?.code ?? report?.code ?? result.error?.code;
+  if (code) return isNotFound(result) || isTransientNpmFailure({ error: { code } });
+  if (report?.statusCode !== undefined) return isTransientNpmFailure({ stdout: JSON.stringify({ statusCode: report.statusCode }) });
+  return isNotFound(result) || isTransientNpmFailure(result);
+}
 
 export function validatePublishedMetadata(metadata, { version, commit, requireProvenance = false }) {
+  assert(!metadata?.error, "Unexpected registry error in package metadata");
   assert.equal(metadata?.name, packageName, "Unexpected registry package");
   assert.equal(metadata.version, version, "Registry version does not match the requested version");
   assert.match(metadata.dist?.integrity ?? "", /^sha512-[A-Za-z0-9+/]+={0,2}$/, "Missing registry SHA-512 integrity");
@@ -27,17 +42,41 @@ export function validatePublishedMetadata(metadata, { version, commit, requirePr
   return metadata;
 }
 
-export async function readPublishedMetadata({ version, commit, requireProvenance = false, allowMissing = false, run = runNpm, ...retryOptions }) {
+export async function readPublishedMetadata({
+  version, commit, requireProvenance = false, allowMissing = false, run = runNpm,
+  now = () => performance.now(), sleep = setTimeout, log = console.error
+}) {
   assert.match(version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/, "An exact release version is required");
-  const result = await withNpmRetries(() => run([
+  const query = timeout => run([
     "view", `${packageName}@${version}`, "name", "version", "gitHead", "dist", "--json",
-    `--registry=${registry}`, "--fetch-retries=0", "--fetch-timeout=15000"
-  ]), {
-    ...retryOptions,
-    // A newly published immutable version may need a short registry propagation delay.
-    retryable: result => isTransientNpmFailure(result) || (!allowMissing && isNotFound(result))
-  });
-  if (allowMissing && isNotFound(result)) return null;
+    `--registry=${registry}`, "--fetch-retries=0", `--fetch-timeout=${timeout}`
+  ], { timeout });
+  let result;
+  if (allowMissing) {
+    // Before publishing, an explicit E404 is immediate; outages retain the short retry policy.
+    result = await withNpmRetries(() => query(15_000), {
+      sleep, log, retryable: result => !isNotFound(result) && isAvailabilityPending(result)
+    });
+    if (isNotFound(result)) return null;
+  } else {
+    // npm scans accepted publishes before making them installable, often for several minutes:
+    // https://github.blog/changelog/2026-07-28-npm-publish-time-malware-scanning-and-dual-use-metadata/
+    // This deadline includes requests and sleeps; it never changes the audit retry policy.
+    const deadline = now() + publicationWaitMs;
+    const timeoutError = () => new Error(`Registry verification timed out after 20 minutes for ${packageName}@${version}. npm may still be scanning, holding or blocking this version. Check its publication status before rerunning verification for the same commit; do not republish or move the tag.`);
+    for (;;) {
+      const remaining = deadline - now();
+      if (remaining <= 0) throw timeoutError();
+      result = await query(Math.max(1, Math.floor(Math.min(15_000, remaining))));
+      if (now() >= deadline) throw timeoutError();
+      // Successful responses must validate immediately, even if their diagnostics mention an outage.
+      if (!isAvailabilityPending(result)) break;
+      const delay = Math.min(30_000, deadline - now());
+      if (delay <= 0) throw timeoutError();
+      log(`Waiting for registry availability of ${packageName}@${version}; checking again in ${Math.ceil(delay / 1000)}s (20-minute limit).`);
+      await sleep(delay);
+    }
+  }
   assert(!result.error && !result.signal && result.status === 0, "Could not verify exact version availability in the npm registry");
   return validatePublishedMetadata(parseJson(result.stdout), { version, commit, requireProvenance });
 }

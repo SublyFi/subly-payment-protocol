@@ -1,8 +1,8 @@
 ---
 name: subly-pay
-description: Fetch a paywalled (HTTP 402) URL and pay for it automatically from the agent wallet's Kamino vault yield, within the relayer's recorded yield budget. Also manages the Subly vault (deposit/withdraw) and the human owner's spending mandate (setup link, Face ID approvals). Use when a request returns 402, when the user asks to buy/access a paid API or resource, or mentions Subly / x402 / yield-funded payment.
-version: 0.7.1
+description: Use Subly to pay compatible x402 APIs from Kamino vault yield and manage vault deposits, withdrawals and owner approvals. Use when the user asks to pay through Subly or manage their Subly wallet; an HTTP 402 response alone does not authorize a purchase.
 metadata:
+  version: 0.8.4
   openclaw:
     requires:
       bins:
@@ -11,8 +11,8 @@ metadata:
     primaryEnv: SUBLY_DEMO_AGENT_KEYPAIR_PATH
     envVars:
       - name: SUBLY_DEMO_AGENT_KEYPAIR_PATH
-        required: true
-        description: Path to the agent wallet keypair JSON (create with solana-keygen). The client loads the key locally; never share it.
+        required: false
+        description: Absolute path to the local agent wallet keypair JSON. Required for local signing; custody signers use their provider configuration instead. The client loads the key locally; never share it.
       - name: SUBLY_RELAYER_URL
         required: true
         description: HTTPS URL of a relayer operator the user trusts.
@@ -28,46 +28,48 @@ metadata:
 
 # Subly pay (yield-funded x402)
 
-This skill lets you fetch a paid HTTP resource and settle a standard x402
-Solana USDC `exact` 402 challenge automatically. Payment comes from the agent
-wallet's Kamino vault **yield**, as accounted for by the chosen relayer, and
-the Subly relayer refuses any payment the spendable yield cannot cover.
+Use the versioned client `npx -y @subly_fi/pay@0.8.4`. Supported sellers offer
+Solana mainnet USDC `exact` with `extra.feePayer`. The client realizes accrued
+vault yield through the chosen relayer, then pays through the seller's x402
+facilitator. These are separate transactions.
 
 ## When to use
 
-- A request to a URL returns HTTP 402, or the user asks you to buy / access
-  a paywalled API or resource served via Subly / x402.
-- Only pay for URLs the user actually intends to purchase. Treat the
-  per-payment cap as a hard limit.
+- Follow the user's chosen URL, amount cap, wallet and vault. Preserve any
+  existing specific authorization; a request to install Subly does not itself
+  authorize funding, deposits, withdrawals or paid API calls.
+- The default API payment cap is `10000` raw USDC (0.01 USDC). The owner's
+  policy may be stricter. Never raise either limit to make a test pass.
 
 ## One-time wallet setup (if not done yet)
 
-Use Node.js 24+. Set SUBLY_RELAYER_URL explicitly, run `npx -y @subly_fi/pay@0.7.1 doctor`, and review the vault before depositing. This is beta software without an external audit; principal value is not guaranteed.
+For first-time setup, follow the [client guide](../../packages/pay/README.md).
+Use Node.js 24+, a trusted operator's HTTPS URL, mainnet RPC and a reviewed
+vault catalogue. Keep CLI and MCP on the same wallet, vault, relayer and
+absolute `SUBLY_MCP_STATE_PATH`. Local keypairs, Circle and Privy are supported.
+Subly does not create or fund wallets. Key creation belongs in the user's
+private terminal: `solana-keygen new` displays a recovery phrase. Do not capture
+it through an AI tool or ask for its output. The client reads a local key into
+process memory to sign; it does not send that key to the relayer.
 
-Subly does NOT create wallets — bring your own Solana keypair. If
-`SUBLY_DEMO_AGENT_KEYPAIR_PATH` is not set or the wallet has no vault
-balance, guide the user through this once:
+Run `npx -y @subly_fi/pay@0.8.4 doctor` before setup. It checks configuration and
+reachability, not balances, simulation support or transaction success.
 
-1. Create a keypair (or export one from an existing wallet):
-   `solana-keygen new --no-bip39-passphrase -o ~/.subly/agent.json`
-   The printed public key is the agent wallet address. The private key
-   stays in that file — never share or print it.
-2. Point the skill at it: `export SUBLY_DEMO_AGENT_KEYPAIR_PATH=~/.subly/agent.json`
-3. Send USDC (Solana mainnet) to that address. Vault fees require a funded relayer sponsor; seller payment fees require its facilitator.
-4. Appoint the human owner and make the first deposit (one Face ID covers
-   both). Agree the spending limits and the first deposit amount in chat,
-   then create the setup link (the example is 1.01 USDC; minimums depend on the selected vault):
-   `npx -y @subly_fi/pay@0.7.1 setup-link --initial-deposit 1010000`
-   Paste the printed `setupUrl` to the user VERBATIM — it expires in 10
-   minutes and works once. The human opens it on their phone, reviews the
-   limits, and confirms with Face ID (passkey) or a Solana wallet signature.
-   After they say they finished, verify and deposit:
-   `npx -y @subly_fi/pay@0.7.1 setup-status <sessionId>` (the pasted setupUrl
-   works as the argument too) → status "completed"
-   `npx -y @subly_fi/pay@0.7.1 deposit 1010000` (the pre-approved first deposit
-   is picked up automatically; deposit also self-registers the wallet).
-5. Yield accrues over time; a payment needs the price plus the selected vault fees and relayer headroom in
-   spendable yield.
+Agree on the first deposit amount and policy, then use `setup-link
+--initial-deposit <rawAmount>`. Share the returned link privately with the owner.
+After the owner approves on the correct domain, check `setup-status <sessionId>`.
+Continue only when completed. First registration with a requested initial
+deposit can include an approved `initialDepositApproval`; otherwise use the
+normal separate deposit approval. Browser approval never executes a deposit.
+
+For an existing owner, use `owner-link` and `owner-status` for policy changes,
+reactivation, revocation or recovery cancellation. Use `recovery-status` to
+inspect access. Start the 72-hour `recovery-start` process only when requested;
+it cannot bypass an explicit owner revocation.
+
+A new deposit may have no spendable yield. Check `budget` and wait until the
+API price plus fees are covered; never reclassify principal as yield. This is
+beta software without an external audit. See the [validation record](../../docs/validation.md).
 
 ## How to run
 
@@ -75,56 +77,59 @@ Run the one-shot pay command (no clone — uses the published package via npx)
 with the resource URL:
 
 ```bash
-npx -y @subly_fi/pay@0.7.1 fetch "<url>"
+npx -y @subly_fi/pay@0.8.4 fetch "<url>"
 ```
 
 To set a tighter per-call cap (raw USDC, 6 decimals — e.g. 100 = 0.0001 USDC):
 
 ```bash
-npx -y @subly_fi/pay@0.7.1 fetch "<url>" 100
+npx -y @subly_fi/pay@0.8.4 fetch "<url>" 100
 ```
 
-The command prints a single JSON object on stdout. On success it contains
-`"paid": true` plus a `payment` object with `amountUsdc`, `payTo`,
-`paymentId`, and `solscanUrl` (the on-chain receipt). Report the delivered
-body and the receipt to the user.
+The command prints JSON. Paid success includes `paid: true`, an HTTP 2xx
+`status`, the response `body`, and a `payment` object with `amountRawUsdc`,
+`payTo`, `feePayer`, `realizedRawUsdc`, `realizeTxSignature` and
+`paymentTxSignature`. Report the delivered result and the returned signatures;
+do not invent a receipt field or substitute the realization for the seller payment.
 
 ## Reading the result
 
-- `paid: true` with a `payment` block → the resource was delivered and paid.
-  Show the content and the Solscan link.
-- `refused: true` with a `reason`:
+- `paid: true` with a successful HTTP status and payment receipt means the
+  paid request completed. `paid: false` does not establish payment.
+- A refusal has `paid: false` and a `reason`:
   - `insufficient_yield` → not enough vault yield accrued yet. This is normal;
     tell the user to wait (yield accrues over time) — do NOT retry in a loop.
   - `amount_exceeds_client_cap` → the price exceeds the cap. Only re-run with a
     higher cap if the user confirms the price is expected.
   - `payment_outcome_unknown` → a previous external x402 attempt may already
-    have settled. Do not blindly re-pay; report the message and ask the user
-    before using `SUBLY_PAY_FORCE_NEW_PAYMENT=1`.
+    have settled. Preserve the pending state and investigate the original
+    seller/facilitator outcome with the operator. Do not force a new payment
+    or delete state to bypass uncertainty.
   - `approval_required` → the price exceeds the owner's approval threshold;
     NOTHING was paid. The output carries an `approveUrl`, an `approvalId`,
     and a ready-made `retry` command: paste the approveUrl to the user, and
-    once they approved (Face ID / wallet sign), run the `retry` command
-    exactly as printed. It repeats the SAME cap — approval-needing prices
-    exceed the default cap, so dropping it would refuse with
-    `amount_exceeds_client_cap`:
-    `npx -y @subly_fi/pay@0.7.1 fetch "<url>" <sameMaxAmountRawUsdc> apr_<approvalId>`
+    once they approve with their passkey or owner wallet, run the `retry`
+    command for the same request. Preserve its URL, method, body, headers
+    and cap rather than creating a different purchase:
+    `npx -y @subly_fi/pay@0.8.4 fetch "<url>" <sameMaxAmountRawUsdc> apr_<approvalId>`
   - `state_persist_failed` → the local pending-payment marker could not be
     stored. Do not retry until the state path/disk issue is fixed.
 
 ## Deposits and withdrawals
 
-- `npx -y @subly_fi/pay@0.7.1 deposit <amountRawUsdc> [apr_<approvalId>]`
-- `npx -y @subly_fi/pay@0.7.1 withdraw <amountRawUsdc> [apr_<approvalId>]`
+- `npx -y @subly_fi/pay@0.8.4 deposit <amountRawUsdc> [apr_<approvalId>]`
+- `npx -y @subly_fi/pay@0.8.4 withdraw <amountRawUsdc> [apr_<approvalId>]`
 
-Deposits move principal into DeFi risk, so they require the human owner's
-approval. If the output contains `"approvalRequired": true`, paste the
+Deposits require owner approval by default; the active mandate controls the
+deposit and withdrawal policy. If the output contains `"approvalRequired": true`, paste the
 `approveUrl` to the user and retry with the printed `apr_...` id once they
 approved. If it contains `"setupRequired": true`, run the owner onboarding
-(setup-link) from the wallet-setup section first — its initial deposit is
-pre-approved by the same single Face ID. Withdrawals are normally automatic
-(they exit risk back to the agent wallet); the same approvalRequired flow
-applies only when the owner's mandate opts into withdrawal approval.
+(setup-link) from the wallet-setup section first. Confirm any initial-deposit
+approval before relying on it. For `submitted` or an interrupted operation,
+keep its original `dep_...` / `wdr_...` ID and use
+`npx -y @subly_fi/pay@0.8.4 status <intentId>`. Submission may be unresolved;
+do not prepare another operation. Follow the [recovery guide](../../packages/pay/README.md#recovery-and-troubleshooting)
+for interrupted yield realization or an unknown external payment.
 
 ## Guardrails
 

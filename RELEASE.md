@@ -16,13 +16,11 @@ The relayer is distributed as tagged source and a source-built Docker image. `@s
 Tag the merged commit as `pay-v<package version>`. The release workflow calls the full reusable CI workflow (PostgreSQL, client tarball/MCP, Docker, audit) before publishing. npm uses GitHub OIDC trusted publishing; configure the package's trusted publisher as organization `SublyFi`, repository `subly-payment-protocol`, workflow filename `release-pay.yml`. Node 24's npm supports this flow. No long-lived npm token is stored in GitHub. Prepare source changes as a new version; an existing public tag always refers to its original commit.
 
 ```bash
-git tag -a pay-v0.8.3 -m "Subly 0.8.3"
-git push origin pay-v0.8.3
+git tag -a pay-v0.8.4 -m "Subly 0.8.4"
+git push origin pay-v0.8.4
 ```
 
 The publisher checks tag/version equality and uses `npm publish --access public --provenance`. If publication fails, inspect the workflow and npm trusted-publisher settings; do not move an existing public tag. Re-run the failed job after fixing configuration or after an upstream outage ends. Publishing the same npm version twice is not possible. To resume after publication succeeded but verification failed, the workflow skips a second publish only when the registry version has the same `gitHead`, valid integrity metadata and npm provenance metadata. Any different commit or malformed registry response blocks the job.
-
-The `pay-v0.8.2` tag was created before these workflow changes, and its initial release run stopped at npm's audit maintenance response before publication. Re-running that tag uses its original workflow. Do not retag it to pick up newer source or retry logic; ship the corrected source under a new version.
 
 Verify trusted publishing with an actual version release through this workflow and then verify its registry provenance. Saving the npm settings, `npm whoami`, and `npm publish --dry-run` do not prove publishing works. Use npm CLI's supported OIDC handling; never log or persist exchanged credentials in custom diagnostic scripts.
 

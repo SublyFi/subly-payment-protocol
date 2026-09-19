@@ -5,8 +5,6 @@
  * mandateHash and (when an initial deposit was bundled) its pre-approved
  * approvalId, valid ~15 minutes — deposit promptly.
  *
- * Usage:
- *   pay setup-status <st_sessionId | setupUrl>
  * Env:
  *   SUBLY_RELAYER_URL   Subly relayer API; default https://api.demo.sublyfi.com
  */

@@ -43,29 +43,34 @@ before owner setup. All subsequent tools use that vault until changed. \
 Selection never moves existing funds; set up a separate mandate for each vault. \
 Never select or switch vaults automatically based on APY.
 
-One-time setup: the operator needs a Solana agent wallet. Subly does NOT \
-create wallets; either make a local keypair with \`solana-keygen new -o \
-agent.json\` (or export one from an existing wallet) and point \
-SUBLY_DEMO_AGENT_KEYPAIR_PATH at it, or use a custody wallet — set \
+One-time setup: the user needs a dedicated Solana agent wallet. Subly does NOT \
+create wallets. Have the user create a local keypair in their private terminal \
+and set SUBLY_DEMO_AGENT_KEYPAIR_PATH to its absolute path. \
+\`solana-keygen new\` prints a recovery phrase: never run it through an AI tool \
+that captures output or ask the user to paste its output. Preserve existing \
+key files. Alternatively, use a custody wallet — set \
 SUBLY_SIGNER_PROVIDER=circle (Circle developer-controlled wallet: \
 CIRCLE_API_KEY, CIRCLE_ENTITY_SECRET, CIRCLE_WALLET_ID) or =privy (Privy \
 server wallet incl. agentic/owner-key wallets: PRIVY_APP_ID, \
 PRIVY_APP_SECRET, PRIVY_WALLET_ID, plus PRIVY_AUTHORIZATION_KEY for \
-owner-key wallets). With a \
-local keypair the private key never leaves that file; with a custody \
-provider it never enters this machine at all. Then fund the wallet with \
-USDC on Solana mainnet — a funded relayer sponsors vault transaction fees, which \
-do not require agent SOL.
+owner-key wallets). The local signer loads its key into the client process \
+for signing and does not send it to the relayer. Custody signing happens at \
+the configured provider. Fund the wallet with USDC on Solana mainnet only \
+with the user's authorization; a funded relayer sponsors vault transaction \
+fees, which do not require agent SOL.
 
-Owner (human) onboarding: deposits require the human owner's approval \
+Owner (human) onboarding: deposits require the human owner's approval by default \
 (Face ID / wallet signature). During the first deposit conversation, agree \
 the spending limits and the first deposit amount in chat, then call \
 create_subly_setup_link and paste the returned setupUrl to the user AS IS \
 (it expires in 10 minutes). The human opens it on their phone, reviews, and \
-confirms once — that single confirmation activates the spending mandate AND \
-pre-approves the first deposit. Poll check_subly_setup(sessionId) after the \
-user says they finished, then call deposit_to_subly_vault (the pre-approved \
-first deposit is picked up automatically).
+confirms. This activates the mandate; first registration also pre-approves \
+the deposit only when initialDepositRawUsdc was included. Call \
+check_subly_setup(sessionId) after the user says they finished. Confirm \
+completed status and inspect initialDepositApproval before the authorized \
+deposit. An approved, unexpired matching amount is picked up automatically; \
+otherwise follow the separate deposit approval flow. Owner replacements do \
+not issue an initial-deposit approval.
 
 From there the agent can do everything with these tools:
 1. deposit_to_subly_vault(amountRawUsdc) puts wallet USDC into the vault \
@@ -73,8 +78,8 @@ From there the agent can do everything with these tools:
 If it returns approvalRequired, paste the approveUrl to the user and retry \
 with the approvalId after they approve; if it returns setupRequired, run \
 the owner onboarding above first.
-2. get_subly_yield_budget() shows the principal, position value, and the \
-spendable yield a payment can use right now.
+2. get_subly_yield_budget() shows recorded principal, position value and \
+spendable yield. Payment preparation rechecks whether a payment can proceed.
 3. fetch_with_subly_payment(url) GETs or POSTs a paid resource from a compatible \
 x402 seller (e.g. Nansen): it realizes just enough yield to the agent's USDC \
 ATA and pays the seller's Solana USDC exact challenge, returning the body plus \
@@ -196,7 +201,9 @@ export function createMcpPaymentServer(
               "verbatim — it expires in 10 minutes and works once. The human " +
               "opens it on their phone and confirms with Face ID (passkey) " +
               "or a Solana wallet signature; that single confirmation " +
-              "activates the mandate AND pre-approves the initial deposit. " +
+              "activates the mandate. First registration pre-approves the " +
+              "deposit only when initialDepositRawUsdc was included; " +
+              "owner replacements need a separate deposit approval. " +
               "The page is confirm-only: to change values, agree in chat " +
               "and create a new link.",
             inputSchema: {
@@ -254,8 +261,8 @@ export function createMcpPaymentServer(
               "Check whether the human completed a Subly setup link. Call " +
               "after the user says they finished (or to verify before " +
               "depositing). Returns pending / completed / expired; on " +
-              "completed it includes the mandateHash and, when an initial " +
-              "deposit was bundled, its pre-approved approvalId (valid ~15 " +
+              "completed it includes the mandateHash and, on first " +
+              "registration with an initial deposit, its approvalId (valid ~15 " +
               "minutes — deposit promptly).",
             inputSchema: {
               type: "object",
@@ -281,11 +288,11 @@ export function createMcpPaymentServer(
               "Deposit USDC from the agent wallet into the Subly/Kamino vault " +
               "so it starts earning the yield that funds x402 payments. The " +
               "transaction fee is sponsored — the agent wallet needs USDC " +
-              "only, never SOL. The vault minimum is just over 1 USDC: " +
-              "share rounding refuses exactly 1000000 raw, so deposit e.g. " +
-              "1010000 (1.01 USDC) or more. The deposited amount becomes " +
-              "protected principal: payments can only ever spend the yield " +
-              "on top of it. Deposits require the human owner's approval: " +
+              "only, never SOL. The minimum and share rounding depend on " +
+              "the selected vault; use its reviewed minimum. The deposited " +
+              "amount becomes recorded principal, and the relayer limits " +
+              "payments to recorded yield above it. Deposits require the " +
+              "human owner's approval by default: " +
               "a pre-approved amount (e.g. the setup link's initial deposit) " +
               "is used automatically; otherwise the result contains an " +
               "approveUrl — paste it to the user and retry with the " +
@@ -523,8 +530,8 @@ export function createMcpPaymentServer(
           solscanUrl,
           stillConfirming: true,
           warning:
-            "the transaction was broadcast but had not confirmed before the " +
-            "poll timeout. Do NOT submit this deposit/withdrawal again — it " +
+            "The submission outcome is unresolved; the transaction may have " +
+            "been broadcast. Do NOT submit this deposit/withdrawal again — it " +
             "may still confirm and moving the funds twice is not what the " +
             "user asked for. Call check_subly_vault_operation with the " +
             "original depositId or withdrawalId, keeping the same wallet, " +
@@ -665,8 +672,11 @@ export function createMcpPaymentServer(
             instructions:
               "Paste setupUrl to the user verbatim (expires in 10 minutes, " +
               "single-use). After they confirm on their device, call " +
-              `${SETUP_STATUS_TOOL_NAME} with this sessionId; when completed, ` +
-              "run the first deposit — its approval is picked up automatically."
+              `${SETUP_STATUS_TOOL_NAME} with this sessionId. Confirm completed ` +
+              "status and inspect initialDepositApproval before the authorized " +
+              "deposit. A matching approved, unexpired initial deposit is " +
+              "picked up automatically; otherwise use the separate deposit " +
+              "approval flow. Owner replacements do not pre-approve a deposit."
           });
         } catch (error) {
           return vaultFlowFailure(error);
@@ -759,8 +769,9 @@ export function createMcpPaymentServer(
               message:
                 "Deposits require a registered owner. Run the onboarding: " +
                 `agree limits + first deposit in chat, call ${SETUP_TOOL_NAME}, ` +
-                "and paste the setupUrl to the user. The setup's initial " +
-                "deposit is pre-approved with the same single Face ID."
+                "including the agreed initialDepositRawUsdc, and paste the " +
+                "setupUrl to the user. After approval, check completed status " +
+                "and the initialDepositApproval before depositing."
             });
           }
         }

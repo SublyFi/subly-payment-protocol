@@ -2,14 +2,9 @@
  * Creates the one-time owner-onboarding setup link for this agent wallet's
  * Subly spending mandate. Paste the printed setupUrl into the chat verbatim:
  * the human opens it on their phone and confirms once with Face ID (passkey)
- * or a Solana wallet signature — that single confirmation activates the
- * mandate AND pre-approves the initial deposit. Values are confirm-only:
- * to change them, create a new link.
- *
- * Usage:
- *   pay setup-link [--initial-deposit <rawUsdc>] [--approval-threshold <rawUsdc>]
- *                  [--per-payment-cap <rawUsdc>] [--daily-api-cap <rawUsdc>]
- *                  [--daily-deposit-cap <rawUsdc>] [--ttl-days <days>]
+ * or a Solana wallet signature. First registration activates the mandate
+ * and, if requested, pre-approves the initial deposit. Existing owners use
+ * owner-link to review policy changes with their current credential.
  * Env:
  *   SUBLY_SIGNER_PROVIDER   local (default) | circle | privy; credentials
  *                           per provider — see src/client/signer-env.ts
@@ -104,10 +99,11 @@ try {
       {
         ...created,
         instructions:
-          "Paste setupUrl to the user verbatim (expires in 10 minutes, " +
-          "single-use). After they confirm on their device, check with: " +
-          `pay setup-status ${created.sessionId} — when completed, run the ` +
-          "first deposit; its approval is picked up automatically."
+          "Open setupUrl and review the policy (expires in 10 minutes, " +
+          "single-use). After approving on your device, check with: " +
+          `${PAY_COMMAND} setup-status ${created.sessionId}. ` +
+          "When completed, submit the deposit separately. If you requested an initial " +
+          "deposit, use that same amount; its approved authorization is picked up automatically."
       },
       null,
       2

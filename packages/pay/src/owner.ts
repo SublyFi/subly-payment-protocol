@@ -1,6 +1,7 @@
 import { agentWalletSignerFromEnv } from "../../../src/client/signer-env.js";
 import { VaultFlowClient } from "../../../src/client/vault-flows.js";
 import { createRpc } from "../../../src/solana/rpc.js";
+import { PAY_COMMAND } from "../../../demo/cli-command.js";
 
 const [command, ...args] = process.argv.slice(2);
 const flags: Record<string, string> = {
@@ -55,7 +56,7 @@ if (command === "owner-link") {
     } else throw new Error(`Unrecognized owner-link flag: ${flag}`);
   }
 } else if (command === "owner-status") {
-  if (args.length !== 1) throw new Error("Usage: pay owner-status <st_sessionId>");
+  if (args.length !== 1) throw new Error(`Usage: ${PAY_COMMAND} owner-status <st_sessionId>`);
   sessionId = args[0];
   if (!/^st_[0-9a-f]{32}$/.test(sessionId!)) throw new Error("Provide the original st_ session ID (32 lowercase hexadecimal characters)");
 } else if (command === "recovery-start" || command === "recovery-status") {
@@ -67,14 +68,20 @@ const client = new VaultFlowClient({ signer,
   relayerBaseUrl: process.env.SUBLY_RELAYER_URL ?? process.env.SUBLY_FACILITATOR_URL ?? "https://api.demo.sublyfi.com",
   rpc: createRpc(process.env.SOLANA_RPC_URL ?? "https://api.mainnet-beta.solana.com") });
 
-const result = command === "owner-link"
-  ? { ...await client.createOwnerSession({
+let result;
+if (command === "owner-link") {
+  const created = await client.createOwnerSession({
       ...(Object.keys(policy).length ? { policy } : {}),
-      ...(mandateTtlDays === undefined ? {} : { mandateTtlDays }) }),
+      ...(mandateTtlDays === undefined ? {} : { mandateTtlDays }) });
+  result = { ...created,
     instructions: "Open ownerUrl on the original relayer domain and approve with the current owner credential. " +
       "Review the proposed policy, reactivate your revoked mandate, revoke access, or cancel recovery. " +
-      "The link expires in 10 minutes. Then check owner-status with this sessionId." }
-  : command === "owner-status" ? await client.getOwnerSession(sessionId!)
-  : command === "recovery-start" ? await client.startOwnerRecovery()
-  : await client.getOwnerStatus();
+      `The link expires in 10 minutes. Then run ${PAY_COMMAND} owner-status ${created.sessionId}.` };
+} else if (command === "owner-status") {
+  result = await client.getOwnerSession(sessionId!);
+} else if (command === "recovery-start") {
+  result = await client.startOwnerRecovery();
+} else {
+  result = await client.getOwnerStatus();
+}
 console.log(JSON.stringify(result, null, 2));

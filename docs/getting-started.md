@@ -1,6 +1,6 @@
 # Getting started with Subly
 
-Subly is open-source software that lets an agent pay compatible APIs using yield from a Kamino USDC vault on Solana. A vault is where the USDC is invested. **Version 0.8.3 is beta software** and has not had an external security audit. Mainnet deposits and withdrawals use real funds; neither principal nor yield is guaranteed.
+Subly is open-source software that lets an agent pay compatible APIs using yield from a Kamino USDC vault on Solana. A vault is where the USDC is invested. **Version 0.8.4 is beta software** and has not had an external security audit. Mainnet deposits and withdrawals use real funds; neither principal nor yield is guaranteed.
 
 Choose how much infrastructure you want to manage.
 
@@ -11,7 +11,7 @@ Choose how much infrastructure you want to manage.
 | Explore the API without funds | [Local development](../README.md#try-it-locally) | A detached API; deposits, withdrawals and payments are unavailable |
 | Contribute to the implementation | [Contributor guide](../CONTRIBUTING.md) | Development environment and tests |
 
-The official repository is [SublyFi/subly-payment-protocol](https://github.com/SublyFi/subly-payment-protocol). This guide targets 0.8.3. Verify both `pay-v0.8.3` and npm availability before using a published release. Until then, use the reviewed checkout's [source-build instructions](../packages/pay/README.md#run-an-unpublished-source-checkout). The [client guide](../packages/pay/README.md) and [operator guide](../deploy/README.md) contain the canonical commands and configuration.
+The official repository is [SublyFi/subly-payment-protocol](https://github.com/SublyFi/subly-payment-protocol). This guide targets 0.8.4. The [client guide](../packages/pay/README.md) and [operator guide](../deploy/README.md) contain the installation commands and configuration. See the [validation records](validation.md) for completed checks and their scope.
 
 ## Use an existing relayer
 
@@ -33,10 +33,10 @@ Create new keys in your own terminal, outside AI output capture. `solana-keygen 
 
 The path to a first payment is:
 
-1. **Configure and check the connection.** Pin version 0.8.3. Run `npx -y @subly_fi/pay@0.8.3 doctor`, check the vault list, and verify tool discovery if using MCP. Keep the wallet, vault, relayer and pending file path consistent between CLI and MCP. Configuration locations and JSON formats depend on the host app.
-2. **Register your spending policy.** Choose the vault, initial deposit amount, limits, approval conditions and expiry, then create a setup link. Review it on the correct operator domain and approve personally with your passkey or owner wallet. Return to chat and tell the assistant you have approved so it can call `check_subly_setup`. From the CLI, use `npx -y @subly_fi/pay@0.8.3 setup-status <sessionId>`. Asking an assistant to set up Subly does not replace your approval.
+1. **Configure and check the connection.** Pin version 0.8.4. Run `npx -y @subly_fi/pay@0.8.4 doctor`, check the vault list, and verify tool discovery if using MCP. Keep the wallet, vault, relayer and pending file path consistent between CLI and MCP. Configuration locations and JSON formats depend on the host app.
+2. **Register your spending policy.** Choose the vault, initial deposit amount, limits, approval conditions and expiry, then create a setup link. Review it on the correct operator domain and approve personally with your passkey or owner wallet. Return to chat and tell the assistant you have approved so it can call `check_subly_setup`. From the CLI, use `npx -y @subly_fi/pay@0.8.4 setup-status <sessionId>`. Asking an assistant to set up Subly does not replace your approval.
 3. **Deposit an amount you authorized.** Obtain mainnet USDC, confirm the vault and amount, then make the deposit. Initial setup can include deposit approval, but execution is a separate step. Example amounts are not recommendations. `1000000` raw USDC equals 1 USDC.
-4. **Wait for spendable yield.** A new deposit does not necessarily create a payment budget immediately. Use `npx -y @subly_fi/pay@0.8.3 budget` to check that spendable yield covers the price and fees. Repeated retries do not produce yield.
+4. **Wait for spendable yield.** A new deposit does not necessarily create a payment budget immediately. Use `npx -y @subly_fi/pay@0.8.4 budget` to check that spendable yield covers the price and fees. Repeated retries do not produce yield.
 5. **Pay a compatible API.** The seller must offer x402 Solana mainnet USDC `exact` with `extra.feePayer`. Arbitrary URLs and other chains are not supported. The default client cap is 0.01 USDC per payment; your owner policy may be stricter.
 6. **Withdraw when needed.** A withdrawal can include principal and returns funds to the same agent wallet. Liquidity, fees and owner approval conditions may limit it.
 
@@ -60,7 +60,7 @@ Selecting another vault does not move funds. Policies, principal and yield are s
 
 | Situation | Next step |
 | --- | --- |
-| Deposit or withdrawal awaits confirmation | Keep the original `dep_...` / `wdr_...` ID. Use `npx -y @subly_fi/pay@0.8.3 status <intentId>` or MCP `check_subly_vault_operation` with the original wallet, vault and relayer. Relayer 0.8.0+ supports reconciling without rebroadcasting |
+| Deposit or withdrawal awaits confirmation | Keep the original `dep_...` / `wdr_...` ID. Use `npx -y @subly_fi/pay@0.8.4 status <intentId>` or MCP `check_subly_vault_operation` with the original wallet, vault and relayer. Relayer 0.8.0+ supports reconciling without rebroadcasting |
 | Payment stops while realizing yield | Preserve pending JSON and follow the [recovery procedure](../packages/pay/README.md#recovery-and-troubleshooting) to resume or reconcile the original operation |
 | External API payment outcome is unknown | Do not pay again. Check the original outcome with the seller, facilitator and operator |
 | `insufficient_yield` | Check spendable yield and wait. Do not reclassify principal as a payment budget |

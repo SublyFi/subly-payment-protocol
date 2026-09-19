@@ -1,7 +1,7 @@
 # AI setup prompts
 
-These prompts target **Subly 0.8.3**. This source checkout prepares that candidate;
-verify registry publication before following the release prompts. If unavailable,
+These prompts target **Subly 0.8.3**. Verify registry publication before
+following the release prompts. If unavailable,
 evaluate the reviewed [source build](../packages/pay/README.md#run-an-unpublished-source-checkout).
 Choose your route in the [getting started guide](getting-started.md), then copy
 the appropriate prompt into your assistant. You can leave placeholders as `[unknown]`.

@@ -32,12 +32,15 @@ transaction was sent and no principal baseline was changed. Actual yield-funded
 external payment remains outstanding; it must wait for adequate real yield and
 an authorized operation. An independent security audit also remains outstanding.
 
-The npm advisory endpoint returned maintenance HTTP 503. Both new audit gates
-retried four times and correctly refused to approve release. The latest verified
-published version was 0.8.1; its clean registry installation, SHA-512 integrity,
-CLI and nine MCP tools passed. The 0.8.3 candidate has not been published. Its
-release workflow will verify exact registry installation before creating a
-GitHub release; a source tag by itself must not be presented as npm availability.
+During initial validation, the npm advisory endpoint returned maintenance HTTP
+503. Both new audit gates retried four times and correctly refused release.
+The advisory service subsequently recovered for the GitHub checks: both
+production dependency audits passed with zero reported vulnerabilities. The
+previously published 0.8.1 also passed a clean registry installation, SHA-512
+integrity, CLI and nine MCP tool checks. The 0.8.3 release workflow verifies its
+exact registry installation before creating a GitHub release; a source tag by
+itself must not be presented as npm availability. See [release status](https://github.com/SublyFi/subly-payment-protocol/actions/workflows/release-pay.yml)
+for the actual publication outcome.
 
 ## 0.8.0 verification — 2026-09-19
 

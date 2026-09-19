@@ -79,7 +79,7 @@ export async function verifyRegistryInstall(metadata) {
     const client = new Client({ name: "registry-release-verification", version: "1.0.0" });
     await client.connect(transport, { timeout: 15_000 });
     const { tools } = await client.listTools({}, { timeout: 15_000 });
-    const [major, minor, patch] = metadata.version.split(".").map(Number);
+    const [major, minor, patch] = metadata.version.split("-")[0].split(".").map(Number);
     const ownerTools = major > 0 || minor > 8 || (minor === 8 && patch >= 3)
       ? ["create_subly_owner_link", "check_subly_owner_session", "get_subly_owner_status", "start_subly_owner_recovery"] : [];
     for (const name of ["list_subly_vaults", "select_subly_vault", "create_subly_setup_link", "check_subly_setup", "check_subly_vault_operation", "deposit_to_subly_vault", "get_subly_yield_budget", "withdraw_from_subly_vault", "fetch_with_subly_payment", ...ownerTools]) {

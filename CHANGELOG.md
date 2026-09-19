@@ -4,7 +4,7 @@ All notable changes to the repository and the published client are recorded here
 
 ## [Unreleased]
 
-### 0.8.3 candidate
+## 0.8.3 — 2026-09-20
 
 - Preserve confirmed deposit and withdrawal receipts when a delayed simulation or status request fails. Reconcile ambiguous submissions by their existing signature; keep them pending until receipt or expiry evidence is available. Add concurrent submit/recovery/expiry regression tests for both operations.
 - Add owner management links, browser reuse of the existing passkey or wallet, and CLI/MCP commands for policy updates, reactivation, revocation, recovery cancellation and the existing 72-hour lost-credential recovery process. Preserve policy fields and expiry unless changed explicitly. Stale management links fail closed; the agent cannot override an owner's revocation.
@@ -14,8 +14,8 @@ All notable changes to the repository and the published client are recorded here
 Upgrade the relayer and client together. Preserve the ledger and pending-payment
 files. No database schema migration is needed. A failed simulation after durable
 submission may now remain `submitted` until reconciliation; check the original
-intent instead of repeating the operation. This candidate is not evidence of
-completed npm publication, a real-yield external payment, or an independent audit.
+intent instead of repeating the operation. Release availability is verified by the publishing workflow. These checks do not
+establish a real-yield external payment or an independent audit.
 
 ## 0.8.2 — 2026-09-20
 

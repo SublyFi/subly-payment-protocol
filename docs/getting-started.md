@@ -11,7 +11,7 @@ Choose how much infrastructure you want to manage.
 | Explore the API without funds | [Local development](../README.md#try-it-locally) | A detached API; deposits, withdrawals and payments are unavailable |
 | Contribute to the implementation | [Contributor guide](../CONTRIBUTING.md) | Development environment and tests |
 
-The official repository is [SublyFi/subly-payment-protocol](https://github.com/SublyFi/subly-payment-protocol). This guide describes the 0.8.3 source candidate. Verify both `pay-v0.8.3` and npm availability before using a published release. Until then, use the reviewed checkout's [source-build instructions](../packages/pay/README.md#run-an-unpublished-source-checkout). The [client guide](../packages/pay/README.md) and [operator guide](../deploy/README.md) contain the canonical commands and configuration.
+The official repository is [SublyFi/subly-payment-protocol](https://github.com/SublyFi/subly-payment-protocol). This guide targets 0.8.3. Verify both `pay-v0.8.3` and npm availability before using a published release. Until then, use the reviewed checkout's [source-build instructions](../packages/pay/README.md#run-an-unpublished-source-checkout). The [client guide](../packages/pay/README.md) and [operator guide](../deploy/README.md) contain the canonical commands and configuration.
 
 ## Use an existing relayer
 

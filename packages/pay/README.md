@@ -9,8 +9,7 @@ Version 0.8 is beta software and has not had an external security audit. Vault o
 ## Quick start
 
 Follow the steps in order. First verify `npm view @subly_fi/pay@0.8.3 version`;
-this source checkout prepares that candidate and a GitHub tag alone does not
-prove npm publication. If it is unavailable, use [the source build](#run-an-unpublished-source-checkout).
+a GitHub tag alone does not prove npm publication. If it is unavailable, use [the source build](#run-an-unpublished-source-checkout).
 Once published, every Subly command below uses `npx`; no repository clone or
 global `pay` installation is needed. Replace example URLs, paths and IDs with your own values.
 

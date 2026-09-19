@@ -1,8 +1,7 @@
 # Running your own Subly relayer (operator guide)
 
-The commands below describe release 0.8.3. This checkout prepares that candidate;
-verify its immutable source tag and npm availability before treating it as a
-published release. For candidate evaluation, use this reviewed source checkout
+The commands below describe release 0.8.3. Verify its immutable source tag
+and npm availability before deploying. For candidate evaluation, use this reviewed source checkout
 instead of attempting to clone a tag that does not yet exist. Preserve existing
 deployments until the release checks pass.
 

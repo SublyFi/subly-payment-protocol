@@ -2,7 +2,7 @@
 
 **Pay for x402 APIs with the yield from a Kamino USDC vault on Solana.**
 
-This checkout prepares **0.8.3**. A GitHub tag alone does not establish npm availability.
+This guide targets **0.8.3**. A GitHub tag alone does not establish npm availability.
 Before following versioned install commands, run `npm view @subly_fi/pay@0.8.3 version`.
 If it is unavailable, use the [source checkout instructions](packages/pay/README.md#run-an-unpublished-source-checkout)
 to evaluate this candidate. Do not assume an older published client contains these fixes.

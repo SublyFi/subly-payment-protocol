@@ -23,6 +23,7 @@ const entries = {
   "setup-status": join(here, "src", "setup-status.ts"),
   doctor: join(here, "src", "doctor.ts"),
   budget: join(here, "src", "budget.ts"),
+  status: join(here, "src", "status.ts"),
   vaults: join(here, "src", "vaults.ts")
 };
 

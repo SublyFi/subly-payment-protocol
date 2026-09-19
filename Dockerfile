@@ -10,7 +10,7 @@ RUN npm run build
 FROM node:24-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03 AS runtime
 WORKDIR /app
 COPY package.json package-lock.json ./
-# Disables native bigint-buffer compilation; its supported JS fallback is used.
+# The pinned bigint-buffer replacement is pure JavaScript; lifecycle scripts remain disabled.
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY --from=build /app/dist ./dist
 ENV NODE_ENV=production

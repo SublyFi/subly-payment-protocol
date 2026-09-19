@@ -2,19 +2,19 @@
 
 CLI and stdio MCP client for paying compatible x402 APIs with Kamino USDC vault yield on Solana. MIT licensed. Works with your own [Subly relayer](https://github.com/SublyFi/subly-payment-protocol/tree/main/deploy); no Subly account is required.
 
-Version 0.7 is beta software and has not had an external security audit. Vault operations use real mainnet funds. Yield accounting and owner policies depend on your relayer operator. Read the [security model](https://github.com/SublyFi/subly-payment-protocol/blob/main/docs/security-model.md).
+Version 0.8 is beta software and has not had an external security audit. Vault operations use real mainnet funds. Yield accounting and owner policies depend on your relayer operator. Read the [security model](https://github.com/SublyFi/subly-payment-protocol/blob/main/docs/security-model.md).
 
 ## Quick start
 
 You need **Node.js 24+**, a Solana agent wallet with mainnet USDC, a trusted relayer URL, and a mainnet RPC endpoint that supports transaction simulation with inner instructions. Your wallet can be a local keypair or a supported custody signer. The owner who approves spending controls can use a passkey or a separate Solana wallet.
 
 ```bash
-npx -y @subly_fi/pay@0.7.3 --help
+npx -y @subly_fi/pay@0.8.0 --help
 export SUBLY_RELAYER_URL=https://your-relayer.example.com
 export SOLANA_RPC_URL=https://your-mainnet-rpc.example.com
 export SUBLY_DEMO_AGENT_KEYPAIR_PATH=/absolute/path/to/agent.json
-npx -y @subly_fi/pay@0.7.3 doctor
-npx -y @subly_fi/pay@0.7.3 vaults
+npx -y @subly_fi/pay@0.8.0 doctor
+npx -y @subly_fi/pay@0.8.0 vaults
 ```
 
 Use an existing dedicated agent wallet, or create one with `solana-keygen new -o agent.json`. Keep its recovery material private and restrict the file to its owner (`chmod 600 agent.json`). Fund its public address with **USDC on Solana mainnet**. Subly does not create or fund wallets. Vault fees require a funded relayer sponsor; the final API payment requires the seller's facilitator fee payer.
@@ -23,33 +23,37 @@ Use an existing dedicated agent wallet, or create one with `solana-keygen new -o
 2. Create an owner setup link. On the first owner registration, this example pre-approves a **1.01 USDC** deposit; the selected vault's minimum can differ:
 
    ```bash
-   npx -y @subly_fi/pay@0.7.3 setup-link --initial-deposit 1010000
+   npx -y @subly_fi/pay@0.8.0 setup-link --initial-deposit 1010000
    ```
 
    Open the returned `setupUrl`, review the wallet, vault and limits, then approve with your passkey or wallet. Links expire in 10 minutes. Treat setup and approval links as private capabilities. The first person completing an initial setup becomes the owner for that wallet/vault. Replacing an existing mandate requires a separate deposit approval; follow the approval link returned by the deposit command.
 3. Check completion and deposit promptly; initial deposit approval lasts about 15 minutes:
 
    ```bash
-   npx -y @subly_fi/pay@0.7.3 setup-status <sessionId>
-   npx -y @subly_fi/pay@0.7.3 deposit 1010000
-   npx -y @subly_fi/pay@0.7.3 budget
+   npx -y @subly_fi/pay@0.8.0 setup-status <sessionId>
+   npx -y @subly_fi/pay@0.8.0 deposit 1010000
+   npx -y @subly_fi/pay@0.8.0 budget
    ```
 
 4. Wait until **spendable yield** covers the price and vault fees. A new deposit does not immediately provide a payment budget. Then request a compatible API:
 
    ```bash
-   npx -y @subly_fi/pay@0.7.3 fetch https://seller.example.com/paid-resource
+   npx -y @subly_fi/pay@0.8.0 fetch https://seller.example.com/paid-resource
    ```
 
 5. Withdraw funds back to the same agent wallet when needed:
 
    ```bash
-   npx -y @subly_fi/pay@0.7.3 withdraw 1000000
+   npx -y @subly_fi/pay@0.8.0 withdraw 1000000
    ```
 
 All amounts are raw USDC integers: `1000000` = 1 USDC. `fetch` defaults to a **0.01 USDC cap**, configurable with `SUBLY_MCP_MAX_AMOUNT_RAW_USDC` or `fetch <URL> <capRawUSDC>`. The owner mandate may set stricter limits. `setup-link --help` lists policy options. A withdrawal can include principal and is subject to liquidity, fees and the owner's policy. A revoked mandate also blocks relayer withdrawals.
 
 A subsequent deposit/payment/withdrawal may return `approvalRequired` with an `approveUrl`. After the owner approves, retry the same operation with the returned `apr_...` as a trailing argument. Never automatically retry a transaction reported as submitted or an API payment with an unknown outcome.
+
+Status lookup requires a **0.8.0 or newer relayer** so it can disable rebroadcast of an unresolved transaction with the authenticated `?resubmit=false` option. Upgrade the relayer before using this command.
+
+For an interrupted deposit or withdrawal, keep its `depositId` (`dep_...`) or `withdrawalId` (`wdr_...`) and run `pay status <intentId>` with the same wallet, selected vault and relayer. This reads and reconciles the original operation; it does not prepare, sign or send another transaction. The result includes the requested/confirmed amount, transaction signature and next action. `submitted` means check the same ID again later. A successful status command exits zero even when the original operation is still pending or failed; inspect its `status` and `nextAction`. Wallet-auth message signing is required, but no client RPC call is needed.
 
 ## MCP configuration
 
@@ -60,7 +64,7 @@ Add this to the MCP configuration of your editor or agent host. Replace all exam
   "mcpServers": {
     "subly": {
       "command": "npx",
-      "args": ["-y", "@subly_fi/pay@0.7.3", "mcp"],
+      "args": ["-y", "@subly_fi/pay@0.8.0", "mcp"],
       "env": {
         "SUBLY_RELAYER_URL": "https://your-relayer.example.com",
         "SOLANA_RPC_URL": "https://your-mainnet-rpc.example.com",
@@ -73,7 +77,7 @@ Add this to the MCP configuration of your editor or agent host. Replace all exam
 }
 ```
 
-Tools: `list_subly_vaults`, `select_subly_vault`, `create_subly_setup_link`, `check_subly_setup`, `deposit_to_subly_vault`, `get_subly_yield_budget`, `withdraw_from_subly_vault`, `fetch_with_subly_payment`. Ask the agent to list vaults and follow owner setup before depositing. Each selected vault has its own mandate and accounting; changing selection never moves funds. Stdio stdout is reserved for MCP messages.
+Tools: `list_subly_vaults`, `select_subly_vault`, `create_subly_setup_link`, `check_subly_setup`, `check_subly_vault_operation`, `deposit_to_subly_vault`, `get_subly_yield_budget`, `withdraw_from_subly_vault`, `fetch_with_subly_payment`. Ask the agent to list vaults and follow owner setup before depositing. Each selected vault has its own mandate and accounting; changing selection never moves funds. Stdio stdout is reserved for MCP messages.
 
 ## Configuration
 
@@ -99,8 +103,10 @@ Only sellers offering **Solana mainnet USDC `exact`** with `extra.feePayer` are 
 - `doctor` performs read-only configuration, relayer/vault and RPC checks. It never signs or transacts; it does not prove vault safety or available yield.
 - A withdrawal preview failure is a refusal to sign. Check your RPC's simulation support and liquidity; do not disable transaction validation.
 - Preserve the pending-state JSON across restarts and upgrades. An `external_outcome_unknown` record blocks a second payment until you investigate the seller/facilitator outcome.
+- When `fetch` stops while realizing yield, retry the same request with the same wallet, vault, relayer, method, body and headers. A saved withdrawal checkpoint resumes the original withdrawal and reuses its confirmed funds. It never prepares a replacement during recovery, even with `forceNewPayment`. If interruption occurred before the withdrawal ID was saved, or the original withdrawal ended unsuccessfully, reconcile that operation with the operator before starting another payment.
+- Older pending records remain blocked for investigation because they do not identify a resumable withdrawal. Keep the state file; do not downgrade the client while a realization is pending.
 - Concurrent clients using the same state file serialize payments with a `.lock` file. After a crash, stop **all** clients using that file before removing only the stale `.lock`. Preserve the JSON. A new file or another machine cannot coordinate with the old one.
-- `submitted` means the transaction may still confirm. Poll the original intent ID / transaction instead of preparing another deposit or withdrawal.
+- `submitted` means the transaction may still confirm. For a manual deposit or withdrawal, run `pay status <intentId>` or call `check_subly_vault_operation` with `intentId` instead of repeating the operation. Keep the original wallet, selected vault and relayer. An API `fetch` uses the saved recovery checkpoint described above.
 - Setup passkeys bind to the operator's domain. Use the original domain and device credential; follow the documented recovery delay if access is lost.
 
 [Full troubleshooting](https://github.com/SublyFi/subly-payment-protocol/blob/main/docs/troubleshooting.md) · [Support](https://github.com/SublyFi/subly-payment-protocol/blob/main/SUPPORT.md) · [Private security reports](https://github.com/SublyFi/subly-payment-protocol/security/advisories/new)

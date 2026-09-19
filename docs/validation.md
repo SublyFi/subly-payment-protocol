@@ -1,6 +1,37 @@
 # Validation status
 
-This records what was exercised on **0.7.2**, source commit
+## 0.8.0 verification — 2026-09-19
+
+The release checks cover the relayer with disposable PostgreSQL, client builds,
+clean packed installation and all nine MCP tools. The packed status command and
+MCP tool use authenticated requests for the original operation; they do not
+register, sync, prepare or submit another operation. CI checks the client on
+Linux, macOS and Windows, and performs a real PostgreSQL 16 backup/restore in an
+isolated Compose project.
+
+The actual owner pages were exercised in Chromium with a virtual WebAuthn
+authenticator: registration, approval, denial, revocation and expired setup.
+The Solana wallet registration path used a generated test key. Assertions were
+verified by the real HTTP handlers. This does not emulate a physical device's
+biometric check or verify an operator's public HTTPS configuration.
+
+The disposable Surfpool fork also passed the complete deposit, synthetic-yield
+realization, official x402 client/local seller payment, receipt report-back and
+normal withdrawal pipeline with the new dependency pins. Principal remained
+unchanged by the yield payment. All signers and balances were disposable local
+fixtures; no mainnet transaction was sent. A local PostgreSQL 18 backup and
+restore preserved sample principal and fee-debt records.
+
+Root and client production dependency audits report zero known vulnerabilities
+at review. See [dependency status](dependencies.md) for the three exact
+replacements, compatibility tests and remaining upstream peer-range limits.
+The changes need both relayer and client upgrades; no database migration is
+required. Preserve pending-payment files and do not downgrade a client with an
+unfinished yield realization.
+
+## Earlier real-funds checks
+
+The following records what was exercised on **0.7.2**, source commit
 `3d3d719a787da15cd8a0b891594f3006d47be554`, on 2026-09-17. A successful run
 checks that configuration and chain state at that time; each operator must
 validate their own deployment.
@@ -41,8 +72,8 @@ checks. Wallet keys, private RPC URLs, database dumps and wallet-specific
 evidence are not published in this repository.
 
 The project remains beta and has not undergone an external security audit.
-The client production dependency audit passed; four known relayer dependency
-advisories remain tracked with mitigations in [dependency status](dependencies.md).
+The four relayer dependency advisories present in those earlier releases were
+resolved in 0.8.0 as described in [dependency status](dependencies.md).
 
 ## Repeat the checks for your deployment
 

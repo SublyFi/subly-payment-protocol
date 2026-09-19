@@ -6,7 +6,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const TARGETS = {
   mcp: "mcp-server.js", fetch: "pay.js", deposit: "deposit.js", withdraw: "withdraw.js",
   "setup-link": "setup-link.js", "setup-status": "setup-status.js",
-  doctor: "doctor.js", budget: "budget.js", vaults: "vaults.js"
+  doctor: "doctor.js", budget: "budget.js", vaults: "vaults.js", status: "status.js"
 };
 const HELP = `Subly — x402 payments from Kamino USDC vault yield
 
@@ -18,6 +18,7 @@ Usage: pay <command> [arguments]
   deposit <rawUSDC> [approvalId] Deposit into the selected vault (real funds)
   budget                         Refresh and read the selected vault's yield budget
   withdraw <rawUSDC> [approvalId] Withdraw to the agent wallet (real funds)
+  status <dep_...|wdr_...>        Check the original deposit/withdrawal (no new transaction)
   fetch <URL>                    Pay a compatible x402 API within the configured cap
   mcp                            Start the stdio MCP server
   --version                      Print package version

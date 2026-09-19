@@ -12,15 +12,19 @@ npm login                 # an account that is a member of the @subly_fi org
 npm org ls subly_fi        # confirm membership (create the org on npmjs.com if new)
 ```
 
-## Each release (local maintainer path)
+## Local maintainer fallback
+
+Use the tagged GitHub Actions workflow in the canonical release checklist for
+normal releases with provenance. The fallback below requires explicit registry
+authentication and does not generate GitHub provenance. Complete the same
+version, validation and review checks in that checklist first.
 
 ```bash
 cd packages/pay
-npm version patch          # or minor/major; bumps packages/pay/package.json
 npm ci
 npm run typecheck
 npm run pack:check         # builds/inspects the package dry-run tarball
-npm publish --access public --provenance
+npm publish --access public
 
 # CONFIRM IT IS PUBLIC (scoped packages can publish as restricted despite
 # publishConfig; restricted = npx fails for everyone but you):
@@ -38,10 +42,10 @@ cd /tmp && npx -y @subly_fi/pay@latest --help
 
 ## Notes
 
-- `dist/` is gitignored and rebuilt by `npm run build`; `prepublishOnly` also
-  rebuilds it during `npm publish`. It is included in the published tarball via
+- `dist/` is gitignored and rebuilt by `npm run build`; `prepack` also
+  rebuilds it during packing and publishing. It is included in the published tarball via
   the `files` field.
-- The package bundles only client code (the six runtime deps stay external);
+- The package bundles only client code (runtime dependencies stay external);
   it must never pull in the facilitator, seller, Kamino SDK, or `pg`. If the
   bundle size jumps, check what new import crossed into the client path.
 - Bump the version and regenerate `package-lock.json` in lockstep with any

@@ -34,12 +34,18 @@ The timestamp must be within five minutes of server time. Serialize the body onc
 | `GET /v1/admin/monitoring` | Process counters and sponsor balance | Admin |
 | `POST /v1/admin/settlements/recover` | Recover stored pending settlement transactions | Admin |
 
-Prepare bodies include `wallet`, positive integer string `amountRawUsdc`, optional `vault` and optional `approvalId`. A yield realization also binds the intended external payment. Use the client implementation for the full binding rather than inventing values. Submit bodies include the returned intent ID, serialized transaction and agent signature. Poll the same intent ID after a timeout; do not blindly prepare a replacement.
+Prepare bodies include `wallet`, positive integer string `amountRawUsdc`, optional `vault` and optional `approvalId`. A yield realization also binds the intended external payment. Use the client implementation for the full binding rather than inventing values. Submit bodies include the returned intent ID, serialized transaction and agent signature.
+
+After a timeout, run `pay status <dep_... or wdr_...>` or MCP `check_subly_vault_operation` with `intentId`. Both require a 0.8.0 or newer relayer, issue an authenticated GET with `?resubmit=false` for the original ID, and check that its wallet and vault match the current selection. The returned view contains status, requested/actual raw USDC amounts, transaction signature, error code and next action; transaction bytes and approval capabilities are omitted. Status lookup never prepares or submits a replacement and does not run a wallet sync. Authentication signs only the API request message, including the `resubmit=false` query string. On relayers before 0.8.0 this query option is not supported: upgrade the server before using status lookup.
+
+Both intent GET routes accept optional `resubmit=false` to reconcile receipts and expiry without rebroadcasting. Omitting the parameter or setting `resubmit=true` preserves the existing recovery behavior, which may rebroadcast the same stored signed transaction while its blockhash is valid. The query string is part of wallet authentication and must be signed exactly as sent. Other parameter values are rejected.
 
 Select a vault with body `vault` for registration/sync/prepare/setup, or `?vault=<address>` for budget/mandate views. Submit/status/approval actions use the vault already bound to the stored intent/session. The [operator guide](../deploy/README.md#api-selection) details all selectors.
 
 ## Errors and approvals
 
 Errors use `{"error":{"code":"...","message":"...","details":{...}}}`. A 409 with `deposit_approval_required`, `withdrawal_approval_required` or payment approval information means the owner must approve the returned capability URL. The challenge is durable in PostgreSQL. Retry the same operation with its approval ID after approval. A changed/revoked mandate or expired approval requires a new prepare step; it does not authorize silently changing the operation.
+
+Position sync returns `409 vault_flow_pending` while a submitted deposit or withdrawal awaits reconciliation. Read the original intent's status endpoint first, then sync again. `409 stale_position_snapshot` means a receipt or another sync updated the ledger during the chain read, or the RPC returned an older slot; fetch a fresh snapshot instead of reusing the old values. These refusals preserve the recorded principal.
 
 `insufficient_yield`, unavailable liquidity, simulation failure and an unknown external payment outcome are deliberate refusals. [Troubleshooting](troubleshooting.md) explains recovery. `/v1/x402/*` is the disabled-by-default legacy seller rail; new sellers use standard x402 and their own facilitator.

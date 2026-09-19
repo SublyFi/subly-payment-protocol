@@ -1,6 +1,6 @@
 {
   "name": "subly-agent-payments",
-  "version": "0.7.3",
+  "version": "0.8.0",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -24,7 +24,8 @@
     "demo:legacy:pay": "NODE_ENV=development tsx demo/pay.ts",
     "check": "npm run typecheck && npm test && npm run build && npm run docs:check",
     "docs:check": "node scripts/check-docs.mjs",
-    "test:package": "node scripts/test-package.mjs"
+    "test:package": "node scripts/test-package.mjs",
+    "test:browser": "node --import tsx scripts/test-owner-browser.ts"
   },
   "dependencies": {
     "@kamino-finance/farms-sdk": "3.2.24",
@@ -44,8 +45,14 @@
     "zod": "^4.1.13"
   },
   "overrides": {
-    "jayson": {
-      "uuid": "11.1.1"
+    "@coral-xyz/anchor": {
+      "toml": "4.2.0"
+    },
+    "@solana/web3.js": {
+      "jayson": "5.0.0"
+    },
+    "@solana/buffer-layout-utils": {
+      "bigint-buffer": "npm:@exodus/bigint-buffer@1.1.5-exodus.1"
     }
   },
   "devDependencies": {
@@ -53,6 +60,7 @@
     "@types/node": "^24.10.1",
     "@types/pg": "^8.15.6",
     "esbuild": "^0.28.1",
+    "playwright": "1.63.0",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "vitest": "^4.0.14"

@@ -28,6 +28,6 @@ Yield realization and the seller's x402 payment are not atomic. Realized USDC ca
 
 HTTPS, PostgreSQL backups, sponsor key permissions and trusted RPC configuration are operator responsibilities. Capability links contain authorization context: keep them out of public logs, issues and analytics. Admin tokens permit privileged accounting actions and must not be distributed to users. Forwarded headers are trusted only in the provided private proxy topology; do not expose the relayer port publicly with `SUBLY_TRUST_PROXY=1`.
 
-The published client and source relayer have different dependency graphs. See [dependency status](dependencies.md) for outstanding relayer advisories and mitigations. The legacy `subly-yield-exact` seller scheme is disabled by default and is not the npm client's standard x402 payment path.
+The published client and source relayer have different dependency graphs. See [dependency status](dependencies.md) for audit results, pinned dependency replacements and their verification scope. The legacy `subly-yield-exact` seller scheme is disabled by default and is not the npm client's standard x402 payment path.
 
 Report vulnerabilities privately under [SECURITY.md](../SECURITY.md).

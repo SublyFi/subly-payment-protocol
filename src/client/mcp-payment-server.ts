@@ -8,8 +8,10 @@ import {
 import type { AgentWalletSigner } from "./agent-wallet-signer.js";
 import { ensureWalletOnboarded } from "./onboarding.js";
 import { formatRawUsdcAmount } from "./paid-fetch.js";
+import { requestBodyHashFor } from "../x402/headers.js";
 import {
   StandardX402PayError,
+  type StandardPayResult,
   type StandardX402Payer
 } from "./standard-x402-payer.js";
 import { VaultFlowClientError, type VaultFlowClient } from "./vault-flows.js";
@@ -25,6 +27,7 @@ const WITHDRAW_TOOL_NAME = "withdraw_from_subly_vault";
 const BUDGET_TOOL_NAME = "get_subly_yield_budget";
 const SETUP_TOOL_NAME = "create_subly_setup_link";
 const SETUP_STATUS_TOOL_NAME = "check_subly_setup";
+const OPERATION_STATUS_TOOL_NAME = "check_subly_vault_operation";
 
 const SERVER_INSTRUCTIONS = `Subly lets an agent pay standard x402 (HTTP 402) \
 paid APIs that offer a Solana USDC exact rail with facilitator feePayer support \
@@ -78,7 +81,12 @@ approvalId.
 4. withdraw_from_subly_vault(amountRawUsdc) exits: moves vault funds \
 (principal included) back to the agent wallet's USDC account. If the owner's \
 mandate requires withdrawal approval it returns approvalRequired — same \
-paste-approveUrl-then-retry flow as deposits.`;
+paste-approveUrl-then-retry flow as deposits.
+5. check_subly_vault_operation(intentId) checks the original deposit or \
+withdrawal after a timeout. Use the returned dep_... or wdr_... ID with the \
+same wallet, vault and relayer. It reconciles that original transaction \
+without preparing or sending another. If still confirming, check the same \
+ID later; do not repeat the deposit or withdrawal.`;
 
 export interface McpPaymentServerConfig {
   payer: Pick<StandardX402Payer, "pay">;
@@ -101,6 +109,8 @@ export function createMcpPaymentServer(
 ): Server {
   const { signer, relayerBaseUrl, defaultMaxAmountRawUsdc } = config;
   const vaultFlows = config.vaultFlows ?? null;
+  const fetchOnboardingAttempts = new Map<string, Promise<void>>();
+  const fetchInFlight = new Map<string, Promise<StandardPayResult>>();
 
   const server = new Server(
     { name: "subly-payments", version: config.serverVersion ?? "0.3.0" },
@@ -111,6 +121,20 @@ export function createMcpPaymentServer(
     vaultFlows === null
       ? []
       : [
+          {
+            name: OPERATION_STATUS_TOOL_NAME,
+            description: "Read and reconcile the original deposit or withdrawal by its dep_... or wdr_... intent ID. " +
+              "Use after submitted/confirmation timeout, with the same wallet, selected vault and relayer. " +
+              "Does not prepare, sign or send a transaction, or refresh the budget. Returns status, amounts, transaction signature and next action.",
+            inputSchema: {
+              type: "object",
+              properties: { intentId: { type: "string", pattern: "^(dep|wdr)_[0-9a-f]{32}$",
+                description: "Original depositId or withdrawalId returned by the operation." } },
+              required: ["intentId"], additionalProperties: false
+            },
+            annotations: { title: "Check Subly deposit or withdrawal", readOnlyHint: true,
+              destructiveHint: false, idempotentHint: true, openWorldHint: false }
+          },
           {
             name: SETUP_TOOL_NAME,
             description:
@@ -451,8 +475,9 @@ export function createMcpPaymentServer(
             "the transaction was broadcast but had not confirmed before the " +
             "poll timeout. Do NOT submit this deposit/withdrawal again — it " +
             "may still confirm and moving the funds twice is not what the " +
-            "user asked for. Check get_subly_yield_budget in a minute, or " +
-            "the solscanUrl."
+            "user asked for. Call check_subly_vault_operation with the " +
+            "original depositId or withdrawalId, keeping the same wallet, " +
+            "selected vault and relayer."
         },
         true
       );
@@ -484,7 +509,8 @@ export function createMcpPaymentServer(
       DEPOSIT_TOOL_NAME,
       WITHDRAW_TOOL_NAME,
       SETUP_TOOL_NAME,
-      SETUP_STATUS_TOOL_NAME
+      SETUP_STATUS_TOOL_NAME,
+      OPERATION_STATUS_TOOL_NAME
     ];
     if (vaultFlows !== null && vaultToolNames.includes(request.params.name)) {
       // Registration + chain sync are idempotent, and any MONEY-MOVING tool
@@ -494,7 +520,8 @@ export function createMcpPaymentServer(
       // and check_subly_setup is polled.
       const needsChainSync =
         request.params.name !== SETUP_TOOL_NAME &&
-        request.params.name !== SETUP_STATUS_TOOL_NAME;
+        request.params.name !== SETUP_STATUS_TOOL_NAME &&
+        request.params.name !== OPERATION_STATUS_TOOL_NAME;
       if (needsChainSync) {
         try {
           await ensureWalletOnboarded({ relayerBaseUrl, signer });
@@ -503,6 +530,14 @@ export function createMcpPaymentServer(
         }
       }
       const args = request.params.arguments ?? {};
+
+      if (request.params.name === OPERATION_STATUS_TOOL_NAME) {
+        if (typeof args.intentId !== "string") {
+          return textResult({ ok: false, message: "intentId is required" }, true);
+        }
+        try { return textResult(await vaultFlows.getOperationStatus(args.intentId)); }
+        catch (error) { return vaultFlowFailure(error); }
+      }
 
       if (request.params.name === BUDGET_TOOL_NAME) {
         try {
@@ -712,16 +747,41 @@ export function createMcpPaymentServer(
         ? headers
         : { "content-type": "application/json", ...(headers ?? {}) };
 
-    try {
-      const result = await payer.pay({
-        url,
-        ...(method === undefined ? {} : { method }),
-        ...(body === undefined ? {} : { body }),
-        ...(mergedHeaders === undefined ? {} : { headers: mergedHeaders }),
-        ...(maxAmountRawUsdc === undefined ? {} : { maxAmountRawUsdc }),
-        ...(forceNewPayment ? { forceNewPayment } : {}),
-        ...(approvalId === undefined ? {} : { approvalId })
+    // Match the payer's key and include onboarding in the shared operation.
+    // Otherwise a caller using another vault could overtake slow onboarding,
+    // finish its payment, and leave this caller to purchase the same request.
+    const fetchKey = `${(method ?? "GET").toUpperCase()}:${url}:${requestBodyHashFor(body ?? null)}`;
+    let paymentFlow = fetchInFlight.get(fetchKey);
+    if (paymentFlow === undefined) {
+      paymentFlow = (async () => {
+        // Status-only sessions never register or sync. Payment requests share
+        // one onboarding attempt per selected wallet/vault, including its wait.
+        const onboardingKey = `${signer.walletAddress}:${vaultFlows?.vault.address ?? signer.vault?.address ?? "default"}`;
+        let onboarding = fetchOnboardingAttempts.get(onboardingKey);
+        if (onboarding === undefined) {
+          onboarding = ensureWalletOnboarded({ relayerBaseUrl, signer }).catch(() => {
+            // The payer reports any unavailable registration/budget itself.
+          });
+          fetchOnboardingAttempts.set(onboardingKey, onboarding);
+        }
+        await onboarding;
+        return payer.pay({
+          url,
+          ...(method === undefined ? {} : { method }),
+          ...(body === undefined ? {} : { body }),
+          ...(mergedHeaders === undefined ? {} : { headers: mergedHeaders }),
+          ...(maxAmountRawUsdc === undefined ? {} : { maxAmountRawUsdc }),
+          ...(forceNewPayment ? { forceNewPayment } : {}),
+          ...(approvalId === undefined ? {} : { approvalId })
+        });
+      })().finally(() => {
+        fetchInFlight.delete(fetchKey);
       });
+      fetchInFlight.set(fetchKey, paymentFlow);
+    }
+
+    try {
+      const result = await paymentFlow;
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
       };
@@ -788,19 +848,6 @@ export function createMcpPaymentServer(
 export async function runMcpPaymentServer(config: McpPaymentServerConfig): Promise<void> {
   const server = createMcpPaymentServer(config);
   const { signer, relayerBaseUrl, defaultMaxAmountRawUsdc } = config;
-
-  // Self-serve onboarding: register + activate + chain-sync this wallet so the
-  // realize relayer can serve budget reads and sponsored withdrawals.
-  try {
-    await ensureWalletOnboarded({ relayerBaseUrl, signer });
-    console.error("[subly-mcp] wallet registered and synced at the relayer");
-  } catch (error) {
-    console.error(
-      `[subly-mcp] wallet onboarding failed (will still serve tools): ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    );
-  }
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

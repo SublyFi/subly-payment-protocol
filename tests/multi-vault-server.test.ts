@@ -73,8 +73,11 @@ describe("multi-vault relayer", () => {
       const a = registry.get(A.address)!; const b = registry.get(B.address)!;
       await expect(a.vaultFlowService!.getDeposit(intent.depositId)).rejects.toMatchObject({ code: "deposit_not_found" });
       registry.set(B.address, { ...b, vault: { ...B, depositsEnabled: false } });
-      const polled = await server.inject({ url: `/v1/deposits/${intent.depositId}?vault=${A.address}`, headers });
-      expect(polled.json().vault).toBe(B.address);
+      for (const suffix of ["", "&resubmit=false"]) {
+        const polled = await server.inject({ url: `/v1/deposits/${intent.depositId}?vault=${A.address}${suffix}`, headers });
+        expect(polled.statusCode).toBe(200);
+        expect(polled.json().vault).toBe(B.address);
+      }
       const submit = vi.spyOn(b.vaultFlowService!, "submitDeposit").mockResolvedValue({ status: "submitted" } as never);
       const submitted = await server.inject({ method: "POST", url: "/v1/deposits/submit", headers,
         payload: { depositId: intent.depositId, serializedTransaction: "test", agentSignature: "test", vault: A.address } });

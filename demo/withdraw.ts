@@ -110,13 +110,13 @@ if (submitted.txSignature !== null) {
 if (submitted.status === "submitted") {
   fail(
     "[withdraw] broadcast but not yet confirmed — it may still land. Do NOT " +
-      `resubmit; check GET /v1/withdrawals/${submitted.withdrawalId} (or the tx link above) first`
+      `resubmit; run pay status ${submitted.withdrawalId} with the same wallet, vault and relayer first`
   );
 }
 if (submitted.status !== "confirmed") {
   fail(
     `[withdraw] not confirmed (errorCode=${submitted.errorCode}); ` +
-      `check GET /v1/withdrawals/${submitted.withdrawalId} and the relayer logs`
+      `run pay status ${submitted.withdrawalId} and ask the operator to reconcile it`
   );
 }
 console.log(

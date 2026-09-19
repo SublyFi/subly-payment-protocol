@@ -9,7 +9,7 @@ import {
   WALLET_AUTH_WALLET_HEADER
 } from "./wallet-auth.js";
 import { TokenBucketRateLimiter } from "../x402/rate-limit.js";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 import {
   PAYMENT_SCHEME,
   SOLANA_MAINNET_NETWORK
@@ -48,6 +48,13 @@ import {
   revokePageHtml,
   setupPageHtml
 } from "./owner-pages.js";
+
+const flowStatusQuerySchema = z.object({
+  resubmit: z.enum(["true", "false"]).optional(),
+  // Existing callers may include a selection, but the stored intent always
+  // determines its vault, including after that vault has been retired.
+  vault: z.string().optional()
+}).strict();
 
 export interface SponsorMonitoring {
   sponsorAddress: string;
@@ -592,8 +599,10 @@ export function buildServer(
     "/v1/deposits/:depositId",
     { preHandler: requireWalletOrAdminAuth },
     async (request) => {
+      const query = flowStatusQuerySchema.parse(request.query);
       const deposit = (await requireVaultFlows(await storedVault("deposit", request.params.depositId)).getDeposit(
-        request.params.depositId
+        request.params.depositId,
+        { resubmit: query.resubmit !== "false" }
       )) as { wallet?: string };
       if (
         request.authedAsAdmin !== true &&
@@ -630,8 +639,10 @@ export function buildServer(
     "/v1/withdrawals/:withdrawalId",
     { preHandler: requireWalletOrAdminAuth },
     async (request) => {
+      const query = flowStatusQuerySchema.parse(request.query);
       const withdrawal = (await requireVaultFlows(await storedVault("withdrawal", request.params.withdrawalId)).getWithdrawal(
-        request.params.withdrawalId
+        request.params.withdrawalId,
+        { resubmit: query.resubmit !== "false" }
       )) as { wallet?: string };
       if (
         request.authedAsAdmin !== true &&

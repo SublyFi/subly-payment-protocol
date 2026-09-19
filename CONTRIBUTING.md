@@ -25,6 +25,21 @@ npm audit --prefix packages/pay --omit=dev --audit-level=high
 
 `test:package` packs the client, installs it into a temporary directory outside the repository, verifies help/version/commands, and performs an MCP initialize/list-tools exchange with a disposable generated key. It does not send transactions. See [dependency status](docs/dependencies.md) for the separate relayer audit.
 
+## Owner browser tests
+
+```bash
+npx playwright install chromium
+npm run test:browser
+```
+
+This starts the actual owner pages and API on loopback with an in-memory ledger.
+Chromium's virtual WebAuthn authenticator exercises passkey registration,
+approval, denial and revocation through the server's signature verification.
+A generated wallet also checks the Solana wallet signing path. The test uses no
+funded keys, database credentials or RPC requests. CI runs this browser check
+and tests the packaged CLI/MCP on Linux, macOS and Windows. Virtual authenticators
+do not replace checks with real devices and the operator's HTTPS origin.
+
 ## PostgreSQL integration tests
 
 Use a **disposable** database. Each test creates and drops its own schema. Tests are skipped unless `SUBLY_TEST_POSTGRES_URL` is set; CI always runs them against PostgreSQL 16.

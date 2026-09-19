@@ -4,6 +4,19 @@ All notable changes to the repository and the published client are recorded here
 
 ## [Unreleased]
 
+## 0.8.0 — 2026-09-19
+
+- Prevent wallet synchronization from counting a submitted deposit or withdrawal as an external balance change. Reject stale chain snapshots when ledger accounting has changed during the read.
+- Persist yield-realization progress before submission and resume the original withdrawal after a timeout or restart, without preparing another withdrawal for the same API request.
+- Accept successful HTTP 2xx API responses, including 201, 202 and 204. Keep retry protection for failed or malformed payment receipts.
+- Align the package's local publishing fallback with the release checklist; GitHub provenance is provided by the publishing workflow.
+- Add `pay status <intentId>` and MCP `check_subly_vault_operation` to reconcile an original deposit or withdrawal without preparing or sending another transaction. Return only outcome fields and check the wallet, vault and intent ID.
+- Replace the backup pipeline with a private, checked PostgreSQL archive that is published only after success. Add failure-path tests, an isolated restore rehearsal and a disposable PostgreSQL backup/restore check in CI.
+- Check packaged clients on Linux, macOS and Windows, and run the actual owner pages in Chromium with a virtual passkey and a generated wallet. Cover registration, approval, denial, revocation and expired setup links without real funds.
+- Replace vulnerable transitive parser/RPC/big-integer dependencies with pinned, compatibility-tested versions. The big-integer replacement contains no native code. See the dependency status document for the exact overrides and verification scope.
+
+Upgrade both relayer and client for these accounting and recovery fixes. Preserve pending-payment state across upgrades; no database migration is required. Do not downgrade the client while a yield realization is pending.
+
 ## 0.7.3 — 2026-09-17
 
 - Correct owner setup pages that described a deposit as approved when replacing an existing mandate. First-deposit approval is issued only on the first registration; replacements now explain the separate approval both before and after setup.

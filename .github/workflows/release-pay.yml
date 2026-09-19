@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   verify:
     uses: ./.github/workflows/ci.yml
@@ -43,5 +47,34 @@ jobs:
         working-directory: packages/pay
       - run: npm pack --dry-run --json
         working-directory: packages/pay
+      - name: Check whether this exact commit was already published
+        id: registry
+        env:
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: node scripts/verify-published-package.mjs --check-publish-state --require-provenance
       - run: npm publish --access public --provenance
+        if: steps.registry.outputs.published != 'true'
         working-directory: packages/pay
+      - name: Verify exact registry version, provenance metadata, installation, CLI and MCP
+        env:
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: node scripts/verify-published-package.mjs --require-provenance
+
+  release:
+    needs: publish
+    name: Create verified GitHub release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create release only after registry installation succeeds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release already exists for $RELEASE_TAG."
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --title "Subly ${RELEASE_TAG#pay-v}" --generate-notes
+          fi

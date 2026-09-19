@@ -132,6 +132,28 @@ export interface SetupSessionView {
   expiresAtMs?: number;
 }
 
+export interface OwnerSessionCreated {
+  sessionId: string;
+  ownerUrl: string;
+  expiresAtMs: number;
+  wallet: string;
+  vault: string;
+  policy: Record<string, unknown>;
+  mandateExpiresAtMs: number;
+}
+
+export interface OwnerStatus {
+  wallet: string;
+  vault: string;
+  mandateHash: string;
+  status: string;
+  effectiveStatus: string;
+  recoveryAtMs: number | null;
+  revokedAtMs: number | null;
+  expiresAtMs: number;
+  policy: Record<string, unknown>;
+}
+
 interface PreparedDeposit {
   depositId: string;
   serializedTransaction: string;
@@ -558,6 +580,64 @@ export class VaultFlowClient {
       );
     }
     return JSON.parse(text) as SetupSessionView;
+  }
+
+  /** Creates a short-lived review link; only the current owner can approve changes. */
+  async createOwnerSession(input: {
+    policy?: Record<string, unknown>;
+    mandateTtlDays?: number;
+  } = {}): Promise<OwnerSessionCreated> {
+    const session = await this.postJson("prepare",
+      `/v1/wallets/${this.signer.walletAddress}/owner-sessions`,
+      { ...input, vault: this.vault.address }) as OwnerSessionCreated;
+    if (session.wallet !== this.signer.walletAddress || session.vault !== this.vault.address) {
+      throw new VaultFlowClientError("prepare", "Relayer returned an owner session for a different wallet or vault");
+    }
+    return session;
+  }
+
+  async getOwnerSession(sessionId: string): Promise<Record<string, unknown>> {
+    if (!/^st_[0-9a-f]{32}$/.test(sessionId)) {
+      throw new VaultFlowClientError("read", "sessionId must be the original st_ ID followed by 32 lowercase hexadecimal characters");
+    }
+    const session = await this.getJson(`/v1/owner-sessions/${sessionId}`) as Record<string, unknown>;
+    if (session.wallet !== this.signer.walletAddress || session.vault !== this.vault.address) {
+      throw new VaultFlowClientError("read", "Relayer returned an owner session for a different wallet or vault");
+    }
+    // The management page needs the signable prefill, but the agent only needs its outcome.
+    return { sessionId, wallet: session.wallet, vault: session.vault, status: session.status,
+      expiresAtMs: session.expiresAtMs, completedAtMs: session.completedAtMs,
+      mandateHash: session.mandateHash, action: session.action };
+  }
+
+  /** Reads recovery and policy status without exposing the signed mandate document. */
+  async getOwnerStatus(): Promise<OwnerStatus> {
+    const viewed = await this.getJson(
+      `/v1/wallets/${this.signer.walletAddress}/mandate?vault=${this.vault.address}`
+    ) as { wallet: string; mandateHash: string; status: string; effectiveStatus: string;
+      recoveryAtMs: number | null; revokedAtMs: number | null;
+      mandate: { vault: string; expiresAtMs: number; policy: Record<string, unknown> } };
+    if (viewed.wallet !== this.signer.walletAddress || viewed.mandate?.vault !== this.vault.address) {
+      throw new VaultFlowClientError("read", "Relayer returned a mandate for a different wallet or vault");
+    }
+    return { wallet: viewed.wallet, vault: this.vault.address, mandateHash: viewed.mandateHash,
+      status: viewed.status, effectiveStatus: viewed.effectiveStatus,
+      recoveryAtMs: viewed.recoveryAtMs, revokedAtMs: viewed.revokedAtMs,
+      expiresAtMs: viewed.mandate.expiresAtMs, policy: viewed.mandate.policy };
+  }
+
+  /** Agent-authorized lost-credential recovery; the current owner retains the 72-hour veto. */
+  async startOwnerRecovery(): Promise<Record<string, unknown>> {
+    const result = await this.postJson("prepare",
+      `/v1/wallets/${this.signer.walletAddress}/mandate/recovery-revoke?vault=${this.vault.address}`, {}
+    ) as Record<string, unknown>;
+    if (result.wallet !== this.signer.walletAddress) {
+      throw new VaultFlowClientError("prepare", "Relayer returned recovery for a different wallet");
+    }
+    return { ...result, vault: this.vault.address,
+      instructions: "Recovery waits 72 hours and the current owner can cancel it through an owner-link. " +
+        "Check recovery-status; after recovery has elapsed, create a setup-link to register a new owner. " +
+        "This cannot override an owner-revoked mandate and does not move funds." };
   }
 
   /**

@@ -138,6 +138,7 @@ export class SpendingMandateService {
     agentCosign?: "document" | "setup_session";
     /** Extra audit context merged into the registration event. */
     provenance?: unknown;
+    expectedOwnerState?: SetupSession["ownerManagement"];
   }) {
     const nowMs = this.now();
     const { document } = input;
@@ -154,6 +155,14 @@ export class SpendingMandateService {
       this.ledger.withWalletVaultLock(input.wallet, input.vault, async () => {
         const existing = await this.ledger.getSpendingMandate(input.wallet, input.vault);
         const isFirstRegistration = existing === null;
+
+        if (input.expectedOwnerState !== undefined) {
+          this.assertOwnerSessionCurrent(existing, input.expectedOwnerState);
+          if (existing!.ownerAuth !== document.ownerAuth ||
+              canonicalJson(existing!.ownerCredential) !== canonicalJson(document.ownerCredential)) {
+            throw forbidden("owner_session_credential_mismatch", "An owner management link must be signed by the existing owner credential");
+          }
+        }
 
         if (existing !== null) {
           // Monotonic issuedAtMs stops replaying an older (looser) mandate.
@@ -269,9 +278,11 @@ export class SpendingMandateService {
     mandateHash: string;
     signedAtMs: number;
     signature: string;
+    expectedOwnerState?: SetupSession["ownerManagement"];
   }) {
     return this.withCurrentMandateMutationLock(input.wallet, async (record) => {
       const nowMs = this.now();
+      if (input.expectedOwnerState !== undefined) this.assertOwnerSessionCurrent(record, input.expectedOwnerState);
       if (record.mandateHash !== input.mandateHash) {
         throw conflict(
           "mandate_hash_mismatch",
@@ -359,9 +370,11 @@ export class SpendingMandateService {
     mandateHash: string;
     signedAtMs: number;
     signature: string;
+    expectedOwnerState?: SetupSession["ownerManagement"];
   }) {
     return this.withCurrentMandateMutationLock(input.wallet, async (record) => {
       const nowMs = this.now();
+      if (input.expectedOwnerState !== undefined) this.assertOwnerSessionCurrent(record, input.expectedOwnerState);
       if (this.effectiveStatus(record, nowMs) === "expired") {
         throw conflict(
           "mandate_expired",
@@ -531,6 +544,10 @@ export class SpendingMandateService {
     initialDepositRawUsdc?: string | undefined;
     /** Wallet-auth headers of the creating request (audit provenance). */
     agentAuth?: unknown;
+    /** Internal only: never accepted from an untrusted setup-session body. */
+    ownerManagement?: SetupSession["ownerManagement"];
+    /** Internal absolute expiry for management links that retain a mandate. */
+    mandateExpiresAtMs?: number;
   }) {
     const nowMs = this.now();
     const overrides = Object.fromEntries(
@@ -569,7 +586,7 @@ export class SpendingMandateService {
       vault: input.vault,
       policyWire,
       enforcementMode: input.enforcementMode ?? "subly",
-      mandateExpiresAtMs: nowMs + (input.mandateTtlMs ?? DEFAULT_MANDATE_TTL_MS),
+      mandateExpiresAtMs: input.mandateExpiresAtMs ?? nowMs + (input.mandateTtlMs ?? DEFAULT_MANDATE_TTL_MS),
       initialDepositRawUsdc,
       status: "pending",
       createdAtMs: nowMs,
@@ -577,7 +594,8 @@ export class SpendingMandateService {
       completedAtMs: null,
       mandateHash: null,
       initialDepositApprovalId: null,
-      agentAuth: input.agentAuth ?? null
+      agentAuth: input.agentAuth ?? null,
+      ...(input.ownerManagement === undefined ? {} : { ownerManagement: input.ownerManagement })
     };
     await this.ledger.saveSetupSession(session);
 
@@ -592,6 +610,109 @@ export class SpendingMandateService {
       mandateExpiresAtMs: session.mandateExpiresAtMs,
       initialDepositRawUsdc
     };
+  }
+
+  /** A wallet-authorized proposal; only the current owner can apply it. */
+  async createOwnerSession(input: {
+    wallet: string;
+    vault: string;
+    policy?: { [K in keyof MandatePolicyWire]?: MandatePolicyWire[K] | undefined } | undefined;
+    mandateTtlMs?: number | undefined;
+    agentAuth?: unknown;
+  }) {
+    const existing = await this.requireMandate(input.wallet, input.vault);
+    const document = existing.documentJson as SpendingMandateDocument;
+    const overrides = Object.fromEntries(Object.entries(input.policy ?? {}).filter(([, value]) => value !== undefined));
+    const session = await this.createSetupSession({
+      wallet: input.wallet,
+      vault: input.vault,
+      policy: { ...document.policy, ...overrides },
+      enforcementMode: existing.enforcementMode,
+      ...(input.mandateTtlMs === undefined
+        ? { mandateExpiresAtMs: existing.expiresAtMs }
+        : { mandateTtlMs: input.mandateTtlMs }),
+      agentAuth: input.agentAuth,
+      ownerManagement: {
+        mandateHash: existing.mandateHash,
+        status: existing.status,
+        recoveryAtMs: existing.recoveryAtMs,
+        revokedAtMs: existing.revokedAtMs
+      }
+    });
+    const ownerUrl = new URL(session.setupUrl);
+    ownerUrl.pathname = ownerUrl.pathname.replace(/\/setup\/([^/]+)$/, "/owner/$1");
+    if (ownerUrl.pathname === new URL(session.setupUrl).pathname) {
+      // Setup deployments may use a nonstandard base path; management is a
+      // same-origin relayer route, never a user-supplied destination.
+      ownerUrl.pathname = `/owner/${session.sessionId}`;
+    }
+    const { setupUrl: _setupUrl, ...managementSession } = session;
+    return { ...managementSession, ownerUrl: ownerUrl.toString() };
+  }
+
+  async getOwnerSession(sessionId: string) {
+    const session = await this.requireOwnerSession(sessionId);
+    const view = await this.getSetupSession(sessionId);
+    if (view.status !== "pending") {
+      return { ...view, vault: session.vault, action: session.ownerAction ?? null };
+    }
+    const existing = await this.ledger.getSpendingMandate(session.wallet, session.vault);
+    this.assertOwnerSessionCurrent(existing, session.ownerManagement!);
+    return {
+      ...view,
+      currentMandate: {
+        mandateHash: existing!.mandateHash,
+        status: this.effectiveStatus(existing!, this.now()),
+        ownerAuth: existing!.ownerAuth,
+        ownerCredential: existing!.ownerCredential,
+        policy: (existing!.documentJson as SpendingMandateDocument).policy,
+        expiresAtMs: existing!.expiresAtMs,
+        recoveryAtMs: existing!.recoveryAtMs
+      }
+    };
+  }
+
+  async completeOwnerSession(input: { sessionId: string; document: SpendingMandateDocument }) {
+    await this.requireOwnerSession(input.sessionId);
+    return this.completeSetupSession(input);
+  }
+
+  async completeOwnerAction(input: {
+    sessionId: string;
+    action: "revoke" | "cancel_recovery";
+    mandateHash: string;
+    signedAtMs: number;
+    signature: string;
+  }) {
+    return this.ledger.withSellerRequestLock("setup_session", input.sessionId, async () => {
+      const session = await this.requireOwnerSession(input.sessionId);
+      if (session.status === "completed") throw conflict("setup_session_used", "This owner link was already completed; create a new link");
+      if (session.expiresAtMs <= this.now()) throw conflict("setup_session_expired", "This owner link has expired; create a new link");
+      if (input.mandateHash !== session.ownerManagement!.mandateHash) {
+        throw conflict("mandate_hash_mismatch", "This action does not match the owner link's mandate");
+      }
+      const actionInput = { wallet: session.wallet, mandateHash: input.mandateHash,
+        signedAtMs: input.signedAtMs, signature: input.signature, expectedOwnerState: session.ownerManagement };
+      const result = input.action === "revoke"
+        ? await this.revokeMandate(actionInput)
+        : await this.cancelRecoveryRevoke(actionInput);
+      await this.ledger.saveSetupSession({ ...session, status: "completed", completedAtMs: this.now(),
+        mandateHash: result.mandateHash, ownerAction: input.action });
+      return { ...result, sessionId: session.sessionId, action: input.action };
+    });
+  }
+
+  private async requireOwnerSession(sessionId: string): Promise<SetupSession> {
+    const session = await this.ledger.getSetupSession(sessionId);
+    if (session?.ownerManagement === undefined) throw notFound("owner_session_not_found", "Owner management session does not exist");
+    return session;
+  }
+
+  private assertOwnerSessionCurrent(record: SpendingMandateRecord | null, expected: NonNullable<SetupSession["ownerManagement"]>): void {
+    if (record === null || record.mandateHash !== expected.mandateHash || record.status !== expected.status ||
+        record.recoveryAtMs !== expected.recoveryAtMs || record.revokedAtMs !== expected.revokedAtMs) {
+      throw conflict("owner_session_stale", "The mandate changed after this owner link was created; review a new link");
+    }
   }
 
   /**
@@ -710,6 +831,7 @@ export class SpendingMandateService {
           vault: session.vault,
           document: input.document,
           agentCosign: "setup_session",
+          expectedOwnerState: session.ownerManagement,
           provenance: {
             via: "setup_session",
             sessionId: session.sessionId,
@@ -723,7 +845,8 @@ export class SpendingMandateService {
           completedAtMs: nowMs,
           mandateHash: registered.mandateHash,
           initialDepositApprovalId:
-            registered.initialDepositApproval?.approvalId ?? null
+            registered.initialDepositApproval?.approvalId ?? null,
+          ...(session.ownerManagement === undefined ? {} : { ownerAction: "update" as const })
         });
 
         return {

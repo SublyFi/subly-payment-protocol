@@ -28,6 +28,11 @@ const BUDGET_TOOL_NAME = "get_subly_yield_budget";
 const SETUP_TOOL_NAME = "create_subly_setup_link";
 const SETUP_STATUS_TOOL_NAME = "check_subly_setup";
 const OPERATION_STATUS_TOOL_NAME = "check_subly_vault_operation";
+const OWNER_LINK_TOOL_NAME = "create_subly_owner_link";
+const OWNER_SESSION_TOOL_NAME = "check_subly_owner_session";
+const OWNER_STATUS_TOOL_NAME = "get_subly_owner_status";
+const OWNER_RECOVERY_TOOL_NAME = "start_subly_owner_recovery";
+const OWNER_TOOL_NAMES = [OWNER_LINK_TOOL_NAME, OWNER_SESSION_TOOL_NAME, OWNER_STATUS_TOOL_NAME, OWNER_RECOVERY_TOOL_NAME];
 
 const SERVER_INSTRUCTIONS = `Subly lets an agent pay standard x402 (HTTP 402) \
 paid APIs that offer a Solana USDC exact rail with facilitator feePayer support \
@@ -86,7 +91,17 @@ paste-approveUrl-then-retry flow as deposits.
 withdrawal after a timeout. Use the returned dep_... or wdr_... ID with the \
 same wallet, vault and relayer. It reconciles that original transaction \
 without preparing or sending another. If still confirming, check the same \
-ID later; do not repeat the deposit or withdrawal.`;
+ID later; do not repeat the deposit or withdrawal.
+6. create_subly_owner_link creates a review page for the CURRENT owner to \
+change limits, reactivate a revoked mandate, revoke access, or cancel recovery. \
+Omitted policy fields stay unchanged. Paste ownerUrl verbatim and use \
+check_subly_owner_session after the human finishes. get_subly_owner_status \
+reads the current policy and recovery deadline without moving funds.
+7. Only if the user asks to recover a lost owner credential, call \
+start_subly_owner_recovery. It schedules the existing 72-hour recovery window; \
+the current owner may cancel it. After get_subly_owner_status reports \
+recovery_elapsed, use a setup link to register the new owner. Recovery does \
+not bypass an explicit owner revocation and never authorizes a payment.`;
 
 export interface McpPaymentServerConfig {
   payer: Pick<StandardX402Payer, "pay">;
@@ -121,6 +136,42 @@ export function createMcpPaymentServer(
     vaultFlows === null
       ? []
       : [
+          {
+            name: OWNER_LINK_TOOL_NAME,
+            description: "Create a private 10-minute link for the CURRENT owner to review a policy update, reactivate a revoked mandate, revoke access, or cancel pending recovery. Omitted policy fields and expiry are preserved. Only owner verification can approve changes; this does not move funds. Paste ownerUrl verbatim to the user.",
+            inputSchema: { type: "object", properties: {
+              policy: { type: "object", properties: {
+                approvalThresholdRawUsdc: { type: ["string", "null"], pattern: "^(0|[1-9][0-9]*)$", description: "0 requires approval for every payment; null disables escalation." },
+                perPaymentCapRawUsdc: { type: "string", pattern: "^[1-9][0-9]*$" },
+                dailyApiSpendCapRawUsdc: { type: ["string", "null"], pattern: "^[1-9][0-9]*$" },
+                monthlyApiSpendCapRawUsdc: { type: ["string", "null"], pattern: "^[1-9][0-9]*$" },
+                dailyDepositCapRawUsdc: { type: ["string", "null"], pattern: "^[1-9][0-9]*$" },
+                allowedPayToAddresses: { type: ["array", "null"], items: { type: "string" }, minItems: 1, description: "Allowed seller addresses; null removes the payee restriction." },
+                depositPolicy: { type: "string", enum: ["agent_allowed", "owner_approval_required"] },
+                withdrawalPolicy: { type: "string", enum: ["agent_allowed", "owner_approval_required"] }
+              }, additionalProperties: false },
+              mandateTtlDays: { type: "integer", minimum: 1, maximum: 3650 }
+            }, additionalProperties: false },
+            annotations: { title: "Manage Subly owner policy", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+          },
+          {
+            name: OWNER_SESSION_TOOL_NAME,
+            description: "Check completion of an owner management link after the user acts. Reads only the session outcome; never changes policy or moves funds.",
+            inputSchema: { type: "object", properties: { sessionId: { type: "string", pattern: "^st_[0-9a-f]{32}$" } }, required: ["sessionId"], additionalProperties: false },
+            annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+          },
+          {
+            name: OWNER_STATUS_TOOL_NAME,
+            description: "Read the selected vault's current owner policy, effective status and recovery deadline. No registration, budget sync, recovery scheduling or fund movement.",
+            inputSchema: { type: "object", properties: {}, additionalProperties: false },
+            annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+          },
+          {
+            name: OWNER_RECOVERY_TOOL_NAME,
+            description: "Start lost-owner-credential recovery ONLY at the user's request. The agent wallet schedules a 72-hour window, during which the current owner can cancel through an owner link. Does not override an owner-revoked mandate or move funds. Check get_subly_owner_status; register a new owner with setup only after recovery_elapsed.",
+            inputSchema: { type: "object", properties: {}, additionalProperties: false },
+            annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false }
+          },
           {
             name: OPERATION_STATUS_TOOL_NAME,
             description: "Read and reconcile the original deposit or withdrawal by its dep_... or wdr_... intent ID. " +
@@ -424,7 +475,7 @@ export function createMcpPaymentServer(
   const vaultFlowFailure = (error: unknown) => {
     if (error instanceof VaultFlowClientError) {
       return textResult(
-        { ok: false, step: error.step, message: error.message },
+        { ok: false, step: error.step, code: error.code, message: error.message },
         true
       );
     }
@@ -510,7 +561,8 @@ export function createMcpPaymentServer(
       WITHDRAW_TOOL_NAME,
       SETUP_TOOL_NAME,
       SETUP_STATUS_TOOL_NAME,
-      OPERATION_STATUS_TOOL_NAME
+      OPERATION_STATUS_TOOL_NAME,
+      ...OWNER_TOOL_NAMES
     ];
     if (vaultFlows !== null && vaultToolNames.includes(request.params.name)) {
       // Registration + chain sync are idempotent, and any MONEY-MOVING tool
@@ -521,7 +573,8 @@ export function createMcpPaymentServer(
       const needsChainSync =
         request.params.name !== SETUP_TOOL_NAME &&
         request.params.name !== SETUP_STATUS_TOOL_NAME &&
-        request.params.name !== OPERATION_STATUS_TOOL_NAME;
+        request.params.name !== OPERATION_STATUS_TOOL_NAME &&
+        !OWNER_TOOL_NAMES.includes(request.params.name);
       if (needsChainSync) {
         try {
           await ensureWalletOnboarded({ relayerBaseUrl, signer });
@@ -530,6 +583,31 @@ export function createMcpPaymentServer(
         }
       }
       const args = request.params.arguments ?? {};
+
+      if (OWNER_TOOL_NAMES.includes(request.params.name)) {
+        try {
+          if (request.params.name === OWNER_LINK_TOOL_NAME) {
+            if (args.policy !== undefined && (args.policy === null || typeof args.policy !== "object" || Array.isArray(args.policy))) {
+              return textResult({ ok: false, message: "policy must be an object" }, true);
+            }
+            if (args.mandateTtlDays !== undefined && (typeof args.mandateTtlDays !== "number" ||
+              !Number.isInteger(args.mandateTtlDays) || args.mandateTtlDays < 1 || args.mandateTtlDays > 3650)) {
+              return textResult({ ok: false, message: "mandateTtlDays must be an integer between 1 and 3650" }, true);
+            }
+            return textResult({ ...await vaultFlows.createOwnerSession({
+              ...(args.policy === undefined ? {} : { policy: args.policy as Record<string, unknown> }),
+              ...(args.mandateTtlDays === undefined ? {} : { mandateTtlDays: args.mandateTtlDays as number }) }),
+              instructions: `Paste ownerUrl verbatim. The current owner must review and approve. Then use ${OWNER_SESSION_TOOL_NAME} with sessionId.` });
+          }
+          if (request.params.name === OWNER_SESSION_TOOL_NAME) {
+            if (typeof args.sessionId !== "string") return textResult({ ok: false, message: "sessionId is required" }, true);
+            return textResult(await vaultFlows.getOwnerSession(args.sessionId));
+          }
+          if (Object.keys(args).length !== 0) return textResult({ ok: false, message: "This owner command accepts no arguments" }, true);
+          return textResult(request.params.name === OWNER_RECOVERY_TOOL_NAME
+            ? await vaultFlows.startOwnerRecovery() : await vaultFlows.getOwnerStatus());
+        } catch (error) { return vaultFlowFailure(error); }
+      }
 
       if (request.params.name === OPERATION_STATUS_TOOL_NAME) {
         if (typeof args.intentId !== "string") {

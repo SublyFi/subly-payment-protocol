@@ -28,8 +28,7 @@ jobs:
       - run: npm ci
         working-directory: packages/pay
       - name: Audit published client dependencies
-        run: npm audit --omit=dev --audit-level=high
-        working-directory: packages/pay
+        run: node scripts/audit-client.mjs
 
   dependency-review:
     name: Dependency review

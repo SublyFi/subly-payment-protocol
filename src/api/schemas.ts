@@ -217,6 +217,16 @@ export const createSetupSessionSchema = z
   })
   .strict();
 
+export const createOwnerSessionSchema = z.object({
+  vault: solanaAddressString.optional(),
+  policy: mandatePolicySchema.partial().optional(),
+  mandateTtlDays: z.number().int().positive().max(3650).optional()
+}).strict();
+
+export const ownerSessionActionSchema = ownerSignedActionSchema.extend({
+  action: z.enum(["revoke", "cancel_recovery"])
+}).strict();
+
 /**
  * Setup completion: the mandate signed on the owner's device. The agent
  * co-sign is absent — the wallet-auth'd session creation stands in for it,

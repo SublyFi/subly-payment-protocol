@@ -21,6 +21,7 @@ const entries = {
   withdraw: join(repoRoot, "demo", "withdraw.ts"),
   "setup-link": join(here, "src", "setup-link.ts"),
   "setup-status": join(here, "src", "setup-status.ts"),
+  owner: join(here, "src", "owner.ts"),
   doctor: join(here, "src", "doctor.ts"),
   budget: join(here, "src", "budget.ts"),
   status: join(here, "src", "status.ts"),

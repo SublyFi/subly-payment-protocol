@@ -278,6 +278,14 @@ export interface SetupSession {
   initialDepositApprovalId: string | null;
   /** Wallet-auth provenance of the agent request that created the session. */
   agentAuth: unknown;
+  /** Management links pin the current owner and lifecycle state, not just policy. */
+  ownerManagement?: {
+    mandateHash: string;
+    status: SpendingMandateStatus;
+    recoveryAtMs: number | null;
+    revokedAtMs: number | null;
+  };
+  ownerAction?: "update" | "revoke" | "cancel_recovery";
 }
 
 export interface SellerLiquidityPolicy {

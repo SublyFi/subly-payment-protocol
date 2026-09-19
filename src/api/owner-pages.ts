@@ -407,6 +407,128 @@ export function setupPageHtml(): string {
   );
 }
 
+/** /owner/:sessionId — reuse the registered credential for owner management. */
+export function ownerPageHtml(): string {
+  return page(
+    "Subly — Manage agent spending",
+    `
+    <span class="badge">Subly owner controls</span>
+    <h1>Manage your agent's spending</h1>
+    <p class="sub">Review the current and proposed limits. Your existing passkey
+    or owner wallet must approve each change. Values are fixed by this link;
+    ask your agent for a new link to change the proposal.</p>
+    <div id="details"></div>
+    <button id="btn-update" class="primary" hidden>Approve these limits</button>
+    <button id="btn-cancel-recovery" class="secondary" hidden>Cancel pending recovery</button>
+    <button id="btn-revoke" class="danger" hidden>Revoke all relayer access</button>
+    <div id="status" class="status"></div>
+    <p class="note">Revocation blocks deposits, API payments and withdrawals
+    through this relayer. The same owner can restore access with a new owner link.
+    If your passkey is lost, use recovery-start in your terminal or ask your agent
+    to start owner recovery. The existing 72-hour delay still applies, and a revoked
+    mandate cannot use that recovery path. No action here sends funds.</p>
+    `,
+    `
+    const sessionId = location.pathname.split("/").filter(Boolean).pop();
+    let session = null;
+    const buttonIds = ["btn-update", "btn-cancel-recovery", "btn-revoke"];
+    function busy(value) { buttonIds.forEach(id => { $(id).disabled = value; }); }
+    function finish(message) {
+      buttonIds.forEach(id => { $(id).hidden = true; });
+      setStatus("ok", message + " Return to your chat or terminal and check owner-status.");
+    }
+    function comparison(label, key, format) {
+      const oldValue = format(session.currentMandate.policy[key]);
+      const newValue = format(session.policy[key]);
+      return row(label, oldValue === newValue ? newValue : oldValue + " → " + newValue);
+    }
+    function render() {
+      const current = session.currentMandate;
+      const approval = value => value === "owner_approval_required" ? "Owner approval required" : "Agent allowed";
+      $("details").innerHTML =
+        row("Vault", session.vault, true) + row("Agent wallet", session.wallet, true) +
+        row("Current status", current.status) +
+        comparison("Auto-pay threshold", "approvalThresholdRawUsdc", capUsdc) +
+        comparison("Per-payment cap", "perPaymentCapRawUsdc", usdc) +
+        comparison("Daily API cap", "dailyApiSpendCapRawUsdc", capUsdc) +
+        comparison("Monthly API cap", "monthlyApiSpendCapRawUsdc", capUsdc) +
+        comparison("Daily deposit cap", "dailyDepositCapRawUsdc", capUsdc) +
+        comparison("Allowed payees", "allowedPayToAddresses", value => value === null ? "Any seller within caps" : value.join(", ")) +
+        comparison("Deposits", "depositPolicy", approval) +
+        comparison("Withdrawals", "withdrawalPolicy", approval) +
+        row("Current expiry", new Date(current.expiresAtMs).toLocaleString()) +
+        row("Proposed expiry", new Date(session.mandateExpiresAtMs).toLocaleString()) +
+        (current.recoveryAtMs ? row("Recovery available after", new Date(current.recoveryAtMs).toLocaleString()) : "");
+      $("btn-update").hidden = session.mandateExpiresAtMs <= Date.now();
+      $("btn-update").textContent = current.status === "revoked" ? "Restore access with these limits" : "Approve these limits";
+      $("btn-revoke").hidden = current.status === "revoked";
+      $("btn-cancel-recovery").hidden = current.status !== "recovery_pending";
+      if (session.mandateExpiresAtMs <= Date.now()) {
+        setStatus("err", "These limits have expired. To restore access, ask for a new owner link with an explicit mandate lifetime.");
+      } else if (current.status === "recovery_pending") {
+        setStatus("ok", "Recovery is pending. Approving limits or cancelling recovery retains this owner. Revocation blocks access permanently until this same owner restores it.");
+      }
+    }
+    async function signAsCurrentOwner(message) {
+      const current = session.currentMandate;
+      if (current.ownerAuth === "passkey") return passkeySign(message, current.ownerCredential.credentialId);
+      const provider = phantomProvider();
+      await provider.connect();
+      if (provider.publicKey.toString() !== current.ownerCredential.publicKey) {
+        throw new Error("Connect the original registered owner wallet.");
+      }
+      const result = await provider.signMessage(enc.encode(message), "utf8");
+      return base58(result.signature instanceof Uint8Array ? result.signature : new Uint8Array(result.signature));
+    }
+    $("btn-update").addEventListener("click", async () => {
+      if (!confirm(session.currentMandate.status === "revoked"
+        ? "Restore this agent's relayer access with the displayed limits?"
+        : "Approve the displayed limits? This replaces the current mandate and cancels any pending recovery.")) return;
+      try {
+        busy(true);
+        const payload = {
+          version: 1, ownerAuth: session.currentMandate.ownerAuth,
+          ownerCredential: session.currentMandate.ownerCredential,
+          enforcementMode: session.enforcementMode, agentWallet: session.wallet,
+          vault: session.vault, issuedAtMs: Date.now(),
+          expiresAtMs: session.mandateExpiresAtMs, policy: session.policy
+        };
+        const message = "subly-mandate:v1:" + await sha256Hex(canonicalJson(payload));
+        const ownerSignature = await signAsCurrentOwner(message);
+        await postJson("/v1/owner-sessions/" + sessionId + "/complete", {
+          document: Object.assign({}, payload, { ownerSignature })
+        });
+        finish("Updated — the mandate is active. Existing approvals must be requested again.");
+      } catch (error) { fail(error); } finally { busy(false); }
+    });
+    async function performAction(action) {
+      if (!confirm(action === "revoke"
+        ? "Revoke all new relayer operations, including withdrawals?"
+        : "Cancel pending recovery and retain the existing owner?")) return;
+      try {
+        busy(true);
+        const mandateHash = session.currentMandate.mandateHash;
+        const signedAtMs = Date.now();
+        const prefix = action === "revoke" ? "subly-mandate-revoke:v1:" : "subly-mandate-recovery-cancel:v1:";
+        const signature = await signAsCurrentOwner(prefix + mandateHash + ":" + signedAtMs);
+        await postJson("/v1/owner-sessions/" + sessionId + "/action", { action, mandateHash, signedAtMs, signature });
+        finish(action === "revoke" ? "Revoked — relayer withdrawals are blocked too." : "Recovery cancelled — the existing owner remains active.");
+      } catch (error) { fail(error); } finally { busy(false); }
+    }
+    $("btn-revoke").addEventListener("click", () => performAction("revoke"));
+    $("btn-cancel-recovery").addEventListener("click", () => performAction("cancel_recovery"));
+    (async () => {
+      try {
+        session = await api("/v1/owner-sessions/" + sessionId);
+        if (session.status === "completed") { finish("This owner link was already completed (" + session.action + ")."); return; }
+        if (session.status === "expired") { setStatus("err", "This owner link has expired (10 minutes). Ask for a new link."); return; }
+        render();
+      } catch (error) { fail(error); }
+    })();
+    `
+  );
+}
+
 /** /approve/:approvalId — one payment/deposit above the threshold. */
 export function approvePageHtml(): string {
   return page(

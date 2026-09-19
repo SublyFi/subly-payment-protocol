@@ -29,8 +29,10 @@ import {
   chainSyncWalletPositionSchema,
   completeSetupSessionSchema,
   createSetupSessionSchema,
+  createOwnerSessionSchema,
   liquidityPolicySchema,
   ownerSignedActionSchema,
+  ownerSessionActionSchema,
   prepareDepositSchema,
   preparePaymentSchema,
   prepareWithdrawalSchema,
@@ -45,6 +47,7 @@ import {
 } from "./schemas.js";
 import {
   approvePageHtml,
+  ownerPageHtml,
   revokePageHtml,
   setupPageHtml
 } from "./owner-pages.js";
@@ -851,6 +854,39 @@ export function buildServer(
 
   // Public capability reads backing the owner pages: the approval id / the
   // wallet address in the link is the authorization to see the summary.
+
+  server.post<{ Params: { wallet: string } }>(
+    "/v1/wallets/:wallet/owner-sessions",
+    { preHandler: requireWalletOrAdminAuth },
+    async (request) => {
+      assertOwnWallet(request, request.params.wallet);
+      const body = createOwnerSessionSchema.parse(request.body ?? {});
+      return requireMandates().createOwnerSession({
+        wallet: request.params.wallet,
+        vault: forVault(body.vault).vault.address,
+        policy: body.policy,
+        ...(body.mandateTtlDays === undefined ? {} : { mandateTtlMs: body.mandateTtlDays * 24 * 60 * 60 * 1000 }),
+        agentAuth: {
+          wallet: headerValue(request, WALLET_AUTH_WALLET_HEADER) ?? null,
+          signedAt: headerValue(request, WALLET_AUTH_SIGNED_AT_HEADER) ?? null,
+          signature: headerValue(request, WALLET_AUTH_SIGNATURE_HEADER) ?? null,
+          admin: request.authedAsAdmin === true
+        }
+      });
+    }
+  );
+  server.get<{ Params: { sessionId: string } }>("/v1/owner-sessions/:sessionId", async (request, reply) => {
+    reply.header("cache-control", "no-store");
+    return requireMandates().getOwnerSession(request.params.sessionId);
+  });
+  server.post<{ Params: { sessionId: string } }>("/v1/owner-sessions/:sessionId/complete", async (request) => {
+    const body = completeSetupSessionSchema.parse(request.body);
+    return requireMandates().completeOwnerSession({ sessionId: request.params.sessionId, document: body.document });
+  });
+  server.post<{ Params: { sessionId: string } }>("/v1/owner-sessions/:sessionId/action", async (request) => {
+    const body = ownerSessionActionSchema.parse(request.body);
+    return requireMandates().completeOwnerAction({ sessionId: request.params.sessionId, ...body });
+  });
   server.get<{
     Params: { approvalId: string };
   }>("/v1/approvals/:approvalId", async (request) =>
@@ -890,6 +926,9 @@ export function buildServer(
   );
   server.get("/revoke/:wallet", async (_request, reply) =>
     servePage(reply, revokePageHtml())
+  );
+  server.get("/owner/:sessionId", async (_request, reply) =>
+    servePage(reply, ownerPageHtml())
   );
 
   return server;

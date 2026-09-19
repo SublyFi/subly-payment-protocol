@@ -1,5 +1,47 @@
 # Validation status
 
+## 0.8.3 source candidate — 2026-09-20
+
+The candidate passed 584 tests with disposable PostgreSQL 18.6; the one
+Docker Compose backup/restore integration test was skipped because the local
+Docker daemon was unavailable. Root/client type checks, builds, documentation
+links, clean packed CLI installation and all thirteen MCP tools passed. Chromium
+with a virtual WebAuthn authenticator verified reuse of the original credential
+for policy changes, recovery cancellation, revocation and reactivation.
+PostgreSQL reopening and injected write failures verified that owner actions and
+session completion persist together or roll back together.
+
+Sixteen new deposit/withdrawal concurrency regressions exercise the original
+public submit/status methods with real disposable signatures and mocked chain
+responses. They cover a recovery broadcast followed by delayed simulation failure,
+concurrent confirmation, and expired-blockhash reconciliation. A confirmed receipt
+remains confirmed; ambiguous outcomes remain pending until reconciled.
+
+The full generated-signer Surfpool 1.3.0 local-fork pipeline also passed:
+deposit, synthetic-yield realization from a zero wallet USDC balance, official
+x402 client/local seller settlement, verified receipt report-back, and withdrawal.
+The recorded principal basis remained unchanged by the payment. This is a local
+fixture, not evidence of organically accrued mainnet yield or an external seller.
+
+Live read-only mainnet configuration, authenticated Pyth pricing, and unsigned
+normal/yield withdrawal previews passed, including repeated previews after a
+delay. The previously preserved position's share total still matched, but its
+spendable yield after recorded fee debt was about 0.000393 USDC at observation,
+below the proposed 0.01 USDC external payment and required headroom. No real-funds
+transaction was sent and no principal baseline was changed. Actual yield-funded
+external payment remains outstanding; it must wait for adequate real yield and
+an authorized operation. An independent security audit also remains outstanding.
+
+During initial validation, the npm advisory endpoint returned maintenance HTTP
+503. Both new audit gates retried four times and correctly refused release.
+The advisory service subsequently recovered for the GitHub checks: both
+production dependency audits passed with zero reported vulnerabilities. The
+previously published 0.8.1 also passed a clean registry installation, SHA-512
+integrity, CLI and nine MCP tool checks. The 0.8.3 release workflow verifies its
+exact registry installation before creating a GitHub release; a source tag by
+itself must not be presented as npm availability. See [release status](https://github.com/SublyFi/subly-payment-protocol/actions/workflows/release-pay.yml)
+for the actual publication outcome.
+
 ## 0.8.0 verification — 2026-09-19
 
 The release checks cover the relayer with disposable PostgreSQL, client builds,

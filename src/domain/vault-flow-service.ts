@@ -364,7 +364,13 @@ export class VaultFlowService {
     }
     if (intent.status === "prepared" && flowExpired(intent.expiresAt)) {
       return serializeDepositIntent(
-        await this.ledger.saveDeposit(terminalFlow(intent, "expired", "expired"))
+        await this.ledger.withWalletVaultLock(intent.wallet, intent.vault, async () => {
+          const latest = await this.ledger.getDeposit(intent.depositId);
+          if (latest === null || latest.status !== "prepared" || !flowExpired(latest.expiresAt)) {
+            return latest ?? intent;
+          }
+          return this.ledger.saveDeposit(terminalFlow(latest, "expired", "expired"));
+        })
       );
     }
 
@@ -804,9 +810,13 @@ export class VaultFlowService {
     }
     if (intent.status === "prepared" && flowExpired(intent.expiresAt)) {
       return serializeWithdrawalIntent(
-        await this.ledger.saveWithdrawal(
-          terminalFlow(intent, "expired", "expired")
-        )
+        await this.ledger.withWalletVaultLock(intent.wallet, intent.vault, async () => {
+          const latest = await this.ledger.getWithdrawal(intent.withdrawalId);
+          if (latest === null || latest.status !== "prepared" || !flowExpired(latest.expiresAt)) {
+            return latest ?? intent;
+          }
+          return this.ledger.saveWithdrawal(terminalFlow(latest, "expired", "expired"));
+        })
       );
     }
 
@@ -817,18 +827,7 @@ export class VaultFlowService {
     intent: DepositIntent
   ): Promise<DepositIntent> {
     const outcome = await this.sendAndConfirmFlow(intent);
-    if (outcome.kind === "not_submitted") {
-      return this.ledger.withWalletVaultLock(intent.wallet, intent.vault, async () =>
-        this.ledger.saveDeposit(
-          terminalFlow(intent, "failed_not_submitted", outcome.errorCode)
-        )
-      );
-    }
-    if (outcome.kind === "pending") {
-      return intent;
-    }
-
-    return this.finalizeDepositFromChain(intent, outcome);
+    return this.applyDepositOutcome(intent, outcome);
   }
 
   private async reconcileDeposit(
@@ -836,15 +835,26 @@ export class VaultFlowService {
     options: VaultFlowStatusOptions = {}
   ): Promise<DepositIntent> {
     const outcome = await this.reconcileFlow(intent, options);
+    return this.applyDepositOutcome(intent, outcome);
+  }
+
+  private async applyDepositOutcome(
+    intent: DepositIntent,
+    outcome: FlowOutcome
+  ): Promise<DepositIntent> {
     if (outcome.kind === "pending") {
-      return intent;
+      return (await this.ledger.getDeposit(intent.depositId)) ?? intent;
     }
     if (outcome.kind === "not_submitted") {
-      return this.ledger.withWalletVaultLock(intent.wallet, intent.vault, async () =>
-        this.ledger.saveDeposit(
-          terminalFlow(intent, "failed_not_submitted", outcome.errorCode)
-        )
-      );
+      return this.ledger.withWalletVaultLock(intent.wallet, intent.vault, async () => {
+        const latest = await this.ledger.getDeposit(intent.depositId);
+        if (latest === null || latest.status !== "submitted") {
+          return latest ?? intent;
+        }
+        return this.ledger.saveDeposit(
+          terminalFlow(latest, "failed_not_submitted", outcome.errorCode)
+        );
+      });
     }
 
     return this.finalizeDepositFromChain(intent, outcome);
@@ -939,18 +949,7 @@ export class VaultFlowService {
     intent: WithdrawalIntent
   ): Promise<WithdrawalIntent> {
     const outcome = await this.sendAndConfirmFlow(intent);
-    if (outcome.kind === "not_submitted") {
-      return this.ledger.withWalletVaultLock(intent.wallet, intent.vault, async () =>
-        this.ledger.saveWithdrawal(
-          terminalFlow(intent, "failed_not_submitted", outcome.errorCode)
-        )
-      );
-    }
-    if (outcome.kind === "pending") {
-      return intent;
-    }
-
-    return this.finalizeWithdrawalFromChain(intent, outcome);
+    return this.applyWithdrawalOutcome(intent, outcome);
   }
 
   private async reconcileWithdrawal(
@@ -958,15 +957,26 @@ export class VaultFlowService {
     options: VaultFlowStatusOptions = {}
   ): Promise<WithdrawalIntent> {
     const outcome = await this.reconcileFlow(intent, options);
+    return this.applyWithdrawalOutcome(intent, outcome);
+  }
+
+  private async applyWithdrawalOutcome(
+    intent: WithdrawalIntent,
+    outcome: FlowOutcome
+  ): Promise<WithdrawalIntent> {
     if (outcome.kind === "pending") {
-      return intent;
+      return (await this.ledger.getWithdrawal(intent.withdrawalId)) ?? intent;
     }
     if (outcome.kind === "not_submitted") {
-      return this.ledger.withWalletVaultLock(intent.wallet, intent.vault, async () =>
-        this.ledger.saveWithdrawal(
-          terminalFlow(intent, "failed_not_submitted", outcome.errorCode)
-        )
-      );
+      return this.ledger.withWalletVaultLock(intent.wallet, intent.vault, async () => {
+        const latest = await this.ledger.getWithdrawal(intent.withdrawalId);
+        if (latest === null || latest.status !== "submitted") {
+          return latest ?? intent;
+        }
+        return this.ledger.saveWithdrawal(
+          terminalFlow(latest, "failed_not_submitted", outcome.errorCode)
+        );
+      });
     }
 
     return this.finalizeWithdrawalFromChain(intent, outcome);
@@ -1070,14 +1080,17 @@ export class VaultFlowService {
       intent.txSignature === null ||
       intent.submittedSerializedTransaction === null
     ) {
-      return { kind: "not_submitted", errorCode: "submission_record_missing" };
+      return this.reconcileFlow(intent, { resubmit: false });
     }
 
     const simulation = await this.engine.simulateSignedTransaction(
       intent.submittedSerializedTransaction
     );
     if (simulation.err !== null) {
-      return { kind: "not_submitted", errorCode: "simulation_failed" };
+      // The submitted record is already visible to recovery requests, which
+      // may have broadcast these bytes while this simulation was in flight.
+      // Simulation failure alone cannot prove that no transaction landed.
+      return this.reconcileFlow(intent, { resubmit: false });
     }
 
     try {
@@ -1094,7 +1107,7 @@ export class VaultFlowService {
       lastValidBlockHeight: intent.lastValidBlockHeight
     });
     if (confirmation.status === "expired") {
-      return { kind: "not_submitted", errorCode: "blockhash_expired" };
+      return this.reconcileFlow(intent, { resubmit: false });
     }
     if (confirmation.status === "timeout") {
       return { kind: "pending" };
@@ -1111,11 +1124,10 @@ export class VaultFlowService {
     },
     options: VaultFlowStatusOptions = {}
   ): Promise<FlowOutcome> {
-    if (
-      intent.txSignature === null ||
-      intent.submittedSerializedTransaction === null
-    ) {
-      return { kind: "not_submitted", errorCode: "submission_record_missing" };
+    if (intent.txSignature === null) {
+      // An incomplete persisted submission is an operator-recovery problem,
+      // not evidence that it is safe to unlock the position and retry.
+      return { kind: "pending" };
     }
 
     const lookup = await this.engine.lookupTransaction(intent.txSignature);
@@ -1129,10 +1141,16 @@ export class VaultFlowService {
     }
 
     if (await this.engine.isBlockhashExpired(intent.lastValidBlockHeight)) {
+      // Check after observing expiry: the first lookup may have raced a
+      // transaction landing in the last valid block or receipt indexing.
+      const finalLookup = await this.lookupConfirmedFlow(intent.txSignature);
+      if (finalLookup.kind === "confirmed") {
+        return finalLookup;
+      }
       return { kind: "not_submitted", errorCode: "blockhash_expired" };
     }
 
-    if (options.resubmit !== false) {
+    if (options.resubmit !== false && intent.submittedSerializedTransaction !== null) {
       try {
         await this.engine.sendSignedTransaction(
           intent.submittedSerializedTransaction

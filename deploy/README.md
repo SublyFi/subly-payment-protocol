@@ -20,6 +20,12 @@ The x402 payment transaction itself is fee-paid by the *seller's* facilitator
 (`extra.feePayer`), not by your sponsor — budget roughly one sponsored
 transaction per payment (the realize), plus deposits and withdrawals.
 
+For a new installation, follow [prerequisites](#prerequisites) →
+[get the code](#get-the-code-onto-the-host) → [first-time setup](#first-time-setup) →
+[validation](#verify-before-onboarding-users) → [monitoring and backups](#monitoring-and-backups).
+Then [connect your users](#pointing-users-at-your-relayer). Existing operators
+should start at [updating a running deployment](#updating-a-running-deployment).
+
 ## Stack
 
 ```text
@@ -31,198 +37,477 @@ secrets/sponsor.json    <- sponsor key (host only, never baked into the image)
 
 ## Prerequisites
 
-- A host with Docker Compose and a domain whose DNS A record points at it.
-  Inbound TCP **80 and 443** must be open in the host firewall / cloud
-  security group — Caddy provisions TLS automatically and needs port 80 for
-  certificate issuance.
-- Node.js 24+ with npm, on the server or your workstation, for the
-  one-time on-chain setup scripts below (the relayer itself runs in Docker).
-- A **dedicated / paid Solana RPC endpoint** — the public RPC is not
+These commands assume a **dedicated Linux host and a normal operator account
+with sudo and Docker access**, using Bash. Keep using that account for source
+files, Compose, logs and cron; only the mounted sponsor key is owned by container
+UID 1000. For an assisted walkthrough, see the [Japanese getting-started guide](../docs/getting-started.ja.md)
+and [AI setup prompts](../docs/ai-setup-prompts.md). Never paste key files, API
+keys, admin tokens or private environment files into an AI conversation.
+
+- Install [Docker Engine](https://docs.docker.com/engine/install/) and the
+  [Compose plugin](https://docs.docker.com/compose/install/linux/) from Docker's
+  official instructions for your distribution. On Ubuntu, use the
+  [official apt repository procedure](https://docs.docker.com/engine/install/ubuntu/).
+  Complete the [Linux post-installation steps](https://docs.docker.com/engine/install/linux-postinstall/)
+  so this operator can run Docker without sudo, then log out and back in.
+  Docker-group access grants administrative control over the host.
+- Install Git, Bash, curl, OpenSSL, Python 3 and a cron service using your
+  distribution's package manager. The examples use GNU `install`/`tar` and
+  `crontab`; verify those commands are available too.
+- Install [Node.js 24 with npm](https://nodejs.org/en/download) on the host or
+  your workstation for validation and optional on-chain scripts. The relayer
+  itself runs in Docker. The examples below run those scripts on the host.
+- Have a domain whose DNS A record points at the host. Open inbound TCP
+  **80 and 443** in the host firewall/cloud security group for Caddy HTTPS.
+  If the domain has an AAAA record, it must also reach this host; remove stale
+  records before trying certificate issuance.
+- Obtain a **dedicated Solana mainnet RPC endpoint**. The public RPC is not
   sufficient for the settlement path.
-- A **Pyth Hermes API key** for live SOL/USDC fee pricing. Set `SUBLY_HERMES_API_KEY`
-  (or `PYTH_API_KEY`) in the relayer environment. Since the
-  [August 2026 Hermes upgrade](https://docs.pyth.network/price-feeds/core/upgrade/preparing),
-  the hosted service requires authentication. The default endpoint is
-  `https://pyth.dourolabs.app/hermes`; `SUBLY_HERMES_BASE_URL` supports a compatible
-  operator-selected provider. Keep this credential on the server, out of client
-  configuration and URLs.
-- A **sponsor wallet**: create it and fund it with SOL (size its balance for expected gas and rent; the default alert threshold is 0.1 SOL):
+- Obtain a **Pyth Hermes API key** from [Pyth](https://pythdata.app/). Set
+  `SUBLY_HERMES_API_KEY` (or `PYTH_API_KEY`) in the server configuration. The
+  hosted service requires authentication following the
+  [August 2026 Hermes upgrade](https://docs.pyth.network/price-feeds/core/upgrade/preparing).
+  The default endpoint is `https://pyth.dourolabs.app/hermes`;
+  `SUBLY_HERMES_BASE_URL` supports a compatible operator-selected provider.
 
-  ```bash
-  solana-keygen new --no-bip39-passphrase -o sponsor.json
-  # fund the printed address with SOL
-  ```
+Check the local tools before proceeding:
 
-  The sponsor is a hot wallet — the server signs with it. Keep only working
-  capital on it, never large funds.
+```bash
+docker version
+docker compose version
+node --version                    # v24.x or newer
+npm --version
+git --version
+python3 --version
+command -v bash curl openssl install tar crontab
+```
 
-> Planning to offer **multiple USDC Kamino vaults** or change the default? Read [Advanced: your own Kamino vault](#advanced-your-own-kamino-vault)
-> *before* the one-time on-chain setup — the settlement lookup table is
-> vault-specific.
+### Prepare the sponsor key
+
+The sponsor is a hot wallet that pays gas and account rent. Install the
+[Solana CLI](https://solana.com/docs/intro/installation) for `solana-keygen`,
+then create a dedicated key on the host under your operator account:
+
+Run this yourself in a private terminal: `solana-keygen` displays the recovery
+phrase. Do not run it through an AI tool, screen sharing or a captured terminal
+session. Store the recovery phrase and key backup securely before continuing.
+
+```bash
+(
+  set -euo pipefail
+  umask 077
+  mkdir -p "$HOME/.config/subly"
+  test ! -e "$HOME/.config/subly/sponsor.json"
+  test ! -L "$HOME/.config/subly/sponsor.json"
+  solana-keygen new --no-bip39-passphrase -o "$HOME/.config/subly/sponsor.json"
+  chmod 600 "$HOME/.config/subly/sponsor.json"
+)
+```
+
+If you already have a dedicated sponsor key, use that file instead of creating
+another. If it was created on your workstation, securely copy it to the host's
+`$HOME/.config/subly/sponsor.json` without replacing an existing key. Fund only
+the printed **public address** with SOL after deciding your operating budget;
+the default low-balance alert threshold is 0.1 SOL. No command in the initial
+configuration steps transfers funds. Preserve a secure backup of this key.
+
+> Offering multiple vaults or changing the default? Review
+> [Advanced: your own Kamino vault](#advanced-your-own-kamino-vault) before boot.
+> Vault metadata must match the clients. Additional lookup tables are optional
+> and are only created after validation shows they are needed.
 
 ## Get the code onto the host
 
-Use the reviewed `pay-v0.8.0` source tag. You can clone anonymously:
+Use the reviewed `pay-v0.8.1` source tag. **Choose one** of the following
+methods. Both install into `/opt/subly`, owned by the operator account, and
+stop if that path already exists. For an existing installation use
+[Updating a running deployment](#updating-a-running-deployment); do not repeat
+first-time initialization or regenerate its database password.
+
+Clone anonymously on the host:
 
 ```bash
-git clone --branch pay-v0.8.0 --depth 1 https://github.com/SublyFi/subly-payment-protocol.git
+(
+  set -euo pipefail
+  if [ -e /opt/subly ] || [ -L /opt/subly ]; then
+    echo '/opt/subly already exists; inspect it or use the upgrade procedure.' >&2
+    exit 1
+  fi
+  sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0750 /opt/subly
+  git clone --branch pay-v0.8.1 --depth 1 https://github.com/SublyFi/subly-payment-protocol.git /opt/subly
+)
 ```
 
-Alternatively ship a tarball from that tag. Everything below assumes the repo lives at `/opt/subly`:
+Alternatively, create an archive **from a local checkout containing that tag**
+and transfer it:
 
 ```bash
-# locally
-git archive --format=tar.gz -o /tmp/subly.tar.gz pay-v0.8.0
-scp /tmp/subly.tar.gz <user>@<host>:/tmp/
-# on the server
-sudo mkdir -p /opt/subly && sudo tar xzf /tmp/subly.tar.gz -C /opt/subly
+# On your workstation, in the repository:
+git archive --format=tar.gz -o /tmp/subly-pay-v0.8.1.tar.gz pay-v0.8.1
+scp /tmp/subly-pay-v0.8.1.tar.gz <operator>@<host>:/tmp/
 ```
+
+Then extract as the operator, not as root:
+
+```bash
+(
+  set -euo pipefail
+  test -f /tmp/subly-pay-v0.8.1.tar.gz
+  if [ -e /opt/subly ] || [ -L /opt/subly ]; then
+    echo '/opt/subly already exists; inspect it or use the upgrade procedure.' >&2
+    exit 1
+  fi
+  sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0750 /opt/subly
+  tar --no-same-owner -xzf /tmp/subly-pay-v0.8.1.tar.gz -C /opt/subly
+)
+```
+
+If cloning or extraction is interrupted, inspect that incomplete directory
+before retrying; these examples deliberately refuse to overwrite it.
 
 ## First-time setup
 
-On the server:
+### 1. Create private files without starting services
+
+Run this on the host as the same operator. Change `sponsor_source` if your
+existing key is elsewhere. The block refuses to replace any existing
+configuration or deployed key; if an earlier run stopped partway through,
+inspect the created files and resume configuration instead of overwriting them.
+
+```bash
+(
+  set -euo pipefail
+  set -o noclobber
+  umask 077
+  cd /opt/subly/deploy
+  sponsor_source="$HOME/.config/subly/sponsor.json"
+  test -f "$sponsor_source"
+  for target in relayer.production.env Caddyfile .env secrets/sponsor.json; do
+    if [ -e "$target" ] || [ -L "$target" ]; then
+      echo "Refusing to replace $target; inspect the existing installation." >&2
+      exit 1
+    fi
+  done
+  install -d -m 0700 secrets
+  cat relayer.production.env.example > relayer.production.env
+  cat Caddyfile.example > Caddyfile
+  printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 24)" > .env
+  sudo install -o 1000 -g 1000 -m 0600 "$sponsor_source" secrets/sponsor.json
+)
+```
+
+The copied key is now readable by the container's UID 1000. Its source remains
+in your private operator directory. Keep `deploy/.env` (database password),
+`deploy/relayer.production.env` and the sponsor key out of version control.
+Never regenerate `POSTGRES_PASSWORD` on an existing PostgreSQL volume: changing
+this file does not change the database's stored password. Do not use
+`docker compose down -v` to troubleshoot an existing deployment.
+
+### 2. Fill in configuration, then check it
+
+Use a local editor, so credentials do not enter shell history:
 
 ```bash
 cd /opt/subly/deploy
-cp relayer.production.env.example relayer.production.env   # fill in (see notes below)
-cp Caddyfile.example Caddyfile                              # set your domain
-mkdir -p secrets                                            # copy sponsor key to secrets/sponsor.json
-# The relayer runs as UID 1000. Allow that user to read only this key:
-sudo chown 1000:1000 secrets/sponsor.json
-sudo chmod 600 secrets/sponsor.json
-echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" > .env
-chmod 600 .env relayer.production.env
+nano relayer.production.env Caddyfile
+```
+
+Use your preferred editor if `nano` is not installed. Before starting:
+
+- Fill `SOLANA_RPC_URL`, `SUBLY_HERMES_API_KEY` and a unique
+  `SUBLY_ADMIN_API_TOKEN` in `relayer.production.env`. Generate the admin token
+  with a password manager or `openssl rand -hex 24`, then paste it into the
+  private file. The admin token is for operators; buyers use wallet signatures.
+- Replace `relayer.example.com` in **all three places**: `Caddyfile`,
+  `SUBLY_APPROVE_URL_BASE` and `SUBLY_SETUP_URL_BASE`. For example, the bases
+  are `https://your-domain/approve/` and `https://your-domain/setup/`.
+  These hostnames determine owner passkey origins/rpId as well as the links
+  sent to users. Keep explicit WebAuthn overrides unset for this single-host
+  deployment. Use a real HTTPS domain you control.
+- Keep `SUBLY_MANDATE_ENFORCEMENT=on`. Leave the legacy seller API off.
+- Leave `SUBLY_EXTRA_LOOKUP_TABLES` unset unless validation has shown the current
+  withdrawal path needs an additional table. It is not a first-boot requirement.
+- If serving a custom/multiple-vault catalogue, finish the
+  [catalogue installation](#2-install-on-the-relayer-and-clients) and use both
+  Compose files for the checks and startup below.
+
+Validate without printing the expanded environment or key:
+
+```bash
+cd /opt/subly/deploy
 docker compose config --quiet
+sudo test -f secrets/sponsor.json
+sudo stat -c 'sponsor key owner=%u:%g mode=%a' secrets/sponsor.json   # 1000:1000, 600
+docker compose run --rm --no-deps caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+```
+
+These check file/Compose/Caddy syntax, not RPC credentials, SOL funding,
+DNS reachability, or the correctness of your chosen domain. Correct those
+values before the next step; a syntax check cannot detect a valid but wrong URL.
+
+### 3. Start the relayer
+
+```bash
+cd /opt/subly/deploy
 docker compose up -d --build --wait
-curl --fail https://<your-domain>/readyz                       # {"ok":true}
+curl --fail https://<your-domain>/readyz
 ```
 
-The runtime image is non-root, read-only, and installs production dependencies with lifecycle scripts disabled. It drains requests on SIGTERM and closes PostgreSQL. `/healthz` checks liveness; `/readyz` checks the database and initialized schema. Neither guarantees RPC liquidity or sponsor funding.
+Expected result: Compose reports healthy services and `/readyz` returns
+`{"ok":true}`. On a fresh database the schema is created before HTTP startup.
+If startup fails, inspect `docker compose ps` and `docker compose logs --tail=100
+relayer caddy postgres` locally; redact credentials before sharing diagnostics.
 
-On a fresh database, the schema auto-creates before HTTP startup. For an
-existing deployment, read the migration notes under [vault configuration](#existing-deployments-and-retiring-vaults). Notes on `relayer.production.env`:
-
-- **`SUBLY_APPROVE_URL_BASE` / `SUBLY_SETUP_URL_BASE` must point at your own
-  domain.** The relayer itself serves the owner pages (`/setup/:id`,
-  `/approve/:id`, `/revoke/:wallet`) on any domain, but these bases build the
-  links agents hand to owners *and* derive the WebAuthn rpId/origins — leave
-  them at someone else's domain and owner passkeys will fail verification.
-- **`SUBLY_MANDATE_ENFORCEMENT=on` is the right setting for a new
-  deployment.** It is also the secure default in the current source; `warn`
-  is an explicit staged-rollout compromise for pre-existing clients.
-- `SUBLY_EXTRA_LOOKUP_TABLES` stays unset for the first boot — you create
-  the table in the next section, then set it and restart.
-- `SUBLY_ADMIN_API_TOKEN` is for you, the operator. Your users never need a
-  token — buyer requests are authenticated by wallet signature.
-
-## One-time on-chain setup
-
-Both scripts run **from the repo root** on a machine with Node 24+ after
-`npm ci` — either the server or your workstation. They read the sponsor key
-from `SUBLY_SPONSOR_KEYPAIR_PATH` (file) or `SUBLY_SPONSOR_KEYPAIR` (base58
-secret), so from a workstation you need one of the two available locally.
-Note: scripts read only process environment variables —
-`relayer.production.env` feeds the container, not these scripts.
-
-**Additional lookup table, when needed.** The current standard x402 flow
-uses separate withdrawal and payment transactions. It first uses the vault's
-existing lookup table. Run the read-only validation below before creating
-another table: only create one if your actual transactions exceed Solana's
-1232-byte limit. The retired atomic settlement diagnostic can exceed this
-limit even when current withdrawals fit; that alone is not a reason to spend
-SOL creating a table.
-
-```bash
-cd /opt/subly && npm ci
-SOLANA_RPC_URL=<rpc> SUBLY_SPONSOR_KEYPAIR_PATH=<sponsor.json> \
-  npx tsx scripts/create-settlement-lut.ts
-# set the printed address as SUBLY_EXTRA_LOOKUP_TABLES in
-# relayer.production.env, then: docker compose up -d relayer
-```
-
-The sponsor pays the table's rent and owns it. The script always creates a
-*new* table (there is no in-place extend) — if you later re-run it to include
-new agent wallets' share accounts, append the new address to the
-comma-separated `SUBLY_EXTRA_LOOKUP_TABLES` list.
-
-**Invest crank.** Deposited USDC only earns yield once it is invested into
-the vault's lending reserves. The Kamino vault program's ("kvault") `invest`
-instruction is permissionless — run it after significant deposits (or on a
-schedule):
-
-```bash
-SOLANA_RPC_URL=<rpc> SUBLY_SPONSOR_KEYPAIR_PATH=<sponsor.json> \
-  npx tsx scripts/invest-vault.ts
-```
-
-Uninvested funds sit idle and drag the vault's effective APY down — cheap
-insurance for your users' yield pace.
+The runtime image is non-root and read-only, installs dependencies with
+lifecycle scripts disabled, drains requests on SIGTERM and closes PostgreSQL.
+`/healthz` checks liveness; `/readyz` checks the database and initialized schema.
+**Healthy does not mean a payment has been tested**: it does not certify live
+oracle access, sponsor funding, liquidity, owner approval or seller settlement.
+Complete the validation stages below before onboarding users.
 
 ## Verify before onboarding users
 
-Run the read-only validation harness for the current withdrawal path. It
-checks mainnet identity, Pyth pricing, pinned vault metadata, normal and
-yield-realize transaction output and a delayed client preview. It loads
-`.env` automatically and also accepts `SOLANA_MAINNET_RPC_URL` as a fallback
-for `SOLANA_RPC_URL` (other runtime commands still use `SOLANA_RPC_URL`):
+### Read-only validation first
+
+The validation harness checks mainnet identity, Pyth pricing, pinned vault
+metadata, normal/yield-realize transaction output and a delayed client preview.
+It **never loads a keypair or sends a transaction**. It runs from the repository
+root and loads `/opt/subly/.env`, which is different from both deployment files:
+`deploy/.env` holds the database password and `deploy/relayer.production.env`
+feeds the container. Neither is automatically loaded by host scripts.
 
 ```bash
-SUBLY_VALIDATE_WALLET=<public wallet holding vault shares> npm run validate:mainnet
+cd /opt/subly
+npm ci
+# Create an empty private host-script environment only if none exists:
+(umask 077; set -o noclobber; : > .env) 2>/dev/null || test -f .env
+chmod 600 .env
+nano .env
 ```
 
-Keep RPC and Pyth credentials in the local secret environment or ignored `.env`,
-not command history. Set `SUBLY_VALIDATE_SPONSOR` to a funded public address if
-the selected share owner has no SOL. The command never loads a keypair or sends
-a transaction; missing shares, oversize transactions, preview failures and
-oracle errors exit nonzero. Passing does not certify owner approval, deposit
-execution, the deployed ledger's yield provenance or an external seller.
-Use [the disposable fork test](../CONTRIBUTING.md#mainnet-fork-integration-test)
-to exercise the full local HTTP/client/transaction pipeline without real funds.
+In that private file, set `SOLANA_RPC_URL` and `SUBLY_HERMES_API_KEY` to the
+same provider settings you reviewed for the container. Set
+`SUBLY_VALIDATE_WALLET` to a **public wallet address already holding shares in
+the selected vault**. Set `SUBLY_VALIDATE_SPONSOR` to a funded public address
+if that share owner has no SOL. No private key belongs in this validation file.
+For a custom vault, include the same catalogue/default-vault configuration,
+using a host path such as `SUBLY_VAULTS_FILE=/opt/subly/deploy/vaults.json`
+instead of the container's `/run/subly/` path.
 
-Then do one end-to-end **real-funds smoke test** against your live relayer with your own
-wallet before inviting anyone else (the test wallet needs a little USDC; see
-the client README's "Wallet" section for keypair options):
+```bash
+cd /opt/subly
+npm run validate:mainnet
+```
+
+The harness also accepts `SOLANA_MAINNET_RPC_URL` as a fallback, but runtime
+commands use `SOLANA_RPC_URL`. Missing shares, oversize transactions, preview
+failures and oracle errors exit nonzero. On a completely fresh vault or test
+wallet there may be no shares yet: this is an incomplete withdrawal check,
+not a deployment failure. Use a known existing share-holder's public address,
+or return to this check after your separately authorized first deposit below.
+For a zero-funds end-to-end exercise, use
+[the disposable fork test](../CONTRIBUTING.md#mainnet-fork-integration-test).
+
+Passing this harness does not certify owner approval, deposit execution, the
+deployed ledger's yield provenance or an external seller. Its success criteria
+are the reported RPC/oracle/configuration/withdrawal-preview checks only.
+
+### Optional on-chain maintenance
+
+These commands **sign and send real mainnet transactions using the sponsor**.
+Run them only after you, the operator, explicitly choose the operation and its
+SOL budget. An AI following this guide must ask before running them; preparing
+configuration and running read-only validation do not authorize spending.
+They use the host `.env` above and the original operator-owned sponsor key.
+
+**Additional lookup table, only when needed.** The current standard x402 flow
+uses separate withdrawal and payment transactions and first uses the vault's
+existing lookup table. Only create another table if read-only validation of
+your actual current withdrawal transactions shows they exceed Solana's 1232-byte
+limit. The retired atomic-settlement diagnostic exceeding that limit is not a
+reason to create a table. Skip this step unless that evidence exists.
+
+```bash
+cd /opt/subly
+SUBLY_SPONSOR_KEYPAIR_PATH="$HOME/.config/subly/sponsor.json" \
+  node --env-file=.env --import tsx scripts/create-settlement-lut.ts
+```
+
+The sponsor pays rent and owns the table. The script always creates a **new**
+table; it does not extend an existing one. Record its address before deciding
+whether to run it again. Add the printed address to the appropriate vault's
+`extraLookupTables` entry, or to `SUBLY_EXTRA_LOOKUP_TABLES` in both the host
+`.env` and `deploy/relayer.production.env`. Preserve existing entries. Then
+restart from the **deployment directory** and repeat read-only validation:
+
+```bash
+cd /opt/subly/deploy
+docker compose up -d --wait relayer
+cd /opt/subly
+npm run validate:mainnet
+```
+
+For a catalogue deployment, use both Compose files for that restart:
+`docker compose -f docker-compose.yml -f docker-compose.vaults.yml up -d --wait relayer`.
+
+**Invest crank.** Deposited USDC earns lending yield after it is invested into
+the vault's reserves. Check the vault's existing curator/keeper arrangements
+before adding your own maintenance. If you choose to run the permissionless
+invest operation after significant deposits, it submits transactions per reserve
+and spends sponsor SOL:
+
+```bash
+cd /opt/subly
+SUBLY_SPONSOR_KEYPAIR_PATH="$HOME/.config/subly/sponsor.json" \
+  node --env-file=.env --import tsx scripts/invest-vault.ts
+```
+
+Review each reserve's reported outcome; a completed script is not evidence that
+every reserve was invested. Decide separately whether you need a schedule.
+Vault selection for both maintenance scripts is described under
+[Advanced: your own Kamino vault](#advanced-your-own-kamino-vault).
+
+### Authorized real-funds smoke test
+
+Before inviting users, the operator and test-wallet owner must explicitly choose
+a small real-funds deposit, later withdrawal, and (when enough yield exists) a
+paid API request. These are separate from read-only validation. An AI must get
+that authorization before submitting any of them. The owner approval page
+must show your domain and the agreed policy/amount; never approve on someone's
+behalf. The wallet needs USDC; see the [client wallet instructions](../packages/pay/README.md#quick-start).
+
+After authorization, the illustrative sequence is:
 
 ```bash
 export SUBLY_RELAYER_URL=https://<your-domain>
-export SUBLY_DEMO_AGENT_KEYPAIR_PATH=<test wallet keypair.json>
-npx -y @subly_fi/pay@0.8.0 setup-link --initial-deposit 1010000   # owner signs on your domain
-npx -y @subly_fi/pay@0.8.0 deposit 1010000
-# ...once yield has accrued: npx -y @subly_fi/pay@0.8.0 fetch <x402 url>
-npx -y @subly_fi/pay@0.8.0 withdraw 1000000
+export SUBLY_DEMO_AGENT_KEYPAIR_PATH=/absolute/path/to/test-agent.json
+# Read the client RPC credential without putting it in shell history:
+read -r -s -p 'Client Solana RPC URL: ' SOLANA_RPC_URL; printf '\n'
+export SOLANA_RPC_URL
+npx -y @subly_fi/pay@0.8.1 doctor && \
+npx -y @subly_fi/pay@0.8.1 setup-link --initial-deposit 1010000
 ```
 
-The payment step needs enough verified yield for the price, vault charges and
-fee headroom. A new ledger treats pre-existing vault value conservatively as
-principal, so a funded vault does not necessarily have a spendable budget.
-Keep the ledger between runs and allow yield to accrue. Check confirmed
-USDC/share changes and stored receipts before declaring the test successful;
-do not lower the baseline to bypass an insufficient-yield result. See
-[validation status](../docs/validation.md) for the checks already completed
-and their limits.
+Stop here. The owner opens the returned `setupUrl`, reviews the domain, policy
+and initial deposit, and approves. Then replace `st_SESSION_ID` below with the
+returned setup session ID (or pass the complete setup URL):
+
+```bash
+npx -y @subly_fi/pay@0.8.1 setup-status st_SESSION_ID
+```
+
+Continue only when setup status is `completed` and the agreed initial deposit
+is approved. This next command sends the deposit:
+
+```bash
+npx -y @subly_fi/pay@0.8.1 deposit 1010000
+```
+
+After the deposit is confirmed, check the budget and let yield accrue:
+
+```bash
+npx -y @subly_fi/pay@0.8.1 budget
+```
+
+Only when sufficient verified yield exists and the specific purchase is
+authorized, run the paid request in a separate step:
+
+```bash
+npx -y @subly_fi/pay@0.8.1 fetch <compatible-x402-url>
+```
+
+Verify that request's outcome before continuing. At the separately agreed time,
+test the withdrawal; if it requests owner approval, complete that approval and
+retry the original command with its approval ID:
+
+```bash
+npx -y @subly_fi/pay@0.8.1 withdraw 1000000
+```
+
+The example deposit minimum depends on the selected vault. Check confirmed
+USDC/share changes and stored receipts. For a submitted/timeout result, retain
+the original ID and run `npx -y @subly_fi/pay@0.8.1 status <dep_or_wdr_id>` with
+the same wallet, vault and relayer; do not submit the same operation again.
+
+The payment needs verified yield for the price, vault fees and fee headroom.
+A fresh ledger conservatively treats existing vault value as principal, so
+funding a wallet or depositing does not immediately create spendable yield.
+Keep the ledger between runs, check the budget, and allow yield to accrue; do
+not lower the baseline to force a payment. Do not call the complete payment
+flow successful until the original realization and the seller's delivery and
+settlement have been checked. See [validation status](../docs/validation.md)
+for the project's completed checks and their limits.
 
 ## Monitoring and backups
 
 `GET /v1/admin/monitoring` (admin bearer token) returns error counters,
-settlement latency percentiles, and the sponsor balance vs.
+settlement latency percentiles and sponsor balance against
 `SUBLY_MIN_SPONSOR_BALANCE_LAMPORTS`. Nothing halts automatically when the
-sponsor runs low — flows simply start failing once it is empty — so run the
-alert cron (needs `python3` on the host):
+sponsor runs low. Plan SOL replenishment; recorded fee debt does not reimburse
+the operator.
+
+### Install sponsor monitoring under the operator account
+
+Use the same normal account that runs Compose. Verify `python3`, `curl`, Docker
+access and an enabled cron service on the host. For example, on Debian/Ubuntu
+check `systemctl is-active cron`; other distributions may name it `crond`.
+Create private, operator-writable configuration, logs and backup directories:
 
 ```bash
-*/10 * * * * cd /opt/subly && SUBLY_RELAYER_URL=https://<your-domain> \
-  SUBLY_ADMIN_API_TOKEN=<token> SUBLY_ALERT_WEBHOOK_URL=<webhook> \
-  bash scripts/check-sponsor-balance.sh >> /var/log/subly-monitor.log 2>&1
+(
+  set -euo pipefail
+  umask 077
+  mkdir -p "$HOME/.config/subly" "$HOME/.local/state/subly" "$HOME/.local/share/subly/backups"
+  chmod 700 "$HOME/.config/subly" "$HOME/.local/state/subly" "$HOME/.local/share/subly/backups"
+  if [ ! -e "$HOME/.config/subly/monitor.env" ]; then
+    set -o noclobber
+    cat > "$HOME/.config/subly/monitor.env" <<'ENV'
+SUBLY_RELAYER_URL='https://your-domain'
+SUBLY_ADMIN_API_TOKEN='replace-in-editor'
+SUBLY_ALERT_WEBHOOK_URL='replace-in-editor'
+ENV
+  fi
+  chmod 600 "$HOME/.config/subly/monitor.env"
+)
+nano "$HOME/.config/subly/monitor.env"
 ```
 
-**Back up Postgres.** The ledger holds each wallet's principal basis — the
-line between "principal" and "spendable yield" — and that split is **not
-reconstructible from chain** (a chain re-sync conservatively resets the
-basis, forfeiting users' accrued yield). Run the backup as a host user with
-Docker access and a private, writable backup directory:
+Replace the placeholders in that private file with your relayer URL, existing
+admin token and your alert webhook. It is a shell environment file: retain the
+single quotes around literal values. Do not put credentials in a crontab, a
+command-line assignment, or a pasted support transcript. Existing files and
+backups are retained by these steps.
+
+Test once locally (this sends an alert to the configured webhook if a problem
+is found):
 
 ```bash
-/bin/bash /opt/subly/scripts/backup-postgres.sh --backup-dir /backups/subly
+/bin/bash -c 'set -ae; . "$HOME/.config/subly/monitor.env"; set +a; exec /bin/bash /opt/subly/scripts/check-sponsor-balance.sh'
+```
+
+Expect `sponsor balance ok`, or investigate the reported alert before
+scheduling. Run `crontab -e` **without sudo**, preserve existing jobs, and add
+this as **one physical line**:
+
+```cron
+*/10 * * * * /bin/bash -c 'set -ae; . "$HOME/.config/subly/monitor.env"; set +a; exec /bin/bash /opt/subly/scripts/check-sponsor-balance.sh' >> "$HOME/.local/state/subly/monitor.log" 2>&1
+```
+
+Use `crontab -l` to confirm the entry, then inspect the private log after a
+scheduled run. A failed webhook delivery is logged; configure cron/job-failure
+alerting independently so you are not relying on a single notification path.
+Set log rotation/retention for these files as part of host operations.
+
+### Back up the ledger
+
+The ledger holds each wallet's principal basis — the line between principal
+and spendable yield — and that split is **not reconstructible from chain**.
+A chain re-sync conservatively resets the basis, forfeiting accrued yield.
+The private backup directory above is outside the source checkout and writable
+by the operator. Run:
+
+```bash
+/bin/bash /opt/subly/scripts/backup-postgres.sh --backup-dir "$HOME/.local/share/subly/backups"
 ```
 
 The script uses the repository's `deploy/` directory by default; pass
@@ -241,12 +526,13 @@ final name. Failures exit nonzero and remove the partial file. Existing backups
 are never overwritten. Standard output contains the completed archive's path.
 Archive readability does not replace a restore rehearsal.
 
-For hourly execution, install this as **one crontab line**. Configure the
+For hourly execution, use the same operator's `crontab -e` and add this as
+**one physical line**, preserving the monitoring entry and existing jobs. Configure the
 scheduler to report failures and monitor the age of the latest successful
 backup; writing a cron entry alone does not provide alerting:
 
 ```cron
-0 * * * * /bin/bash /opt/subly/scripts/backup-postgres.sh --backup-dir /backups/subly >> /var/log/subly-backup.log 2>&1
+0 * * * * /bin/bash /opt/subly/scripts/backup-postgres.sh --backup-dir "$HOME/.local/share/subly/backups" >> "$HOME/.local/state/subly/backup.log" 2>&1
 ```
 
 Copy successful archives to a separate host or encrypted backup storage and
@@ -321,13 +607,13 @@ Your users run the standard published client — they just override the
 relayer URL:
 
 ```bash
-SUBLY_RELAYER_URL=https://<your-domain> npx -y @subly_fi/pay@0.8.0 fetch <url>
+SUBLY_RELAYER_URL=https://<your-domain> npx -y @subly_fi/pay@0.8.1 fetch <url>
 # or put SUBLY_RELAYER_URL in the MCP server's env block
 ```
 
 No API token — buyer requests are wallet-signature authenticated. With
 `SUBLY_MANDATE_ENFORCEMENT=on` (recommended above), a user's **first action
-is the owner setup link** (`npx -y @subly_fi/pay@0.8.0 setup-link
+is the owner setup link** (`npx -y @subly_fi/pay@0.8.1 setup-link
 --initial-deposit 1010000`, or the `create_subly_setup_link` MCP tool): the
 owner signs the spending mandate and pre-approves the first deposit with one
 passkey approval. Replacing an existing mandate requires a separate deposit
@@ -419,7 +705,7 @@ the client uses its own copy to validate exactly which vault/share mint/farm
 it signs for. `GET /v1/vaults` advertises relayer support; it does not install
 or replace the signer's local trust anchors. Client catalogues can be a subset,
 but metadata must match for every selected vault. Restart processes after
-changing files. Use `@subly_fi/pay@0.8.0` or a newer compatible client on every machine.
+changing files. Use `@subly_fi/pay@0.8.1` or a newer compatible client on every machine.
 
 ### 3. Let the user choose
 
@@ -503,19 +789,54 @@ Stop traffic and take a tested database backup before upgrading. Do not mix old/
 For multi-vault deployments, include `-f docker-compose.yml -f docker-compose.vaults.yml`
 in the Compose commands below.
 
-Ship a fresh tarball exactly as in
-[Get the code onto the host](#get-the-code-onto-the-host), then rebuild:
+Use the same operator account and retain the existing database volume,
+`deploy/.env`, `deploy/relayer.production.env`, `deploy/Caddyfile`, sponsor key,
+and vault catalogue. **Do not rerun the first-time file-creation blocks.** Stop
+relayer traffic and create a fresh backup before replacing the source:
 
 ```bash
-# on the server
-echo <commit> | sudo tee /opt/subly/DEPLOYED_COMMIT
 cd /opt/subly/deploy
-docker compose build relayer && docker compose up -d --remove-orphans relayer
-curl -s https://<domain>/healthz   # {"ok":true}
+docker compose stop relayer
+/bin/bash /opt/subly/scripts/backup-postgres.sh --backup-dir "$HOME/.local/share/subly/backups"
 ```
 
-Host-only files (`relayer.production.env`, `.env`, `Caddyfile`, `secrets/`)
-are untracked, so the untar never overwrites them.
+For a Git installation, first inspect `git -C /opt/subly status --short` and
+resolve any local source modifications deliberately. Fetch the reviewed target
+tag and check it out without a forced reset:
+
+```bash
+cd /opt/subly
+git fetch --depth 1 origin tag pay-v0.8.1
+git checkout --detach pay-v0.8.1
+```
+
+For an archive installation, create and transfer the reviewed tag's archive
+using the workstation commands above. After the backup, extract it as the
+operator into the existing source directory (do not repeat the new-directory
+check or use sudo for extraction):
+
+```bash
+tar --no-same-owner -xzf /tmp/subly-pay-v0.8.1.tar.gz -C /opt/subly
+```
+
+A `git archive` from the reviewed source tag contains no host-only environment
+files or sponsor key, so this source update preserves them. It does not migrate
+or replace a PostgreSQL volume. Recheck configuration, then rebuild and verify:
+
+```bash
+cd /opt/subly/deploy
+docker compose config --quiet
+docker compose build relayer
+docker compose up -d --wait --remove-orphans relayer
+curl --fail https://<your-domain>/readyz
+printf '%s\n' 'pay-v0.8.1' > /opt/subly/DEPLOYED_VERSION
+```
+
+Readiness still only checks the ledger/schema. Repeat the relevant read-only
+validation and your approved smoke-test plan before restoring user traffic.
+If startup or validation fails, retain the backup and diagnose locally; do not
+replace credentials, delete volumes, or force a binary rollback across a schema
+migration to make the health check green.
 
 ## Legacy
 

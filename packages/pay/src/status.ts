@@ -1,10 +1,11 @@
 import { agentWalletSignerFromEnv } from "../../../src/client/signer-env.js";
 import { VaultFlowClient, vaultOperationKind } from "../../../src/client/vault-flows.js";
 import { createRpc } from "../../../src/solana/rpc.js";
+import { PAY_COMMAND } from "../../../demo/cli-command.js";
 
 const [intentId, ...extra] = process.argv.slice(2);
 if (intentId === undefined || extra.length !== 0) {
-  throw new Error("Usage: pay status <dep_...|wdr_...> (the original intent ID)");
+  throw new Error(`Usage: ${PAY_COMMAND} status <dep_...|wdr_...> (the original intent ID)`);
 }
 vaultOperationKind(intentId);
 const { signer } = await agentWalletSignerFromEnv();

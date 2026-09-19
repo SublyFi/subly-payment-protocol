@@ -332,7 +332,9 @@ export function setupPageHtml(): string {
           : session.initialDepositRawUsdc
             ? ". The deposit still needs a separate owner approval"
             : "") +
-        ". You can return to the chat; your agent picks this up automatically.");
+        ". Return to your chat and tell the agent setup is complete. " +
+        "If you use the CLI, return to the terminal, check setup-status, then run the deposit command. " +
+        "Approving here does not send the deposit.");
     }
 
     $("btn-passkey").addEventListener("click", async () => {
@@ -391,7 +393,7 @@ export function setupPageHtml(): string {
       try {
         session = await api("/v1/setup-sessions/" + sessionId);
         if (session.status === "completed") {
-          setStatus("ok", "This setup was already completed. You can return to the chat.");
+          setStatus("ok", "This setup was already completed. Tell your agent setup is complete, or return to the terminal and check setup-status before continuing.");
           return;
         }
         if (session.status === "expired") {
@@ -468,7 +470,7 @@ export function approvePageHtml(): string {
         $("btn-approve").hidden = true;
         $("btn-deny").hidden = true;
         setStatus("ok", decision === "approve"
-          ? "Approved — your agent will retry the operation now. You can return to the chat."
+          ? "Approved. Tell your agent you approved, or return to the terminal and retry the original approval-required command with its approval ID. This page does not send the transaction or API payment."
           : "Denied — the operation will not run.");
       } catch (error) { fail(error); }
       finally {

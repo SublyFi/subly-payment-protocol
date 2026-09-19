@@ -24,6 +24,7 @@ import { fileStandardX402StateStore } from "../../../src/client/standard-x402-st
 import { createRpc } from "../../../src/solana/rpc.js";
 import { svmTransactionSignerFromBundle } from "./svm-signer.js";
 import { createSvmX402Fetch } from "./svm-x402-fetch.js";
+import { PAY_COMMAND } from "../../../demo/cli-command.js";
 
 function fail(message: string): never {
   process.stderr.write(`${message}\n`);
@@ -32,7 +33,7 @@ function fail(message: string): never {
 
 const url = process.argv[2];
 if (url === undefined || !/^https?:\/\//.test(url)) {
-  fail("Usage: pay fetch <url> [maxAmountRawUsdc] [apr_<approvalId>]");
+  fail(`Usage: ${PAY_COMMAND} fetch <url> [maxAmountRawUsdc] [apr_<approvalId>]`);
 }
 // Trailing args in any order: digits = client cap, apr_... = the owner
 // approval from a previous approval_required refusal (retry the SAME url).
@@ -44,7 +45,7 @@ for (const arg of process.argv.slice(3)) {
   } else if (/^\d+$/.test(arg)) {
     maxAmountArg = arg;
   } else {
-    fail(`unrecognized argument: ${arg}\nUsage: pay fetch <url> [maxAmountRawUsdc] [apr_<approvalId>]`);
+    fail(`unrecognized argument: ${arg}\nUsage: ${PAY_COMMAND} fetch <url> [maxAmountRawUsdc] [apr_<approvalId>]`);
   }
 }
 
@@ -132,7 +133,7 @@ try {
           ...(refusalApprovalId === undefined
             ? {}
             : {
-                retry: `pay fetch "${url}"${
+                retry: `${PAY_COMMAND} fetch "${url}"${
                   maxAmountArg === undefined ? "" : ` ${maxAmountArg}`
                 } ${refusalApprovalId}`
               })

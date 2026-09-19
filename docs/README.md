@@ -2,6 +2,8 @@
 
 | Audience | Guide |
 | --- | --- |
+| First-time users and operators using an AI assistant | [Copyable Claude Code / Codex / ChatGPT setup prompts](ai-setup-prompts.md) |
+| 日本語で導入したい人 | [利用者・運営者のスタートガイド](getting-started.ja.md) |
 | CLI and MCP users | [Client quick start](../packages/pay/README.md) |
 | Relayer operators | [Deployment, vault configuration, backups and upgrades](../deploy/README.md) |
 | Contributors | [Development and tests](../CONTRIBUTING.md) |

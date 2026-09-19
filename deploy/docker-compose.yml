@@ -4,11 +4,10 @@
 # (e.g. PayAI, Coinbase CDP); this service only prepares/co-signs sponsored
 # vault flows and enforces the yield-only budget. Run from deploy/:
 #
-#   1. cp relayer.production.env.example relayer.production.env  (fill in)
-#   2. cp Caddyfile.example Caddyfile                            (set domain)
-#   3. mkdir -p secrets && put the sponsor keypair at secrets/sponsor.json
-#   4. echo "POSTGRES_PASSWORD=<strong-random>" > .env
-#   5. docker compose up -d --build
+# Follow deploy/README.md for first-time file creation without overwrites,
+# sponsor-key copy (UID 1000, mode 600), configuration checks, and startup.
+# Keep the existing .env, keys, and database volume on retries/upgrades.
+# Never regenerate POSTGRES_PASSWORD for an existing database as a retry.
 #
 # Secrets (env files, secrets/, Caddyfile) stay on the host; nothing is baked
 # into the image. The retired subly-yield-exact seller endpoints stay off

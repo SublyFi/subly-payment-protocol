@@ -10,6 +10,8 @@ Subly provides an open-source relayer and an MCP/CLI client. An agent deposits U
 
 | I want to… | Start here |
 | --- | --- |
+| Set up with Claude Code, Codex or ChatGPT | [Copy a user or operator setup prompt](docs/ai-setup-prompts.md) |
+| 日本語で始める | [利用者・運営者のスタートガイド](docs/getting-started.ja.md) |
 | Use Subly with an agent or the CLI | [Client quick start](packages/pay/README.md#quick-start) |
 | Operate my own relayer | [Operator guide](deploy/README.md) |
 | Try the API locally without funds | [Local development](#try-it-locally) |
@@ -51,16 +53,15 @@ The relayer and the seller's **x402 facilitator** have different roles. The rela
 
 ## Use the client
 
-Install Node.js 24 and choose a relayer operator you trust. No repository clone is needed:
+Start with the [step-by-step client guide](packages/pay/README.md#quick-start), or paste a [setup prompt](docs/ai-setup-prompts.md) into your AI assistant. No repository clone is needed. The guide prepares a dedicated agent wallet and mainnet USDC, configures your chosen operator and RPC, and checks them before requesting any transaction. It includes macOS/Linux and Windows instructions.
+
+With Node.js 24 or later installed, you can view the available commands without configuring a wallet:
 
 ```bash
-npx -y @subly_fi/pay@0.8.0 --help
-export SUBLY_RELAYER_URL=https://your-relayer.example.com
-export SUBLY_DEMO_AGENT_KEYPAIR_PATH=/absolute/path/to/agent.json
-npx -y @subly_fi/pay@0.8.0 doctor
+npx -y @subly_fi/pay@0.8.1 --help
 ```
 
-Continue with the [client guide](packages/pay/README.md): review the vault, create an owner setup link, approve the policy, deposit, and check the budget before buying an API call. It also includes MCP configuration, custody signers and troubleshooting.
+After configuration, follow the guide to review the vault, create an owner setup link, approve the policy, deposit, and check the budget before buying an API call. An approval page records permission; tell your chat agent you finished, or return to the terminal and continue the original command as instructed. A fresh deposit needs time to earn a spendable budget.
 
 Supported sellers must offer **Solana mainnet USDC `exact`** with `extra.feePayer`. The client checks the challenge at runtime; a seller name alone is not proof of compatibility. Amounts use six-decimal raw USDC units: `1000000` means 1 USDC. The default API payment cap is `10000` (0.01 USDC).
 
@@ -95,7 +96,7 @@ The [contributor guide](CONTRIBUTING.md) explains PostgreSQL tests and repositor
 
 ## Operate a relayer
 
-Follow the [operator guide](deploy/README.md) for configuration, sponsor funding, reviewed vault metadata, lookup tables, HTTPS, health checks, backups and upgrades. The deployment is built from a tagged source checkout. Publish your relayer URL and reviewed vault catalogue to your users.
+Follow the [operator guide](deploy/README.md) or use the [operator setup prompt](docs/ai-setup-prompts.md). The guide separates preparation, configuration, startup, validation and ongoing operations. It covers sponsor funding, reviewed vault metadata, lookup tables, HTTPS, health checks, backups and upgrades. The deployment is built from a tagged source checkout. Publish your relayer URL and reviewed vault catalogue to your users.
 
 Sponsor gas and account rent are operator costs. Recorded fee debt reduces a user's spending budget; the current code does **not** collect reimbursement for the operator.
 

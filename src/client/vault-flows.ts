@@ -1,4 +1,5 @@
 import { assertWithdrawalPreview } from "./withdrawal-preview.js";
+import { canonicalJsonHash } from "../lib/canonical-json.js";
 import { SUBLY_VAULT } from "../config/constants.js";
 import type { VaultConfig } from "../config/vault.js";
 import type { SolanaRpc } from "../solana/rpc.js";
@@ -66,6 +67,27 @@ export interface VaultWithdrawalOutcome {
   errorCode: string | null;
 }
 
+export interface VaultOperationStatus {
+  intentId: string;
+  kind: "deposit" | "withdrawal";
+  wallet: string;
+  vault: string;
+  status: "prepared" | "submitted" | "confirmed" | "failed" | "expired" | "failed_not_submitted";
+  requestedAmountRawUsdc: string;
+  actualAmountRawUsdc: string | null;
+  txSignature: string | null;
+  errorCode: string | null;
+  stillConfirming: boolean;
+  nextAction: "check_again" | "done" | "reconcile_with_operator";
+  message: string;
+}
+
+export function vaultOperationKind(intentId: string): "deposit" | "withdrawal" {
+  if (/^dep_[0-9a-f]{32}$/.test(intentId)) return "deposit";
+  if (/^wdr_[0-9a-f]{32}$/.test(intentId)) return "withdrawal";
+  throw new VaultFlowClientError("read", "intentId must be the original dep_ or wdr_ ID followed by 32 lowercase hexadecimal characters");
+}
+
 export interface VaultBudgetView {
   wallet: string;
   vault?: string;
@@ -116,13 +138,24 @@ interface PreparedDeposit {
   signingIntent: Parameters<AgentWalletSigner["signDeposit"]>[0]["intent"];
 }
 
-interface PreparedWithdrawal {
+export interface PreparedWithdrawal {
   requestedWithdrawRawUsdc: string;
   purpose: "normal" | "yield_realize";
   withdrawalId: string;
   serializedTransaction: string;
   destinationUsdcAta: string;
   signingIntent: Parameters<AgentWalletSigner["signWithdrawal"]>[0]["intent"];
+}
+
+export interface VaultWithdrawalInput {
+  amountRawUsdc: bigint;
+  purpose?: "yield_realize";
+  payment?: { payTo: string; amountRawUsdc: string; resourceUrlHash: string; method: string };
+  approvalId?: string;
+  /** Must complete durably before signing/submitting this withdrawal. */
+  onPrepared?: (prepared: PreparedWithdrawal) => Promise<void>;
+  /** Internal progress notification, immediately before the submit request. */
+  onBeforeSubmit?: () => void;
 }
 
 export class VaultFlowClient {
@@ -236,22 +269,7 @@ export class VaultFlowClient {
    * with purpose "yield_realize" the relayer refuses anything beyond the
    * spendable yield (the payment path, via RelayerYieldRealizer).
    */
-  async withdraw(input: {
-    amountRawUsdc: bigint;
-    purpose?: "yield_realize";
-    /**
-     * The x402 payment a yield_realize funds; the relayer's spending-mandate
-     * layer checks caps/payee against it and records it in the audit log.
-     */
-    payment?: {
-      payTo: string;
-      amountRawUsdc: string;
-      resourceUrlHash: string;
-      method: string;
-    };
-    /** Owner approval id for payments above the mandate threshold. */
-    approvalId?: string;
-  }): Promise<VaultWithdrawalOutcome> {
+  async withdraw(input: VaultWithdrawalInput): Promise<VaultWithdrawalOutcome> {
     const prepared = (await this.postJson(
       "prepare",
       "/v1/withdrawals/prepare",
@@ -267,6 +285,47 @@ export class VaultFlowClient {
       }
     )) as PreparedWithdrawal;
 
+    this.assertPreparedWithdrawal(prepared, input);
+    await input.onPrepared?.(prepared);
+    return this.submitPreparedWithdrawal(prepared, input);
+  }
+
+  /** Reconcile or submit the original intent; never prepare a replacement. */
+  async resumeWithdrawal(
+    prepared: PreparedWithdrawal,
+    input: VaultWithdrawalInput
+  ): Promise<VaultWithdrawalOutcome> {
+    this.assertPreparedWithdrawal(prepared, input);
+    const current = (await this.getJson(
+      `/v1/withdrawals/${encodeURIComponent(prepared.withdrawalId)}`
+    )) as VaultWithdrawalOutcome & PreparedWithdrawal & {
+      wallet: string; vault: string; paymentBinding: VaultWithdrawalInput["payment"] | null;
+      preparedMessageHash: string;
+    };
+    // A saved checkpoint is only a reference. Confirm its operation against
+    // the current relayer response and the caller's pinned wallet/vault.
+    if (current.withdrawalId !== prepared.withdrawalId ||
+        current.wallet !== this.signer.walletAddress || current.vault !== this.vault.address ||
+        current.requestedWithdrawRawUsdc !== input.amountRawUsdc.toString() ||
+        current.purpose !== (input.purpose ?? "normal") ||
+        canonicalJsonHash(current.paymentBinding ?? null) !== canonicalJsonHash(input.payment ?? null) ||
+        current.serializedTransaction !== prepared.serializedTransaction ||
+        current.preparedMessageHash !== prepared.signingIntent.preparedMessageHash ||
+        current.destinationUsdcAta !== prepared.destinationUsdcAta) {
+      throw new VaultFlowClientError("read", "Saved withdrawal differs from the original operation; refusing to resume");
+    }
+    if (current.status === "prepared") {
+      // Re-run the independent preview and structured signing validation.
+      return this.submitPreparedWithdrawal(prepared, input);
+    }
+    if (!["submitted", "confirmed", "failed", "failed_not_submitted", "expired", "quarantined"].includes(current.status)) {
+      throw new VaultFlowClientError("read", "Relayer returned an unknown withdrawal status");
+    }
+    return this.withdrawalOutcome(prepared, current);
+  }
+
+  private assertPreparedWithdrawal(prepared: PreparedWithdrawal, input: VaultWithdrawalInput): void {
+
     if (prepared.signingIntent?.wallet !== this.signer.walletAddress ||
         prepared.signingIntent.vault !== this.vault.address ||
         prepared.requestedWithdrawRawUsdc !== input.amountRawUsdc.toString() ||
@@ -274,6 +333,15 @@ export class VaultFlowClient {
         (input.purpose === "yield_realize" && prepared.signingIntent.allowFullExit)) {
       throw new VaultFlowClientError("prepare", "Prepared withdrawal differs from the requested operation");
     }
+    if (typeof prepared.withdrawalId !== "string" || prepared.withdrawalId.length === 0) {
+      throw new VaultFlowClientError("prepare", "Prepared withdrawal has no withdrawal ID");
+    }
+  }
+
+  private async submitPreparedWithdrawal(
+    prepared: PreparedWithdrawal,
+    input: VaultWithdrawalInput
+  ): Promise<VaultWithdrawalOutcome> {
     await assertWithdrawalPreview({
       rpc: this.rpc,
       serializedTransaction: prepared.serializedTransaction,
@@ -288,6 +356,7 @@ export class VaultFlowClient {
       lookupTables: await this.lookupTablesFor(prepared.serializedTransaction)
     });
 
+    input.onBeforeSubmit?.();
     let outcome = (await this.postJson("submit", "/v1/withdrawals/submit", {
       withdrawalId: prepared.withdrawalId,
       serializedTransaction: signed.serializedTransaction,
@@ -299,6 +368,10 @@ export class VaultFlowClient {
         outcome
       )) as VaultWithdrawalOutcome;
     }
+    return this.withdrawalOutcome(prepared, outcome);
+  }
+
+  private withdrawalOutcome(prepared: PreparedWithdrawal, outcome: VaultWithdrawalOutcome): VaultWithdrawalOutcome {
     return {
       withdrawalId: prepared.withdrawalId,
       status: outcome.status,
@@ -308,6 +381,44 @@ export class VaultFlowClient {
       actualSharesBurnedRaw: outcome.actualSharesBurnedRaw ?? null,
       errorCode: outcome.errorCode ?? null
     };
+  }
+
+  /** Authenticated read/reconciliation only: never prepare, sign or submit a transaction. */
+  async getOperationStatus(intentId: string): Promise<VaultOperationStatus> {
+    const kind = vaultOperationKind(intentId);
+    const raw = await this.getJson(`/v1/${kind === "deposit" ? "deposits" : "withdrawals"}/${intentId}?resubmit=false`);
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new VaultFlowClientError("read", "Relayer returned an invalid operation status");
+    }
+    const record = raw as Record<string, unknown>;
+    if (record[kind === "deposit" ? "depositId" : "withdrawalId"] !== intentId ||
+        record.wallet !== this.signer.walletAddress || record.vault !== this.vault.address) {
+      throw new VaultFlowClientError("read", "Operation does not match the requested ID, current wallet or selected vault; use the original wallet, vault and relayer");
+    }
+    const requested = record[kind === "deposit" ? "amountRawUsdc" : "requestedWithdrawRawUsdc"];
+    const actual = record[kind === "deposit" ? "actualDepositRawUsdc" : "actualWithdrawRawUsdc"];
+    if (typeof record.status !== "string" ||
+        !["prepared", "submitted", "confirmed", "failed", "expired", "failed_not_submitted"].includes(record.status) ||
+        typeof requested !== "string" || !/^\d+$/.test(requested) ||
+        (actual !== null && (typeof actual !== "string" || !/^\d+$/.test(actual))) ||
+        (record.txSignature !== null && (typeof record.txSignature !== "string" || record.txSignature.length === 0)) ||
+        (record.errorCode !== null && typeof record.errorCode !== "string") ||
+        (record.status === "confirmed" && (actual === null || record.txSignature === null))) {
+      throw new VaultFlowClientError("read", "Relayer returned incomplete or invalid operation status fields");
+    }
+    const status = record.status as VaultOperationStatus["status"];
+    const nextAction = status === "confirmed" ? "done" :
+      status === "submitted" || status === "prepared" ? "check_again" : "reconcile_with_operator";
+    const message = status === "confirmed" ? `The original ${kind} is confirmed.` :
+      status === "submitted" ? "The original transaction is still confirming. Check this same intent ID again; do not repeat the deposit or withdrawal." :
+      status === "prepared" ? "The original intent is prepared. This status check does not submit it. Check the same ID again or ask the operator to reconcile it before starting another operation." :
+      "The original operation ended without a confirmed result. Reconcile its intent ID and transaction with the operator before starting another operation.";
+    // Explicit projection keeps transaction bytes, signatures-to-submit and
+    // approval capabilities in the relayer, out of agent-visible responses.
+    return { intentId, kind, wallet: this.signer.walletAddress, vault: this.vault.address,
+      status, requestedAmountRawUsdc: requested, actualAmountRawUsdc: actual as string | null,
+      txSignature: record.txSignature as string | null, errorCode: record.errorCode as string | null,
+      stillConfirming: status === "submitted", nextAction, message };
   }
 
   /**

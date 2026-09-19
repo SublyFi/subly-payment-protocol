@@ -7,17 +7,17 @@ The relayer is distributed as tagged source and a source-built Docker image. `@s
 1. Update root/client versions, both lockfiles, changelog and pinned command examples. Review for credentials or generated files.
 2. Run `npm ci --ignore-scripts`, `npm ci --prefix packages/pay --ignore-scripts`, `npm run check`, `npm run check --prefix packages/pay`, `npm run test:package` and `node scripts/audit-relayer.mjs`.
 3. Run all tests with a disposable `SUBLY_TEST_POSTGRES_URL`, including migration and approval persistence regressions.
-4. Run `npm audit --prefix packages/pay --omit=dev --audit-level=high` and review [known relayer advisories](docs/dependencies.md).
+4. Run `npm audit --prefix packages/pay --omit=dev --audit-level=high` and review [relayer dependency status](docs/dependencies.md).
 5. Build the Docker image, check its non-root detached health endpoint, and test SIGTERM shutdown. Inspect the package tarball allowlist. No keys, source server SDK or local state belong in the npm package.
-6. Merge a reviewed PR after CI, dependency review and CodeQL complete. Record any limits to mainnet validation in release notes. Automated tests never substitute for an external security audit.
+6. Run `npx playwright install chromium` and `npm run test:browser`. Wait for all three client OS checks, browser checks, dependency review and CodeQL before merging the reviewed PR. Record any limits to mainnet validation in release notes. Automated tests never substitute for an external security audit.
 
 ## Publish
 
 Tag the merged commit as `pay-v<package version>`. The release workflow calls the full reusable CI workflow (PostgreSQL, client tarball/MCP, Docker, audit) before publishing. npm uses GitHub OIDC trusted publishing; configure the package's trusted publisher as organization `SublyFi`, repository `subly-payment-protocol`, workflow filename `release-pay.yml`. Node 24's npm supports this flow. No long-lived npm token is stored in GitHub.
 
 ```bash
-git tag -a pay-v0.7.3 -m "Subly 0.7.3"
-git push origin pay-v0.7.3
+git tag -a pay-v0.8.0 -m "Subly 0.8.0"
+git push origin pay-v0.8.0
 ```
 
 The publisher checks tag/version equality and uses `npm publish --access public --provenance`. If publication fails, inspect the workflow and npm trusted-publisher settings; do not move an existing public tag. Re-run the failed job after fixing configuration. Publishing the same npm version twice is not possible.

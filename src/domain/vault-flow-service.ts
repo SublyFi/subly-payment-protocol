@@ -87,6 +87,11 @@ export interface SubmitFlowInput {
   agentSignature: string;
 }
 
+export interface VaultFlowStatusOptions {
+  /** Disable rebroadcasting stored transaction bytes during status reconciliation. */
+  resubmit?: boolean;
+}
+
 /**
  * HTTP deposit and instant-only normal withdrawal flows. The agent wallet
  * signs the prepared transaction off-service; the sponsor co-signs as fee
@@ -348,14 +353,14 @@ export class VaultFlowService {
     );
   }
 
-  async getDeposit(depositId: string) {
+  async getDeposit(depositId: string, options: VaultFlowStatusOptions = {}) {
     const intent = await this.ledger.getDeposit(depositId);
     if (intent === null || intent.vault !== this.vault.address) {
       throw notFound("deposit_not_found", "Deposit intent does not exist");
     }
 
     if (intent.status === "submitted") {
-      return serializeDepositIntent(await this.reconcileDeposit(intent));
+      return serializeDepositIntent(await this.reconcileDeposit(intent, options));
     }
     if (intent.status === "prepared" && flowExpired(intent.expiresAt)) {
       return serializeDepositIntent(
@@ -788,14 +793,14 @@ export class VaultFlowService {
     };
   }
 
-  async getWithdrawal(withdrawalId: string) {
+  async getWithdrawal(withdrawalId: string, options: VaultFlowStatusOptions = {}) {
     const intent = await this.ledger.getWithdrawal(withdrawalId);
     if (intent === null || intent.vault !== this.vault.address) {
       throw notFound("withdrawal_not_found", "Withdrawal intent does not exist");
     }
 
     if (intent.status === "submitted") {
-      return serializeWithdrawalIntent(await this.reconcileWithdrawal(intent));
+      return serializeWithdrawalIntent(await this.reconcileWithdrawal(intent, options));
     }
     if (intent.status === "prepared" && flowExpired(intent.expiresAt)) {
       return serializeWithdrawalIntent(
@@ -826,8 +831,11 @@ export class VaultFlowService {
     return this.finalizeDepositFromChain(intent, outcome);
   }
 
-  private async reconcileDeposit(intent: DepositIntent): Promise<DepositIntent> {
-    const outcome = await this.reconcileFlow(intent);
+  private async reconcileDeposit(
+    intent: DepositIntent,
+    options: VaultFlowStatusOptions = {}
+  ): Promise<DepositIntent> {
+    const outcome = await this.reconcileFlow(intent, options);
     if (outcome.kind === "pending") {
       return intent;
     }
@@ -946,9 +954,10 @@ export class VaultFlowService {
   }
 
   private async reconcileWithdrawal(
-    intent: WithdrawalIntent
+    intent: WithdrawalIntent,
+    options: VaultFlowStatusOptions = {}
   ): Promise<WithdrawalIntent> {
-    const outcome = await this.reconcileFlow(intent);
+    const outcome = await this.reconcileFlow(intent, options);
     if (outcome.kind === "pending") {
       return intent;
     }
@@ -1094,11 +1103,14 @@ export class VaultFlowService {
     return this.lookupConfirmedFlow(intent.txSignature);
   }
 
-  private async reconcileFlow(intent: {
-    txSignature: string | null;
-    submittedSerializedTransaction: string | null;
-    lastValidBlockHeight: number | null;
-  }): Promise<FlowOutcome> {
+  private async reconcileFlow(
+    intent: {
+      txSignature: string | null;
+      submittedSerializedTransaction: string | null;
+      lastValidBlockHeight: number | null;
+    },
+    options: VaultFlowStatusOptions = {}
+  ): Promise<FlowOutcome> {
     if (
       intent.txSignature === null ||
       intent.submittedSerializedTransaction === null
@@ -1120,12 +1132,14 @@ export class VaultFlowService {
       return { kind: "not_submitted", errorCode: "blockhash_expired" };
     }
 
-    try {
-      await this.engine.sendSignedTransaction(
-        intent.submittedSerializedTransaction
-      );
-    } catch {
-      // Best effort resend of the stored bytes; never a new transaction.
+    if (options.resubmit !== false) {
+      try {
+        await this.engine.sendSignedTransaction(
+          intent.submittedSerializedTransaction
+        );
+      } catch {
+        // Best effort resend of the stored bytes; never a new transaction.
+      }
     }
 
     return { kind: "pending" };

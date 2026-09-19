@@ -303,6 +303,7 @@ describe("StandardX402Payer", () => {
     // spending-mandate layer can enforce caps against "what is being paid".
     expect(realizer.ensureUsdcAvailable).toHaveBeenCalledWith({
       amountRawUsdc: 10_000n,
+      onPrepared: expect.any(Function),
       payment: {
         payTo: "J7ZvJEspvwP1oRxQZ7mYmNmT22NTm3GWq3t7HEbvPZYx",
         amountRawUsdc: "10000",

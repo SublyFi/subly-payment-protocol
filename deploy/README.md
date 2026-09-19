@@ -62,17 +62,17 @@ secrets/sponsor.json    <- sponsor key (host only, never baked into the image)
 
 ## Get the code onto the host
 
-Use the reviewed `pay-v0.7.3` source tag. You can clone anonymously:
+Use the reviewed `pay-v0.8.0` source tag. You can clone anonymously:
 
 ```bash
-git clone --branch pay-v0.7.3 --depth 1 https://github.com/SublyFi/subly-payment-protocol.git
+git clone --branch pay-v0.8.0 --depth 1 https://github.com/SublyFi/subly-payment-protocol.git
 ```
 
 Alternatively ship a tarball from that tag. Everything below assumes the repo lives at `/opt/subly`:
 
 ```bash
 # locally
-git archive --format=tar.gz -o /tmp/subly.tar.gz pay-v0.7.3
+git archive --format=tar.gz -o /tmp/subly.tar.gz pay-v0.8.0
 scp /tmp/subly.tar.gz <user>@<host>:/tmp/
 # on the server
 sudo mkdir -p /opt/subly && sudo tar xzf /tmp/subly.tar.gz -C /opt/subly
@@ -186,10 +186,10 @@ the client README's "Wallet" section for keypair options):
 ```bash
 export SUBLY_RELAYER_URL=https://<your-domain>
 export SUBLY_DEMO_AGENT_KEYPAIR_PATH=<test wallet keypair.json>
-npx -y @subly_fi/pay@0.7.3 setup-link --initial-deposit 1010000   # owner signs on your domain
-npx -y @subly_fi/pay@0.7.3 deposit 1010000
-# ...once yield has accrued: npx -y @subly_fi/pay@0.7.3 fetch <x402 url>
-npx -y @subly_fi/pay@0.7.3 withdraw 1000000
+npx -y @subly_fi/pay@0.8.0 setup-link --initial-deposit 1010000   # owner signs on your domain
+npx -y @subly_fi/pay@0.8.0 deposit 1010000
+# ...once yield has accrued: npx -y @subly_fi/pay@0.8.0 fetch <x402 url>
+npx -y @subly_fi/pay@0.8.0 withdraw 1000000
 ```
 
 The payment step needs enough verified yield for the price, vault charges and
@@ -218,14 +218,92 @@ alert cron (needs `python3` on the host):
 **Back up Postgres.** The ledger holds each wallet's principal basis — the
 line between "principal" and "spendable yield" — and that split is **not
 reconstructible from chain** (a chain re-sync conservatively resets the
-basis, forfeiting users' accrued yield). Ship a dump off-host regularly:
+basis, forfeiting users' accrued yield). Run the backup as a host user with
+Docker access and a private, writable backup directory:
 
 ```bash
-0 * * * * cd /opt/subly/deploy && docker compose exec -T postgres \
-  pg_dump -U postgres subly | gzip > /backups/subly-$(date +\%F-\%H).sql.gz
-# Restore into a NEW empty database with relayer traffic stopped.
-# Do not merge a dump into a live ledger. Validate restoration before resuming traffic.
+/bin/bash /opt/subly/scripts/backup-postgres.sh --backup-dir /backups/subly
 ```
+
+The script uses the repository's `deploy/` directory by default; pass
+`--deploy-dir /absolute/path/deploy` for another installation. It uses the
+deployment's Compose settings, including `COMPOSE_PROJECT_NAME` when set.
+It reads the `subly` database and never restores or modifies it. The same
+PostgreSQL container supplies `pg_dump` and `pg_restore`, avoiding client/server
+version mismatches. No password needs to appear in the command or crontab.
+
+Archives use PostgreSQL's compressed custom format (`.dump`), not `.sql.gz`.
+New directories are private (mode 700), archives are mode 600, and existing
+directory permissions are left unchanged. Use a dedicated private directory on
+a filesystem with regular-file hard-link support. A partial dump is hidden in
+that directory; only a successful dump and a complete archive read publish a
+final name. Failures exit nonzero and remove the partial file. Existing backups
+are never overwritten. Standard output contains the completed archive's path.
+Archive readability does not replace a restore rehearsal.
+
+For hourly execution, install this as **one crontab line**. Configure the
+scheduler to report failures and monitor the age of the latest successful
+backup; writing a cron entry alone does not provide alerting:
+
+```cron
+0 * * * * /bin/bash /opt/subly/scripts/backup-postgres.sh --backup-dir /backups/subly >> /var/log/subly-backup.log 2>&1
+```
+
+Copy successful archives to a separate host or encrypted backup storage and
+set retention for your recovery requirements. A local file on the relayer host
+does not protect against losing that host. Archives contain private ledger and
+owner data; retain restrictive access permissions when transferring them.
+
+### Rehearse a restore without touching the running ledger
+
+Run this Bash block on a Docker host, replacing `backup_file` with the absolute
+path of a completed archive. It restores into a **new disposable container**
+with no network access or published ports. The trap removes only that created
+container and its anonymous volume, including when restoration fails. Use a
+PostgreSQL image matching the version that created the archive (16 in this
+deployment):
+
+```bash
+(
+  set -euo pipefail
+  backup_file=/absolute/path/to/subly-backup.dump
+  test -f "$backup_file"
+  restore_container=''
+  trap 'if [ -n "$restore_container" ]; then docker rm -fv "$restore_container" >/dev/null; fi' EXIT
+  restore_container=$(docker run -d --network none \
+    -e POSTGRES_HOST_AUTH_METHOD=trust \
+    postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685)
+  ready=false
+  for attempt in $(seq 1 30); do
+    if docker exec "$restore_container" pg_isready -U postgres >/dev/null 2>&1; then ready=true; break; fi
+    sleep 1
+  done
+  if [ "$ready" != true ]; then echo 'Restore database did not become ready' >&2; exit 1; fi
+  docker exec "$restore_container" createdb -U postgres subly_restore_check
+  docker exec -i "$restore_container" pg_restore --exit-on-error --single-transaction \
+    --no-owner --no-privileges --username=postgres --dbname=subly_restore_check < "$backup_file"
+  docker exec "$restore_container" psql -U postgres -d subly_restore_check -v ON_ERROR_STOP=1 \
+    -c "SELECT 'wallet_positions' AS table_name, count(*) FROM wallet_positions
+        UNION ALL SELECT 'deposit_intents', count(*) FROM deposit_intents
+        UNION ALL SELECT 'withdrawal_intents', count(*) FROM withdrawal_intents
+        UNION ALL SELECT 'vault_spending_mandates', count(*) FROM vault_spending_mandates
+        UNION ALL SELECT 'payment_approvals', count(*) FROM payment_approvals;"
+)
+```
+
+Successful restoration and expected rows establish that this archive can be
+read back. Compare representative principal, fee debt, receipt and approval
+records with the expected backup-time state; row counts alone do not validate
+financial accounting. Repeat the rehearsal after changing PostgreSQL or the
+backup process. The automated disposable PostgreSQL test is available with
+`SUBLY_TEST_BACKUP_COMPOSE=1 npx vitest run tests/postgres-backup-integration.test.ts`.
+
+For a real recovery, stop relayer traffic first and restore into a deliberately
+created **empty recovery database**. Preserve the old database and pending
+client state. Reconcile chain activity since the backup before directing the
+relayer to the recovered database and resuming traffic. Never use `--clean` or
+merge a dump into an operating ledger. The [upgrade notes](#updating-a-running-deployment)
+also apply when restoring a pre-migration backup.
 
 Routine recovery: if a wallet's position flips to `needs_baseline_reset`
 (external share movement), re-sync it with
@@ -243,13 +321,13 @@ Your users run the standard published client — they just override the
 relayer URL:
 
 ```bash
-SUBLY_RELAYER_URL=https://<your-domain> npx -y @subly_fi/pay@0.7.3 fetch <url>
+SUBLY_RELAYER_URL=https://<your-domain> npx -y @subly_fi/pay@0.8.0 fetch <url>
 # or put SUBLY_RELAYER_URL in the MCP server's env block
 ```
 
 No API token — buyer requests are wallet-signature authenticated. With
 `SUBLY_MANDATE_ENFORCEMENT=on` (recommended above), a user's **first action
-is the owner setup link** (`npx -y @subly_fi/pay@0.7.3 setup-link
+is the owner setup link** (`npx -y @subly_fi/pay@0.8.0 setup-link
 --initial-deposit 1010000`, or the `create_subly_setup_link` MCP tool): the
 owner signs the spending mandate and pre-approves the first deposit with one
 passkey approval. Replacing an existing mandate requires a separate deposit
@@ -341,7 +419,7 @@ the client uses its own copy to validate exactly which vault/share mint/farm
 it signs for. `GET /v1/vaults` advertises relayer support; it does not install
 or replace the signer's local trust anchors. Client catalogues can be a subset,
 but metadata must match for every selected vault. Restart processes after
-changing files. Use `@subly_fi/pay@0.7.3` or a newer compatible client on every machine.
+changing files. Use `@subly_fi/pay@0.8.0` or a newer compatible client on every machine.
 
 ### 3. Let the user choose
 

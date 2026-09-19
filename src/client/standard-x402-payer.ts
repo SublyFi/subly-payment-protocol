@@ -1,6 +1,8 @@
 import { SOLANA_MAINNET_NETWORK, SUBLY_VAULT } from "../config/constants.js";
-import { sha256HexOf } from "../lib/canonical-json.js";
+import { canonicalJsonHash, sha256HexOf } from "../lib/canonical-json.js";
+import type { PreparedWithdrawal } from "./vault-flows.js";
 import {
+  decodeX402Header,
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_RESPONSE_HEADER,
   requestBodyHashFor
@@ -10,6 +12,7 @@ import {
   parseStandardChallenge,
   selectPayableSolanaRequirement,
   StandardX402ChallengeError,
+  standardRequirementMatchesSelected,
   type SelectedSolanaRequirement
 } from "../x402/standard-requirements.js";
 
@@ -46,17 +49,26 @@ export interface RealizePaymentBinding {
 /** Ensures the agent USDC ATA can cover a payment, realizing yield as needed. */
 export interface YieldRealizer {
   readonly vault?: string;
+  /** Stable identity of the source of funds; required for safe restart recovery. */
+  readonly realizationContext?: { wallet: string; vault: string; relayerBaseUrl: string };
   ensureUsdcAvailable(input: {
     amountRawUsdc: bigint;
     payment?: RealizePaymentBinding;
     /** Owner approval for payments above the mandate threshold. */
     approvalId?: string;
+    onPrepared?: (prepared: PreparedWithdrawal) => Promise<void>;
   }): Promise<{
     realizedRawUsdc: bigint;
     txSignature: string | null;
     /** The relayer's realize withdrawal id, when the realizer knows it. */
     withdrawalId?: string | null;
   }>;
+  /** Resume the same withdrawal without reading a new budget or preparing again. */
+  resumeUsdcAvailable?(input: {
+    amountRawUsdc: bigint;
+    payment: RealizePaymentBinding;
+    prepared: PreparedWithdrawal;
+  }): Promise<{ realizedRawUsdc: bigint; txSignature: string | null; withdrawalId?: string | null }>;
   /**
    * Optional best-effort report-back of the x402 payment tx a realize
    * funded (relayer audit chain). Failures must never affect the payment.
@@ -96,7 +108,15 @@ export interface StandardX402PendingPaymentRecord {
   feePayer: string | null;
   realizedRawUsdc: string;
   realizeTxSignature: string | null;
-  status: "realized" | "external_outcome_unknown";
+  status: "realizing" | "realized" | "external_outcome_unknown";
+  /** Absent in older records, which remain refusal-only. Never store request credentials. */
+  recovery?: {
+    version: 1;
+    context: { wallet: string; vault: string; relayerBaseUrl: string };
+    requestHeadersHash: string;
+    requirement: SelectedSolanaRequirement["requirement"];
+    prepared?: PreparedWithdrawal;
+  };
   createdAtMs: number;
   updatedAtMs: number;
   detail?: unknown;
@@ -241,25 +261,36 @@ export class StandardX402Payer {
   ): Promise<StandardPayResult> {
     const { method, requestBodyHash, pendingKey } = computed;
     const existingPending = this.pending.get(pendingKey);
-    if (existingPending !== undefined && input.forceNewPayment !== true) {
-      throw new StandardX402PayError(
-        "payment_outcome_unknown",
-        "a previous external x402 payment for this request has an unknown " +
-          "outcome. Verify whether it settled before purchasing again; to pay " +
-          "again anyway, call with forceNewPayment=true.",
-        existingPending
-      );
-    }
-    if (existingPending !== undefined && input.forceNewPayment === true) {
-      try {
-        this.untrack(pendingKey);
-      } catch (error) {
+    const resuming = existingPending?.recovery !== undefined &&
+      existingPending.status !== "external_outcome_unknown";
+    const requestHeadersHash = canonicalJsonHash(input.headers ?? {});
+    if (resuming) {
+      const recovery = existingPending.recovery!;
+      if (canonicalJsonHash(recovery.context) !== canonicalJsonHash(realizer.realizationContext ?? null) ||
+          recovery.requestHeadersHash !== requestHeadersHash ||
+          existingPending.url !== input.url || existingPending.method !== method ||
+          existingPending.requestBodyHash !== requestBodyHash) {
+        throw new StandardX402PayError("payment_outcome_unknown",
+          "The pending realization belongs to a different wallet, vault, relayer or request; refusing to resume or discard it.", publicPendingPayment(existingPending));
+      }
+      if (existingPending.status === "realizing" && recovery.prepared === undefined) {
+        throw new StandardX402PayError("payment_outcome_unknown",
+          "Realization was interrupted before its withdrawal ID was saved. Reconcile the original operation before retrying; forceNewPayment cannot discard an incomplete realization.", publicPendingPayment(existingPending));
+      }
+    } else if (existingPending !== undefined) {
+      // Older records have no recovery checkpoint and may already have attempted
+      // an external payment. Their historical refusal semantics stay intact.
+      if (input.forceNewPayment !== true || existingPending.status === "realizing") {
         throw new StandardX402PayError(
-          "state_persist_failed",
-          "could not clear the previous pending x402 marker before forcing " +
-            "a new payment",
-          error
+          "payment_outcome_unknown",
+          "A previous payment or realization has an unknown outcome. Verify it before purchasing again.",
+          publicPendingPayment(existingPending)
         );
+      }
+      try { this.untrack(pendingKey); }
+      catch (error) {
+        throw new StandardX402PayError("state_persist_failed",
+          "Could not clear the previous pending x402 marker before forcing a new payment", error);
       }
     }
 
@@ -271,96 +302,116 @@ export class StandardX402Payer {
 
     const probe = await this.probeFetch(input.url, init);
     if (probe.status !== 402) {
+      if (resuming) {
+        throw new StandardX402PayError("payment_outcome_unknown",
+          "The seller no longer offers the original payment challenge; the saved realization is retained for reconciliation.", publicPendingPayment(existingPending));
+      }
       return { paid: false, status: probe.status, body: await probe.text() };
     }
 
     const selected = await this.selectRequirement(probe);
+    if (resuming && (!standardRequirementMatchesSelected(existingPending.recovery!.requirement, selected) ||
+        existingPending.amountRawUsdc !== selected.amountRawUsdc.toString() ||
+        existingPending.payTo !== selected.payTo || existingPending.feePayer !== selected.feePayer)) {
+      throw new StandardX402PayError("payment_outcome_unknown",
+        "The seller's payment challenge differs from the saved realization; refusing to fund a different payment.", publicPendingPayment(existingPending));
+    }
 
     const cap = input.maxAmountRawUsdc ?? this.defaultMaxAmountRawUsdc;
     if (selected.amountRawUsdc > cap) {
       throw new StandardX402PayError(
         "amount_exceeds_client_cap",
-        `the challenge demands ${selected.amountRawUsdc} raw USDC, above the ` +
-          `client cap of ${cap}; nothing was paid`,
+        `the challenge demands ${selected.amountRawUsdc} raw USDC, above the client cap of ${cap}; no new payment was attempted`,
         { amountRawUsdc: selected.amountRawUsdc.toString(), payTo: selected.payTo }
       );
     }
-
-    let realized: {
-      realizedRawUsdc: bigint;
-      txSignature: string | null;
-      withdrawalId?: string | null;
-    };
-    try {
-      realized = await realizer.ensureUsdcAvailable({
-        amountRawUsdc: selected.amountRawUsdc,
-        payment: {
-          payTo: selected.payTo,
-          amountRawUsdc: selected.amountRawUsdc.toString(),
-          resourceUrlHash: sha256HexOf(input.url),
-          method
-        },
-        ...(input.approvalId === undefined
-          ? {}
-          : { approvalId: input.approvalId })
-      });
-    } catch (error) {
-      // Mandate threshold escalation is a REFUSAL BEFORE anything moved:
-      // no yield realized, nothing paid. Surface the approve link so the
-      // caller can ask the owner and retry with the approvalId.
-      if ((error as { code?: unknown }).code === "approval_required") {
-        throw new StandardX402PayError(
-          "approval_required",
-          "this payment exceeds the owner-approval threshold; NOTHING was " +
-            "paid. Ask the owner to open the approveUrl, then retry the same " +
-            "call with the approvalId",
-          (error as { detail?: unknown }).detail ?? null
-        );
-      }
-      throw new StandardX402PayError(
-        "realize_failed",
-        `could not realize yield to cover ${selected.amountRawUsdc} raw USDC: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-        error
-      );
-    }
-
-    const pendingRecord: StandardX402PendingPaymentRecord = {
-      key: pendingKey,
-      url: input.url,
-      method,
-      requestBodyHash,
-      amountRawUsdc: selected.amountRawUsdc.toString(),
+    const payment: RealizePaymentBinding = {
       payTo: selected.payTo,
-      feePayer: selected.feePayer,
-      realizedRawUsdc: realized.realizedRawUsdc.toString(),
-      realizeTxSignature: realized.txSignature,
-      status: "realized",
-      createdAtMs: this.nowMs(),
-      updatedAtMs: this.nowMs()
+      amountRawUsdc: selected.amountRawUsdc.toString(),
+      resourceUrlHash: sha256HexOf(input.url),
+      method
     };
-    try {
-      this.track(pendingRecord);
-    } catch (error) {
-      throw new StandardX402PayError(
-        "state_persist_failed",
-        "could not persist the pending x402 marker; refusing to attempt the " +
-          "external payment because a restart would not be double-payment safe",
-        { error, pendingPayment: pendingRecord }
-      );
+    let pendingRecord: StandardX402PendingPaymentRecord = resuming ? existingPending : {
+      key: pendingKey, url: input.url, method, requestBodyHash,
+      amountRawUsdc: selected.amountRawUsdc.toString(), payTo: selected.payTo,
+      feePayer: selected.feePayer, realizedRawUsdc: "0", realizeTxSignature: null,
+      status: "realizing", createdAtMs: this.nowMs(), updatedAtMs: this.nowMs(),
+      ...(realizer.realizationContext === undefined ? {} : {
+        recovery: { version: 1, context: { ...realizer.realizationContext }, requestHeadersHash,
+          requirement: structuredClone(selected.requirement) }
+      })
+    };
+    if (!resuming) this.persistCheckpoint(pendingRecord);
+
+    let realized: { realizedRawUsdc: bigint; txSignature: string | null; withdrawalId?: string | null };
+    if (resuming && pendingRecord.status === "realized") {
+      realized = { realizedRawUsdc: BigInt(pendingRecord.realizedRawUsdc),
+        txSignature: pendingRecord.realizeTxSignature,
+        withdrawalId: pendingRecord.recovery?.prepared?.withdrawalId ?? null };
+    } else {
+      try {
+        if (resuming) {
+          if (realizer.resumeUsdcAvailable === undefined) {
+            throw new Error("This realizer cannot reconcile the saved withdrawal");
+          }
+          realized = await realizer.resumeUsdcAvailable({ amountRawUsdc: selected.amountRawUsdc,
+            payment, prepared: pendingRecord.recovery!.prepared! });
+        } else {
+          realized = await realizer.ensureUsdcAvailable({
+            amountRawUsdc: selected.amountRawUsdc, payment,
+            ...(input.approvalId === undefined ? {} : { approvalId: input.approvalId }),
+            onPrepared: async (prepared) => {
+              if (pendingRecord.recovery === undefined) {
+                throw new StandardX402PayError("state_persist_failed", "Cannot save a withdrawal without a pinned funding context");
+              }
+              const checkpoint = { ...pendingRecord, updatedAtMs: this.nowMs(),
+                recovery: { ...pendingRecord.recovery, prepared: structuredClone(prepared) } };
+              this.persistCheckpoint(checkpoint);
+              pendingRecord = checkpoint;
+            }
+          });
+        }
+      } catch (error) {
+        if (error instanceof StandardX402PayError && error.reason === "state_persist_failed") throw error;
+        const failure = error as { code?: unknown; detail?: unknown; realizationSafeToRetry?: boolean };
+        // Only a proven pre-submit refusal may remove the initial marker.
+        // A resumed operation can already have submitted in a previous process.
+        const safeToRetry = !resuming && (failure.realizationSafeToRetry === true ||
+          (failure.code === "approval_required" && pendingRecord.recovery?.prepared === undefined));
+        if (safeToRetry) {
+          try { this.untrack(pendingKey); }
+          catch (persistError) {
+            throw new StandardX402PayError("state_persist_failed", "Could not clear the safely refused realization", persistError);
+          }
+        }
+        if (safeToRetry && failure.code === "approval_required") {
+          throw new StandardX402PayError("approval_required",
+            "This payment needs the owner's approval; nothing was paid. Ask the owner to open approveUrl, then retry the same call with approvalId.",
+            failure.detail ?? null);
+        }
+        throw new StandardX402PayError(safeToRetry ? "realize_failed" : "payment_outcome_unknown",
+          safeToRetry ? "Yield realization failed before submission; no payment was attempted."
+            : "The original yield realization has not been confirmed. Its saved withdrawal must be reconciled before any new withdrawal or payment.",
+          { error, pendingPayment: safeToRetry ? null : publicPendingPayment(pendingRecord) });
+      }
     }
 
-    // A landed withdrawal can differ from its earlier preview. Never fill a
-    // yield shortfall with unrelated wallet funds, or realize again on retry.
-    // Keep the persisted marker because the first realization already landed.
+    pendingRecord = { ...pendingRecord, status: "realized",
+      realizedRawUsdc: realized.realizedRawUsdc.toString(), realizeTxSignature: realized.txSignature,
+      updatedAtMs: this.nowMs() };
+    this.persistCheckpoint(pendingRecord);
+
     if (realized.realizedRawUsdc < selected.amountRawUsdc) {
       throw new StandardX402PayError(
         "realize_underfunded",
         "The confirmed withdrawal did not cover the exact API price. No external payment was attempted; reconcile the recorded withdrawal before retrying.",
-        { pendingPayment: pendingRecord }
+        { pendingPayment: publicPendingPayment(pendingRecord) }
       );
     }
+    // This barrier distinguishes a safely resumable realization from a
+    // possibly delivered external payment, including a crash inside x402Fetch.
+    this.persistCheckpoint({ ...pendingRecord, status: "external_outcome_unknown",
+      updatedAtMs: this.nowMs() });
 
     let response: FetchResponseLike;
     try {
@@ -379,16 +430,19 @@ export class StandardX402Payer {
       );
     }
     const bodyText = await response.text();
-    if (response.status !== 200) {
+    const receipt = readSettlementReceipt(response);
+    if (response.status < 200 || response.status >= 300 ||
+        receipt.status === "failed" || receipt.status === "invalid") {
       const persistError = this.tryMarkUnknown(pendingKey, {
         status: response.status,
-        body: bodyText
+        body: bodyText,
+        receiptStatus: receipt.status
       });
       throw new StandardX402PayError(
         "payment_outcome_unknown",
-        `the x402 payment attempt returned ${response.status} after yield ` +
-          "was realized; verify whether it settled before paying again",
-        { status: response.status, body: bodyText, persistError }
+        `the x402 payment attempt returned HTTP ${response.status} with a ${receipt.status} receipt; ` +
+          "verify whether it settled before paying again",
+        { status: response.status, body: bodyText, receiptStatus: receipt.status, persistError }
       );
     }
     this.clearDelivered(pendingKey);
@@ -396,7 +450,7 @@ export class StandardX402Payer {
     // The seller's settle response header names the on-chain payment tx.
     // Reporting it back to the relayer completes the mandate → realize →
     // payment audit chain; best-effort only, the payment already succeeded.
-    const paymentTxSignature = extractSettledPaymentTxSignature(response);
+    const paymentTxSignature = receipt.txSignature;
     if (
       paymentTxSignature !== null &&
       typeof realized.withdrawalId === "string" &&
@@ -468,6 +522,15 @@ export class StandardX402Payer {
         error instanceof Error ? error.message : String(error),
         error
       );
+    }
+  }
+
+  private persistCheckpoint(record: StandardX402PendingPaymentRecord): void {
+    try { this.track(record); }
+    catch (error) {
+      throw new StandardX402PayError("state_persist_failed",
+        "Could not persist payment recovery state; refusing the next financial operation.",
+        { error, pendingPayment: publicPendingPayment(record) });
     }
   }
 
@@ -553,6 +616,18 @@ export class StandardX402Payer {
   }
 }
 
+/** Recovery signing material stays on disk, never in CLI/MCP error payloads. */
+function publicPendingPayment(record: StandardX402PendingPaymentRecord) {
+  return {
+    url: record.url, method: record.method, requestBodyHash: record.requestBodyHash,
+    amountRawUsdc: record.amountRawUsdc, payTo: record.payTo, feePayer: record.feePayer,
+    realizedRawUsdc: record.realizedRawUsdc, realizeTxSignature: record.realizeTxSignature,
+    status: record.status, createdAtMs: record.createdAtMs, updatedAtMs: record.updatedAtMs,
+    withdrawalId: record.recovery?.prepared?.withdrawalId ?? null,
+    fundingSource: record.recovery?.context ?? null
+  };
+}
+
 function pendingPaymentKey(input: {
   url: string;
   method: string;
@@ -564,27 +639,39 @@ function pendingPaymentKey(input: {
 /**
  * Standard x402 v2: after settlement the resource server echoes the settle
  * response as base64 JSON in PAYMENT-RESPONSE, including the payment
- * transaction signature. Absent or malformed headers yield null.
+ * transaction signature. Absent, failed or malformed receipts yield null.
  */
 export function extractSettledPaymentTxSignature(
   response: FetchResponseLike
 ): string | null {
+  return readSettlementReceipt(response).txSignature;
+}
+
+function readSettlementReceipt(response: FetchResponseLike): {
+  status: "absent" | "success" | "failed" | "invalid";
+  txSignature: string | null;
+} {
   const header = response.headers.get(PAYMENT_RESPONSE_HEADER) ?? response.headers.get("x-payment-response");
-  if (header === null || header.length === 0) {
-    return null;
+  if (header === null) {
+    // Preserve delivery compatibility with sellers that do not expose a receipt.
+    return { status: "absent", txSignature: null };
   }
   try {
-    const decoded = JSON.parse(
-      Buffer.from(header, "base64").toString("utf8")
-    ) as { transaction?: unknown; txHash?: unknown };
-    if (typeof decoded.transaction === "string" && decoded.transaction.length > 0) {
-      return decoded.transaction;
+    const decoded = decodeX402Header(header);
+    if (decoded === null || typeof decoded !== "object" || Array.isArray(decoded) ||
+        !("success" in decoded) || typeof decoded.success !== "boolean") {
+      return { status: "invalid", txSignature: null };
     }
-    if (typeof decoded.txHash === "string" && decoded.txHash.length > 0) {
-      return decoded.txHash;
+    if (!decoded.success) return { status: "failed", txSignature: null };
+    const receipt = decoded as { transaction?: unknown; txHash?: unknown };
+    if (typeof receipt.transaction === "string" && receipt.transaction.length > 0) {
+      return { status: "success", txSignature: receipt.transaction };
     }
-    return null;
+    if (typeof receipt.txHash === "string" && receipt.txHash.length > 0) {
+      return { status: "success", txSignature: receipt.txHash };
+    }
+    return { status: "invalid", txSignature: null };
   } catch {
-    return null;
+    return { status: "invalid", txSignature: null };
   }
 }

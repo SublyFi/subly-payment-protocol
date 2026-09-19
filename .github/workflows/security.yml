@@ -36,7 +36,16 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+      - name: Verify exact bigint-buffer replacement before correcting GitHub's alias identity
+        id: bigint-alias
+        run: node scripts/review-bigint-buffer-alias.mjs
       - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4
+        with:
+          allow-ghsas: ${{ steps.bigint-alias.outputs.allow-ghsas }}
 
   codeql:
     name: CodeQL

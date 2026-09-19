@@ -1,9 +1,10 @@
-import { closeSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type {
   StandardX402PendingPaymentRecord,
   StandardX402StateStore
 } from "./standard-x402-payer.js";
+import { standardExactRequirementSchema } from "../x402/standard-requirements.js";
 
 export function fileStandardX402StateStore(path: string): StandardX402StateStore {
   return {
@@ -49,6 +50,9 @@ export function fileStandardX402StateStore(path: string): StandardX402StateStore
           );
         }
       }
+      if (new Set(parsed.map((record) => record.key)).size !== parsed.length) {
+        throw new Error(`pending payment state has duplicate request keys: ${path}`);
+      }
       return parsed;
     },
     save(records: StandardX402PendingPaymentRecord[]): void {
@@ -58,8 +62,23 @@ export function fileStandardX402StateStore(path: string): StandardX402StateStore
         directory,
         `.${basename(path)}.${process.pid}.${Date.now()}.tmp`
       );
-      writeFileSync(tempPath, JSON.stringify(records, null, 2), { mode: 0o600, flag: "wx" });
-      renameSync(tempPath, path);
+      try {
+        const fd = openSync(tempPath, "wx", 0o600);
+        try {
+          writeFileSync(fd, JSON.stringify(records, null, 2));
+          fsyncSync(fd);
+        } finally { closeSync(fd); }
+        renameSync(tempPath, path);
+        // Windows cannot open directory handles through this Node API.
+        // File contents are flushed everywhere; Unix also persists the rename.
+        if (process.platform !== "win32") {
+          const directoryFd = openSync(directory, "r");
+          try { fsyncSync(directoryFd); }
+          finally { closeSync(directoryFd); }
+        }
+      } finally {
+        try { unlinkSync(tempPath); } catch { /* Rename succeeded, or preserve the original I/O error. */ }
+      }
     }
   };
 }
@@ -91,9 +110,33 @@ function isPendingPaymentRecord(
     typeof record.realizedRawUsdc === "string" &&
     (record.realizeTxSignature === null ||
       typeof record.realizeTxSignature === "string") &&
-    (record.status === "realized" ||
+    (record.status === "realizing" || record.status === "realized" ||
       record.status === "external_outcome_unknown") &&
+    (record.recovery === undefined || (isRecoveryRecord(record.recovery) &&
+      record.key === `${record.method}:${record.url}:${record.requestBodyHash}` &&
+      /^\d+$/.test(String(record.realizedRawUsdc)) && /^\d+$/.test(String(record.amountRawUsdc)))) &&
     typeof record.createdAtMs === "number" &&
     typeof record.updatedAtMs === "number"
   );
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** New recovery records opt into auto-resume, so validate their entire envelope. */
+function isRecoveryRecord(value: unknown): boolean {
+  if (!isObject(value) || value.version !== 1 || !isObject(value.context)) return false;
+  const context = value.context;
+  if (!["wallet", "vault", "relayerBaseUrl"].every((key) => typeof context[key] === "string" && context[key] !== "") ||
+      typeof value.requestHeadersHash !== "string" || !/^[0-9a-f]{64}$/.test(value.requestHeadersHash) ||
+      !standardExactRequirementSchema.safeParse(value.requirement).success) return false;
+  if (value.prepared === undefined) return true;
+  const prepared = value.prepared;
+  if (!isObject(prepared) || !isObject(prepared.signingIntent) || prepared.purpose !== "yield_realize" ||
+      !["withdrawalId", "serializedTransaction", "destinationUsdcAta", "requestedWithdrawRawUsdc"].every((key) => typeof prepared[key] === "string" && prepared[key] !== "")) return false;
+  const intent = prepared.signingIntent;
+  return intent.allowFullExit === false &&
+    ["wallet", "vault", "farm", "shareMint", "asset", "destinationUsdcAta", "maxSharesToRedeemRaw", "feePayer", "expiresAt", "preparedMessageHash"]
+      .every((key) => typeof intent[key] === "string" && intent[key] !== "");
 }

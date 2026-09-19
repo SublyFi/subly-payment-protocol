@@ -34,10 +34,10 @@ export class ChainWalletSyncService {
     wallet: string;
     forceConservativeReset?: boolean | undefined;
   }) {
-    const context = await this.adapter.loadContext();
-    const userShares = await this.adapter.getUserSharesRaw(input.wallet, context);
     const vault = this.adapter.vaultAddress;
-
+    // Capture the ledger revision before any remote reads. A receipt or another
+    // sync can finish while those reads are in flight; its newer accounting
+    // must not be overwritten by the resulting snapshot.
     const ledgerPosition = await this.service.ledger.getPosition(
       input.wallet,
       vault
@@ -48,6 +48,9 @@ export class ChainWalletSyncService {
         "Register the agent wallet before syncing its Kamino position"
       );
     }
+
+    const context = await this.adapter.loadContext();
+    const userShares = await this.adapter.getUserSharesRaw(input.wallet, context);
 
     const sharesMoved =
       userShares.totalSharesRaw !== ledgerPosition.totalSharesRaw;
@@ -95,6 +98,7 @@ export class ChainWalletSyncService {
     return this.service.syncWalletPosition({
       wallet: input.wallet,
       vault,
+      expectedPositionVersion: ledgerPosition.version,
       stakedSharesRaw: userShares.stakedSharesRaw.toString(),
       unstakedSharesRaw: userShares.unstakedSharesRaw.toString(),
       totalSharesRaw: userShares.totalSharesRaw.toString(),

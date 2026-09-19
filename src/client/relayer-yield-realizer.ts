@@ -1,10 +1,11 @@
 import type { SolanaRpc } from "../solana/rpc.js";
 import type { AgentWalletSigner } from "./agent-wallet-signer.js";
-import type { YieldRealizer } from "./standard-x402-payer.js";
+import { StandardX402PayError, type YieldRealizer, type RealizePaymentBinding } from "./standard-x402-payer.js";
 import {
   VaultFlowClient,
   VaultFlowClientError
 } from "./vault-flows.js";
+import type { PreparedWithdrawal } from "./vault-flows.js";
 
 /**
  * Product/distribution-form yield realizer. The sponsor keypair lives ONLY on
@@ -43,7 +44,9 @@ export class RelayerRealizeError extends Error {
       | "realize_not_confirmed"
       | "approval_required",
     message: string,
-    readonly detail: unknown = null
+    readonly detail: unknown = null,
+    /** True only when this invocation is known not to have submitted. */
+    readonly realizationSafeToRetry = false
   ) {
     super(message);
     this.name = "RelayerRealizeError";
@@ -69,6 +72,7 @@ export interface RelayerYieldRealizerConfig {
 
 export class RelayerYieldRealizer implements YieldRealizer {
   get vault(): string { return this.vaultFlows.vault.address; }
+  readonly realizationContext: { wallet: string; vault: string; relayerBaseUrl: string };
   private readonly vaultFlows: VaultFlowClient;
 
   constructor(config: RelayerYieldRealizerConfig) {
@@ -81,6 +85,8 @@ export class RelayerYieldRealizer implements YieldRealizer {
         ? {}
         : { lookupTablesFor: config.lookupTablesFor })
     });
+    this.realizationContext = Object.freeze({ wallet: config.signer.walletAddress,
+      vault: this.vaultFlows.vault.address, relayerBaseUrl: config.relayerBaseUrl.replace(/\/$/, "") });
   }
 
   async ensureUsdcAvailable(input: {
@@ -93,6 +99,7 @@ export class RelayerYieldRealizer implements YieldRealizer {
     };
     /** Owner approval for a payment above the mandate threshold. */
     approvalId?: string;
+    onPrepared?: (prepared: PreparedWithdrawal) => Promise<void>;
   }): Promise<{
     realizedRawUsdc: bigint;
     txSignature: string | null;
@@ -106,6 +113,7 @@ export class RelayerYieldRealizer implements YieldRealizer {
     await this.assertSpendableYield(shortfallRawUsdc);
 
     let outcome;
+    let submissionPossible = false;
     try {
       outcome = await this.vaultFlows.withdraw({
         amountRawUsdc: shortfallRawUsdc,
@@ -117,12 +125,34 @@ export class RelayerYieldRealizer implements YieldRealizer {
         ...(input.payment === undefined ? {} : { payment: input.payment }),
         ...(input.approvalId === undefined
           ? {}
-          : { approvalId: input.approvalId })
+          : { approvalId: input.approvalId }),
+        ...(input.onPrepared === undefined ? {} : { onPrepared: input.onPrepared }),
+        onBeforeSubmit: () => { submissionPossible = true; }
       });
     } catch (error) {
-      throw this.mapWithdrawError(error);
+      // A durable checkpoint failure must reach the payer without being
+      // reclassified as an ordinary prepare failure or cleared on retry.
+      if (error instanceof StandardX402PayError) throw error;
+      throw this.mapWithdrawError(error, !submissionPossible);
     }
 
+    return this.confirmedRealization(outcome);
+  }
+
+  async resumeUsdcAvailable(input: {
+    amountRawUsdc: bigint;
+    payment: RealizePaymentBinding;
+    prepared: PreparedWithdrawal;
+  }) {
+    // The first realization may already have consumed the available yield.
+    // A fresh budget check/prepare here would lose its provenance or block it.
+    const outcome = await this.vaultFlows.resumeWithdrawal(input.prepared, {
+      amountRawUsdc: input.amountRawUsdc, purpose: "yield_realize", payment: input.payment
+    });
+    return this.confirmedRealization(outcome);
+  }
+
+  private confirmedRealization(outcome: Awaited<ReturnType<VaultFlowClient["withdraw"]>>) {
     if (outcome.status !== "confirmed" || outcome.txSignature === null) {
       throw new RelayerRealizeError(
         "realize_not_confirmed",
@@ -164,7 +194,8 @@ export class RelayerYieldRealizer implements YieldRealizer {
       throw new RelayerRealizeError(
         "budget_unavailable",
         "could not read the spendable-yield budget",
-        error
+        error,
+        true
       );
     }
     // Mirror the server guard (gross withdraw + fee headroom); anything the
@@ -176,19 +207,21 @@ export class RelayerYieldRealizer implements YieldRealizer {
         `spendable yield ${spendable} cannot cover ${shortfallRawUsdc} raw USDC ` +
           `plus the ${REALIZE_OVERHEAD_RAW_USDC} raw fee headroom; ` +
           "the principal is never spent — wait for more yield",
-        { spendableYieldRawUsdc: spendable.toString() }
+        { spendableYieldRawUsdc: spendable.toString() },
+        true
       );
     }
   }
 
-  private mapWithdrawError(error: unknown): RelayerRealizeError {
+  private mapWithdrawError(error: unknown, safeToRetry: boolean): RelayerRealizeError {
     if (!(error instanceof VaultFlowClientError)) {
       return new RelayerRealizeError(
         "prepare_failed",
         `yield realize failed: ${
           error instanceof Error ? error.message : String(error)
         }`,
-        error
+        error,
+        safeToRetry
       );
     }
     const serverCode = error.code ?? errorCodeFrom(error.detail);
@@ -200,7 +233,8 @@ export class RelayerYieldRealizer implements YieldRealizer {
         "approval_required",
         "this payment exceeds the owner-approval threshold; nothing was " +
           "realized or paid. Ask the owner to approve, then retry with the approvalId",
-        error.errorDetails ?? error.detail
+        error.errorDetails ?? error.detail,
+        safeToRetry
       );
     }
     // The relayer's own principal-protection guard: surface it under the
@@ -213,13 +247,15 @@ export class RelayerYieldRealizer implements YieldRealizer {
         "insufficient_yield",
         "the relayer refused to realize beyond the spendable yield; " +
           "the principal is never spent — wait for more yield",
-        error.detail
+        error.detail,
+        safeToRetry
       );
     }
     return new RelayerRealizeError(
       error.step === "submit" ? "submit_failed" : "prepare_failed",
       error.message,
-      error.detail
+      error.detail,
+      safeToRetry
     );
   }
 }

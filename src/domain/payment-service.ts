@@ -99,6 +99,8 @@ export interface RegisterAgentWalletInput {
 export interface SyncWalletPositionInput {
   wallet: string;
   vault?: string | undefined;
+  /** Ledger revision captured before fetching a chain snapshot. */
+  expectedPositionVersion?: number | undefined;
   stakedSharesRaw?: string | undefined;
   unstakedSharesRaw?: string | undefined;
   totalSharesRaw: string;
@@ -287,6 +289,39 @@ export class SublyService {
         throw notFound(
           "wallet_not_registered",
           "Register the agent wallet before syncing its Kamino position"
+        );
+      }
+
+      if (
+        (input.expectedPositionVersion !== undefined &&
+          input.expectedPositionVersion !== existing.version) ||
+        (input.observedSlot !== undefined &&
+          existing.lastSyncedSlot !== null &&
+          input.observedSlot < existing.lastSyncedSlot)
+      ) {
+        throw conflict(
+          "stale_position_snapshot",
+          "The position changed while syncing or the chain snapshot is older than the ledger; fetch a fresh snapshot"
+        );
+      }
+
+      // A landed flow can still be awaiting receipt finalization. Treating its
+      // share movement as an external deposit/withdrawal here would reset the
+      // baseline before that receipt applies its principal change a second time.
+      const [deposits, withdrawals] = await Promise.all([
+        this.ledger.listDepositsForPosition(wallet, vault),
+        this.ledger.listWithdrawalsForPosition(wallet, vault)
+      ]);
+      const submittedDeposits = deposits.filter((intent) => intent.status === "submitted");
+      const submittedWithdrawals = withdrawals.filter((intent) => intent.status === "submitted");
+      if (submittedDeposits.length > 0 || submittedWithdrawals.length > 0) {
+        throw conflict(
+          "vault_flow_pending",
+          "Reconcile submitted deposits and withdrawals before syncing the position",
+          {
+            depositIds: submittedDeposits.map((intent) => intent.depositId),
+            withdrawalIds: submittedWithdrawals.map((intent) => intent.withdrawalId)
+          }
         );
       }
 

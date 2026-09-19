@@ -132,13 +132,13 @@ if (submitted.txSignature !== null) {
 if (submitted.status === "submitted") {
   fail(
     "[deposit] broadcast but not yet confirmed — it may still land. Do NOT " +
-      `resubmit; check GET /v1/deposits/${submitted.depositId} (or the tx link above) first`
+      `resubmit; run pay status ${submitted.depositId} with the same wallet, vault and relayer first`
   );
 }
 if (submitted.status !== "confirmed") {
   fail(
     `[deposit] not confirmed (errorCode=${submitted.errorCode}); ` +
-      `check GET /v1/deposits/${submitted.depositId} and the relayer logs`
+      `run pay status ${submitted.depositId} and ask the operator to reconcile it`
   );
 }
 console.log(

@@ -1,6 +1,6 @@
 # Governance
 
-Subly is maintained by SublyFi and is currently in beta. The repository is open for contributions, but the project does not yet have a formal foundation, steering committee, or community voting process.
+Subly is maintained by SublyFi. The project is open for contributions, with maintainers responsible for project decisions and releases.
 
 ## Decision making
 

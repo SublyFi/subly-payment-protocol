@@ -32,7 +32,7 @@ After publication, run the registry verifier from the repository root, using
 the exact released version:
 
 ```bash
-node scripts/verify-published-package.mjs --version 0.8.5 --require-provenance
+node scripts/verify-published-package.mjs --version 0.8.6 --require-provenance
 ```
 
 The verifier waits for registry availability, installs the exact public version

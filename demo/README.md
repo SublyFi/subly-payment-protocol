@@ -8,7 +8,7 @@ Follow the [client setup guide](../packages/pay/README.md) before running the
 recommended demo:
 
 ```bash
-npx -y @subly_fi/pay@0.8.5 fetch <standard-x402-url> [maxAmountRawUsdc]
+npx -y @subly_fi/pay@0.8.6 fetch <standard-x402-url> [maxAmountRawUsdc]
 ```
 
 The seller needs no Subly integration: it receives a normal x402 USDC payment.
@@ -18,7 +18,7 @@ challenges without a fee payer are rejected before any yield is moved. The
 relayer also rejects a `purpose: "yield_realize"` withdrawal that exceeds
 spendable yield; that check is not left solely to the client.
 
-The MCP server (`npx -y @subly_fi/pay@0.8.5 mcp`, or the environment-loading
+The MCP server (`npx -y @subly_fi/pay@0.8.6 mcp`, or the environment-loading
 wrapper `demo/run-mcp.sh`) exposes `deposit_to_subly_vault`,
 `withdraw_from_subly_vault` and `get_subly_yield_budget` alongside payment.
 An agent can use MCP for the deposit → budget check → payment → withdrawal

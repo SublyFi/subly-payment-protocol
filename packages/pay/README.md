@@ -21,10 +21,10 @@ Replace the example URLs, paths and IDs below. CLI commands run once and exit. F
 ```sh
 node --version
 npm --version
-npx -y @subly_fi/pay@0.8.5 --version
+npx -y @subly_fi/pay@0.8.6 --version
 ```
 
-The last command must print `0.8.5`. If Node is missing, [install Node.js 24+](https://nodejs.org/en/download) and open a new terminal. For installation errors, see [troubleshooting](https://github.com/SublyFi/subly-payment-protocol/blob/main/docs/troubleshooting.md).
+The last command must print `0.8.6`. If Node is missing, [install Node.js 24+](https://nodejs.org/en/download) and open a new terminal. For installation errors, see [troubleshooting](https://github.com/SublyFi/subly-payment-protocol/blob/main/docs/troubleshooting.md).
 
 ### 2. Prepare the agent wallet
 
@@ -84,8 +84,8 @@ Settings apply to this terminal only. Use absolute paths; Windows and WSL paths 
 If your operator uses a custom vault catalogue, review it and set `SUBLY_VAULTS_FILE` to its absolute path. Set `SUBLY_VAULT_ADDRESS` to select a listed vault. Do not copy trust settings from a transaction or an unreviewed remote response.
 
 ```sh
-npx -y @subly_fi/pay@0.8.5 doctor
-npx -y @subly_fi/pay@0.8.5 vaults
+npx -y @subly_fi/pay@0.8.6 doctor
+npx -y @subly_fi/pay@0.8.6 vaults
 ```
 
 Continue only when `doctor` prints `"ok": true`. It checks configuration, relayer readiness, vault settings and mainnet RPC access. It does **not** check the keypair contents, funds, yield, simulation support or vault safety. `vaults` prints local settings; review the vault's fees, minimum deposit and liquidity with the operator.
@@ -94,15 +94,15 @@ Continue only when `doctor` prints `"ok": true`. It checks configuration, relaye
 
 Amounts use six-decimal USDC integers: `1000000` = 1 USDC; `1010000` = 1.01 USDC.
 
-For custom limits, check `npx -y @subly_fi/pay@0.8.5 setup-link --help` before registration. An existing owner must use [owner management](#manage-the-owner-and-recover-access) to change limits.
+For custom limits, check `npx -y @subly_fi/pay@0.8.6 setup-link --help` before registration. An existing owner must use [owner management](#manage-the-owner-and-recover-access) to change limits.
 
 ```sh
-npx -y @subly_fi/pay@0.8.5 setup-link --initial-deposit 1010000 \
-  --per-payment-cap 10000 --daily-api-cap 10000 \
+npx -y @subly_fi/pay@0.8.6 setup-link --initial-deposit 1010000 \
+  --per-payment-cap 20000 --daily-api-cap 10000 \
   --approval-threshold 10000 --daily-deposit-cap 1010000 --ttl-days 30
 ```
 
-This example sets a 0.01 USDC per-payment and rolling 24-hour API cap, a 1.01 USDC rolling 24-hour deposit cap, and a 30-day mandate. Choose your limits before generating the link. The client's payment cap and the owner's mandate are separate controls.
+This example sets a 0.02 USDC per-payment cap, a 0.01 USDC rolling 24-hour API cap and approval threshold, a 1.01 USDC rolling 24-hour deposit cap, and a 30-day mandate. The daily cap limits total API spending to 0.01 USDC. A non-null approval threshold must be strictly below the per-payment cap; approval never overrides either cap. Choose your limits before generating the link. The client's payment cap and the owner's mandate are separate controls.
 
 Without explicit setup flags, the relayer defaults are 10 USDC per payment, 100 USDC per rolling 24 hours, 3,000 USDC of deposits per rolling 24 hours and owner approval above 1 USDC, with a 365-day mandate. Both examples leave the payee allowlist and monthly cap unset and allow normal withdrawals without owner approval.
 
@@ -113,19 +113,19 @@ Open the returned `setupUrl`, review the wallet, vault and limits, then approve 
 Return to the terminal and replace the example ID with the returned `sessionId`:
 
 ```sh
-npx -y @subly_fi/pay@0.8.5 setup-status st_YOUR_SESSION_ID
+npx -y @subly_fi/pay@0.8.6 setup-status st_YOUR_SESSION_ID
 ```
 
 Continue only when `status` is `completed`. For the bundled first deposit above, also confirm that `initialDepositApproval` is approved. If you omitted the initial deposit or replaced an existing owner, this field is absent; the deposit will request a separate approval. For `pending`, finish browser approval. For `expired`, create a new link. Browser approval does not run the deposit; submit the **same amount** within the approval's roughly 15-minute lifetime:
 
 ```sh
-npx -y @subly_fi/pay@0.8.5 deposit 1010000
+npx -y @subly_fi/pay@0.8.6 deposit 1010000
 ```
 
 A successful deposit prints `status: confirmed`. Keep its `depositId`. If it remains `submitted`, use [status](#check-an-interrupted-deposit-or-withdrawal) before doing anything else.
 
 ```sh
-npx -y @subly_fi/pay@0.8.5 budget
+npx -y @subly_fi/pay@0.8.6 budget
 ```
 
 Read `spendableYieldRawUsdc` in the budget result. **A new deposit is not an immediate payment budget.** Only accrued yield can pay for APIs; wait until it covers the price and fees. There is no guaranteed waiting time. The 1.01 USDC example demonstrates a deposit, not an immediate paid call. A budget read can return the last synced view if refresh fails.
@@ -135,13 +135,13 @@ Read `spendableYieldRawUsdc` in the budget result. **A new deposit is not an imm
 Obtain a real URL from a seller offering **Solana mainnet USDC `exact` with `extra.feePayer`**. Replace this placeholder:
 
 ```sh
-npx -y @subly_fi/pay@0.8.5 fetch https://seller.example.com/paid-resource
+npx -y @subly_fi/pay@0.8.6 fetch https://seller.example.com/paid-resource
 ```
 
 The default cap is **0.01 USDC**. To allow up to 0.02 USDC:
 
 ```sh
-npx -y @subly_fi/pay@0.8.5 fetch https://seller.example.com/paid-resource 20000
+npx -y @subly_fi/pay@0.8.6 fetch https://seller.example.com/paid-resource 20000
 ```
 
 Raising the client cap does not raise owner limits: the setup example above still refuses a price over 0.01 USDC until the owner updates the policy. Confirm the seller's method and request schema before calling a paid endpoint; a seller may charge even when it returns an application error. Success returns `"paid": true`, an HTTP 2xx `status` and the response `body`. For `paid: false`, read the reason or HTTP response.
@@ -149,7 +149,7 @@ Raising the client cap does not raise owner limits: the setup example above stil
 If the result says `approval_required`, open `approveUrl`, approve, then repeat the **same request and cap** with its `approvalId`:
 
 ```sh
-npx -y @subly_fi/pay@0.8.5 fetch https://seller.example.com/paid-resource 20000 apr_YOUR_APPROVAL_ID
+npx -y @subly_fi/pay@0.8.6 fetch https://seller.example.com/paid-resource 20000 apr_YOUR_APPROVAL_ID
 ```
 
 ### 6. Withdraw
@@ -157,13 +157,13 @@ npx -y @subly_fi/pay@0.8.5 fetch https://seller.example.com/paid-resource 20000 
 This requests 1 USDC back to the **same agent wallet**, subject to liquidity, fees and owner policy:
 
 ```sh
-npx -y @subly_fi/pay@0.8.5 withdraw 1000000
+npx -y @subly_fi/pay@0.8.6 withdraw 1000000
 ```
 
 Success prints `status: confirmed`. Keep its `withdrawalId`. If owner approval is required, open the returned `approveUrl`, approve, then repeat the same amount with its `approvalId`:
 
 ```sh
-npx -y @subly_fi/pay@0.8.5 withdraw 1000000 apr_YOUR_APPROVAL_ID
+npx -y @subly_fi/pay@0.8.6 withdraw 1000000 apr_YOUR_APPROVAL_ID
 ```
 
 Later deposits use the same pattern: append the returned approval ID to the original deposit command. Each ID is valid only for its exact operation.
@@ -173,7 +173,7 @@ Later deposits use the same pattern: append the returned approval ID to the orig
 Use the original wallet, vault and relayer. Replace this ID with the original `depositId` (`dep_...`) or `withdrawalId` (`wdr_...`):
 
 ```sh
-npx -y @subly_fi/pay@0.8.5 status wdr_YOUR_WITHDRAWAL_ID
+npx -y @subly_fi/pay@0.8.6 status wdr_YOUR_WITHDRAWAL_ID
 ```
 
 This checks the operation without sending another transaction; it requires relayer 0.8.0+. Exit zero only means the lookup worked.
@@ -186,7 +186,7 @@ This checks the operation without sending another transaction; it requires relay
 
 ## MCP configuration
 
-Complete the wallet and connection steps above. Configure your host to run `npx -y @subly_fi/pay@0.8.5 mcp` with the same environment. The server uses stdio; it does not open a web page or listen on an HTTP port.
+Complete the wallet and connection steps above. Configure your host to run `npx -y @subly_fi/pay@0.8.6 mcp` with the same environment. The server uses stdio; it does not open a web page or listen on an HTTP port.
 
 For hosts accepting `mcpServers`, use this template. Replace every example value with an absolute path or real URL. JSON does not expand `$HOME` or other shell variables.
 
@@ -195,7 +195,7 @@ For hosts accepting `mcpServers`, use this template. Replace every example value
   "mcpServers": {
     "subly": {
       "command": "npx",
-      "args": ["-y", "@subly_fi/pay@0.8.5", "mcp"],
+      "args": ["-y", "@subly_fi/pay@0.8.6", "mcp"],
       "env": {
         "SUBLY_RELAYER_URL": "https://your-relayer.example.com",
         "SOLANA_RPC_URL": "https://your-mainnet-rpc.example.com",
@@ -236,17 +236,17 @@ For Circle, set `SUBLY_SIGNER_PROVIDER=circle` and `CIRCLE_API_KEY`, `CIRCLE_ENT
 Requires client and relayer **0.8.3+**. Keep the original operator domain, wallet and vault.
 
 ```sh
-npx -y @subly_fi/pay@0.8.5 recovery-status
-npx -y @subly_fi/pay@0.8.5 owner-link --per-payment-cap 2000000
+npx -y @subly_fi/pay@0.8.6 recovery-status
+npx -y @subly_fi/pay@0.8.6 owner-link --per-payment-cap 2000000
 ```
 
 The cap is an example. Open `ownerUrl` and approve with the **existing** passkey or owner wallet, then check the returned session ID:
 
 ```sh
-npx -y @subly_fi/pay@0.8.5 owner-status st_YOUR_SESSION_ID
+npx -y @subly_fi/pay@0.8.6 owner-status st_YOUR_SESSION_ID
 ```
 
-Omitted policy fields and the existing expiry stay unchanged. Use `npx -y @subly_fi/pay@0.8.5 owner-link --help` for options; set `--ttl-days` to renew an expired policy. Reactivating without a new TTL does not renew an expired mandate. Expiry falls back to the relayer's default policy; it is not a spending freeze. Policy changes invalidate old approvals, including an unused initial-deposit approval, and do not approve a new deposit.
+Omitted policy fields and the existing expiry stay unchanged. Use `npx -y @subly_fi/pay@0.8.6 owner-link --help` for options; set `--ttl-days` to renew an expired policy. Reactivating without a new TTL does not renew an expired mandate. Expiry falls back to the relayer's default policy; it is not a spending freeze. Policy changes invalidate old approvals, including an unused initial-deposit approval, and do not approve a new deposit.
 
 Use `--allowed-payees` with comma-separated verified seller Solana addresses, `--monthly-api-cap` for a rolling 30-day ceiling, and `--withdrawal-policy owner_approval_required` when withdrawals need owner approval. Obtain payee addresses from the seller's official configuration and review the proposed policy on the owner page. `--allowed-payees any` removes the allowlist and cap value `none` removes that ceiling. Approval never raises an absolute cap or bypasses the payee list. The daily caps use rolling 24-hour windows, not a midnight reset; the requested amount plus previous usage may equal the cap. API usage counts confirmed yield realizations, even when the later seller payment fails.
 
@@ -255,8 +255,8 @@ The owner page also supports revocation, reactivation and recovery cancellation.
 If the owner credential is lost:
 
 ```sh
-npx -y @subly_fi/pay@0.8.5 recovery-start
-npx -y @subly_fi/pay@0.8.5 recovery-status
+npx -y @subly_fi/pay@0.8.6 recovery-start
+npx -y @subly_fi/pay@0.8.6 recovery-status
 ```
 
 After the **72-hour** deadline, wait for `effectiveStatus: recovery_elapsed`, then use `setup-link` to register a new owner. The current owner can cancel recovery. Explicitly revoked mandates require the **same owner** to restore access. If that credential and its backup are lost, contact the operator; preserve the wallet key and ledger.
@@ -286,6 +286,6 @@ node packages/pay/dist/cli.js --help
 npm run test:package
 ```
 
-Replace `npx -y @subly_fi/pay@0.8.5` in this guide with `node packages/pay/dist/cli.js`. For MCP, run `node` with the absolute path to that file and `mcp`. A compatible relayer is still required.
+Replace `npx -y @subly_fi/pay@0.8.6` in this guide with `node packages/pay/dist/cli.js`. For MCP, run `node` with the absolute path to that file and `mcp`. A compatible relayer is still required.
 
 `test:package` checks a packed installation and the MCP handshake. See [validation records](https://github.com/SublyFi/subly-payment-protocol/blob/main/docs/validation.md) for the scope of completed checks.

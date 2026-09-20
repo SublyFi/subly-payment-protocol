@@ -252,7 +252,7 @@ export interface SpendingApproval {
 }
 
 /**
- * Owner-onboarding setup session (docs/spending-mandate-design.md, Phase 2):
+ * Owner-onboarding setup session (docs/spending-mandate-design.md):
  * the agent creates it under wallet-auth with the chat-agreed policy and
  * initial deposit, pastes the capability URL into chat, and the human
  * completes it once on their own device. Values are confirm-only: complete

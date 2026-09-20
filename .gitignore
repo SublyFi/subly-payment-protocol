@@ -5,10 +5,8 @@ node_modules/
 dist/
 coverage/
 .agents
-.claude/*
-!.claude/skills
-.claude/skills/*
-!.claude/skills/subly-beta-setup
+.claude/
+/skills-lock.json
 .superstack
 demo/env/mcp-pending-payments.json
 packages/pay/dist/

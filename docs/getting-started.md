@@ -19,10 +19,10 @@ Ask your operator for its HTTPS URL and reviewed vault configuration. There is n
 Follow the [client guide](../packages/pay/README.md#quick-start) in this order:
 
 1. Configure a dedicated agent wallet, relayer, mainnet RPC and vault.
-2. Run `npx -y @subly_fi/pay@0.8.5 doctor`. Continue when it reports `"ok": true`.
+2. Run `npx -y @subly_fi/pay@0.8.6 doctor`. Continue when it reports `"ok": true`.
 3. Create a setup link and approve the spending policy in your browser. Return to the CLI or tell your agent approval is complete; wait for setup status `completed`.
 4. Deposit the approved amount of mainnet USDC.
-5. Check `npx -y @subly_fi/pay@0.8.5 budget`. Wait until spendable yield covers the API price and fees.
+5. Check `npx -y @subly_fi/pay@0.8.6 budget`. Wait until spendable yield covers the API price and fees.
 6. Pay an API that supports x402 Solana mainnet USDC `exact` with `extra.feePayer`.
 
 A successful `doctor` check confirms configuration and connectivity. A fresh deposit does not provide an immediate payment budget. Local detached mode cannot perform these transactions.
@@ -37,7 +37,7 @@ Keep keys, seed phrases, credentials and approval links private. Use a passkey o
 
 | Result | Action |
 | --- | --- |
-| Deposit or withdrawal is `submitted` | Run `npx -y @subly_fi/pay@0.8.5 status <intentId>` with the original ID. Do not repeat the transaction while confirmation is pending. |
+| Deposit or withdrawal is `submitted` | Run `npx -y @subly_fi/pay@0.8.6 status <intentId>` with the original ID. Do not repeat the transaction while confirmation is pending. |
 | Payment is interrupted or its outcome is unknown | Keep the pending JSON file and follow [payment recovery](../packages/pay/README.md#recovery-and-troubleshooting). Do not delete state or force a new payment. |
 | `insufficient_yield` | Check the budget and wait for more yield. |
 | Owner access or policy needs changing | Follow [owner management and recovery](../packages/pay/README.md#manage-the-owner-and-recover-access). |
@@ -50,4 +50,4 @@ Follow the [operator guide](../deploy/README.md) to configure the server, start 
 
 For upgrades, use the guide's update procedure. Preserve the database, credentials and vaults with existing funds. Sponsor SOL pays gas and account rent; fee-debt accounting does not reimburse the operator.
 
-Subly 0.8.5 is beta software without an external security audit. Mainnet operations use real funds. Read the [security model](security-model.md) and [validation status](validation.md) before depositing.
+Subly 0.8.6 is beta software without an external security audit. Mainnet operations use real funds. Read the [security model](security-model.md) and [validation status](validation.md) before depositing.

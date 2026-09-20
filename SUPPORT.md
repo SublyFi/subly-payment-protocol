@@ -16,4 +16,4 @@ Subly is a beta project that moves real funds on Solana. Read the [README](READM
 3. Remove private keys, seed phrases, API tokens, wallet signatures, signed transactions, database URLs, setup/owner/approval capability URLs, and personal data from logs.
 4. For transaction problems, include the Solana cluster, public transaction signature if safe, and the exact client/server versions.
 
-This project is maintained on a best-effort basis. There is no guaranteed response or uptime SLA. Hosted beta service support may differ from self-hosted support; never assume the hosted service is production-safe for funds you cannot afford to lose.
+This project is maintained on a best-effort basis. There is no guaranteed response or uptime SLA.

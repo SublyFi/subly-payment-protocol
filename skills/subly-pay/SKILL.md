@@ -2,7 +2,7 @@
 name: subly-pay
 description: Use Subly to pay compatible x402 APIs from Kamino vault yield and manage vault deposits, withdrawals and owner approvals. Use when the user asks to pay through Subly or manage their Subly wallet; an HTTP 402 response alone does not authorize a purchase.
 metadata:
-  version: 0.8.4
+  version: 0.8.5
   openclaw:
     requires:
       bins:
@@ -28,7 +28,7 @@ metadata:
 
 # Subly pay (yield-funded x402)
 
-Use the versioned client `npx -y @subly_fi/pay@0.8.4`. Supported sellers offer
+Use the versioned client `npx -y @subly_fi/pay@0.8.5`. Supported sellers offer
 Solana mainnet USDC `exact` with `extra.feePayer`. The client realizes accrued
 vault yield through the chosen relayer, then pays through the seller's x402
 facilitator. These are separate transactions.
@@ -52,7 +52,7 @@ private terminal: `solana-keygen new` displays a recovery phrase. Do not capture
 it through an AI tool or ask for its output. The client reads a local key into
 process memory to sign; it does not send that key to the relayer.
 
-Run `npx -y @subly_fi/pay@0.8.4 doctor` before setup. It checks configuration and
+Run `npx -y @subly_fi/pay@0.8.5 doctor` before setup. It checks configuration and
 reachability, not balances, simulation support or transaction success.
 
 Agree on the first deposit amount and policy, then use `setup-link
@@ -77,13 +77,13 @@ Run the one-shot pay command (no clone — uses the published package via npx)
 with the resource URL:
 
 ```bash
-npx -y @subly_fi/pay@0.8.4 fetch "<url>"
+npx -y @subly_fi/pay@0.8.5 fetch "<url>"
 ```
 
 To set a tighter per-call cap (raw USDC, 6 decimals — e.g. 100 = 0.0001 USDC):
 
 ```bash
-npx -y @subly_fi/pay@0.8.4 fetch "<url>" 100
+npx -y @subly_fi/pay@0.8.5 fetch "<url>" 100
 ```
 
 The command prints JSON. Paid success includes `paid: true`, an HTTP 2xx
@@ -116,14 +116,14 @@ do not invent a receipt field or substitute the realization for the seller payme
     once they approve with their passkey or owner wallet, run the `retry`
     command for the same request. Preserve its URL, method, body, headers
     and cap rather than creating a different purchase:
-    `npx -y @subly_fi/pay@0.8.4 fetch "<url>" <sameMaxAmountRawUsdc> apr_<approvalId>`
+    `npx -y @subly_fi/pay@0.8.5 fetch "<url>" <sameMaxAmountRawUsdc> apr_<approvalId>`
   - `state_persist_failed` → the local pending-payment marker could not be
     stored. Do not retry until the state path/disk issue is fixed.
 
 ## Deposits and withdrawals
 
-- `npx -y @subly_fi/pay@0.8.4 deposit <amountRawUsdc> [apr_<approvalId>]`
-- `npx -y @subly_fi/pay@0.8.4 withdraw <amountRawUsdc> [apr_<approvalId>]`
+- `npx -y @subly_fi/pay@0.8.5 deposit <amountRawUsdc> [apr_<approvalId>]`
+- `npx -y @subly_fi/pay@0.8.5 withdraw <amountRawUsdc> [apr_<approvalId>]`
 
 Deposits require owner approval by default; the active mandate controls the
 deposit and withdrawal policy. If the output contains `"approvalRequired": true`, paste the
@@ -132,7 +132,7 @@ approved. If it contains `"setupRequired": true`, run the owner onboarding
 (setup-link) from the wallet-setup section first. Confirm any initial-deposit
 approval before relying on it. For `submitted` or an interrupted operation,
 keep its original `dep_...` / `wdr_...` ID and use
-`npx -y @subly_fi/pay@0.8.4 status <intentId>`. Submission may be unresolved;
+`npx -y @subly_fi/pay@0.8.5 status <intentId>`. Submission may be unresolved;
 do not prepare another operation. Follow the [recovery guide](../../packages/pay/README.md#recovery-and-troubleshooting)
 for interrupted yield realization or an unknown external payment.
 

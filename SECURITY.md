@@ -8,7 +8,7 @@ Subly moves real funds on Solana mainnet. We take vulnerability reports seriousl
 
 Report privately via [GitHub Security Advisories](https://github.com/SublyFi/subly-payment-protocol/security/advisories/new) ("Report a vulnerability" on the repository's Security tab). If the advisory form is ever unavailable, contact the maintainer directly instead: [@yukikm](https://github.com/yukikm) on GitHub or [@subly_fi](https://x.com/subly_fi) via DM. We aim to acknowledge reports within five business days, keep you informed of progress, and credit you in the fix release unless you prefer otherwise; this is a best-effort target, not an SLA.
 
-Please include: the affected component and version/commit, a reproduction or proof of concept, your assessment of impact, and any mitigation you have tested. Remove private keys, seed phrases, API tokens, wallet signatures, database URLs, and personal data from the report unless they are essential to demonstrate impact.
+Please include: the affected component and version/commit, a reproduction or proof of concept, your assessment of impact, and any mitigation you have tested. Remove private keys, seed phrases, API tokens, wallet signatures, signed transactions, database URLs, setup/owner/approval capability URLs, and personal data from the report. Use disposable test credentials when a reproduction requires them.
 
 ## Scope
 

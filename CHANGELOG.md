@@ -4,6 +4,20 @@ All notable changes to the repository and the published client are recorded here
 
 ## [Unreleased]
 
+## 0.8.5 — 2026-09-21
+
+- Rebuild the published client from an empty output directory and reject unexpected tarball contents; stale files from earlier builds cannot survive into a release.
+- Run security checks on merged `main` commits, disable dependency lifecycle scripts in the audit workflow, and fail the container smoke check when readiness never succeeds.
+- Add HTTP regressions for the existing API rate limiter before authentication and database access, forwarded-address handling, and health probes.
+- Review and simplify client/operator setup guides, document existing policy defaults and setup limits, and provide a pinned localhost Docker guide with optional loopback-only port binding.
+- Correct CLI/MCP instructions for localhost approval links and accurately describe local and custody-provider signing. Expand support/reporting redaction guidance.
+- Record the completed 0.8.4 mainnet accrued-yield Nansen payment, its independently checked transactions, and the limits of its retained audit evidence.
+
+Payment rules, owner-policy behavior, dependencies and database schema are
+unchanged. This release adds no product features and has no external security
+audit. Preserve the ledger, credentials and client pending-state files when
+upgrading. Publishing this release does not upgrade any running relayer.
+
 ## 0.8.4 — 2026-09-20
 
 - Make setup and owner-management continuation instructions use version-pinned `npx` commands, so users do not need a global `pay` installation.

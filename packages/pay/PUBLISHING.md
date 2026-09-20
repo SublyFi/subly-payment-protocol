@@ -19,7 +19,7 @@ npm ci --ignore-scripts
 npm ci --prefix packages/pay --ignore-scripts
 ```
 
-- `dist/` is gitignored. The client build and `prepack` rebuild it; the package's
+- `dist/` is gitignored. The client build and `prepack` clear and rebuild it; the package's
   `files` allowlist includes the resulting bundles, README and license.
 - Runtime dependencies stay external. The package contains client code, without
   the relayer, seller, Kamino server SDK or PostgreSQL dependency.
@@ -32,7 +32,7 @@ After publication, run the registry verifier from the repository root, using
 the exact released version:
 
 ```bash
-node scripts/verify-published-package.mjs --version 0.8.4 --require-provenance
+node scripts/verify-published-package.mjs --version 0.8.5 --require-provenance
 ```
 
 The verifier waits for registry availability, installs the exact public version

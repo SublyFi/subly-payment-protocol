@@ -1,8 +1,9 @@
 /**
  * Creates the one-time owner-onboarding setup link for this agent wallet's
  * Subly spending mandate. Paste the printed setupUrl into the chat verbatim:
- * the human opens it on their phone and confirms once with Face ID (passkey)
- * or a Solana wallet signature. First registration activates the mandate
+ * the human opens it in a browser on the service machine for localhost,
+ * or on another device using the operator's HTTPS origin, and confirms
+ * with a passkey or Solana wallet signature. First registration activates the mandate
  * and, if requested, pre-approves the initial deposit. Existing owners use
  * owner-link to review policy changes with their current credential.
  * Env:
@@ -100,7 +101,8 @@ try {
         ...created,
         instructions:
           "Open setupUrl and review the policy (expires in 10 minutes, " +
-          "single-use). After approving on your device, check with: " +
+          "single-use). Open localhost links on the service machine. " +
+          "After approving, check with: " +
           `${PAY_COMMAND} setup-status ${created.sessionId}. ` +
           "When completed, submit the deposit separately. If you requested an initial " +
           "deposit, use that same amount; its approved authorization is picked up automatically."

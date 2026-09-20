@@ -1,5 +1,72 @@
 # Validation status
 
+## 0.8.5 validation scope
+
+This revision corrects OSS distribution, release checks and operating guidance.
+It cleans the client build output before packaging, tightens tarball checks,
+checks container readiness explicitly, and runs security checks on merged
+`main` commits without dependency lifecycle scripts. Client instructions now
+identify localhost approval links correctly. Payment rules, owner policies,
+dependency versions and the database schema are unchanged.
+
+Local release-candidate checks passed all 594 tests with disposable PostgreSQL
+16 and the real backup/restore integration enabled, with no skips. Root/client
+type checks and builds, all 28 Markdown files' local links, the packed client's
+clean installation and thirteen MCP tools, and Chromium owner flows passed.
+The detached container passed readiness, catalogue, non-root UID and graceful
+shutdown checks. Both production dependency audits reported zero vulnerabilities.
+Gitleaks 8.30.1 found no secrets in the 224-file release snapshot; this scan does
+not cover Git history or private operator files. Documentation examples were
+syntax-checked, and default/loopback Compose configurations were checked with
+disposable settings. These are not live deployment or device-origin checks.
+
+Four new HTTP regressions verify the existing global rate limiter before
+legacy payment authentication and admin ledger access, reject forwarded-IP
+spoofing when proxy trust is disabled, and preserve health-probe availability.
+The [release workflow](https://github.com/SublyFi/subly-payment-protocol/actions/workflows/release-pay.yml)
+records cross-platform CI and exact-version registry verification separately.
+
+The mainnet run below establishes the normal accrued-yield purchase path with
+a 0.8.4 relayer. Its remaining audit-record limitation is explicit; it is not a new
+mainnet execution of 0.8.5. There has been no independent security audit.
+Public relayer operation, sponsor custody, HTTPS passkey origins, monitoring
+and restoration remain checks for each operator's own deployment.
+
+## Accrued-yield Nansen purchase — 2026-09-21 JST
+
+An operator completed an owner-approved mainnet deposit, waited for yield,
+and purchased Nansen Token Screener data through the Subly client and a local
+0.8.4 Docker/PostgreSQL relayer. The operator supplied the returned screener data.
+Subsequent read-only inspection of the retained ledger and RPC transaction
+records established the following, without another payment or live-state change:
+
+| Check | Evidence and scope |
+| --- | --- |
+| Owner-approved deposit | A confirmed deposit receipt records the owner approval, actual USDC debit and corresponding principal increase. The requested amount equaled the configured daily cap; the actual debit was 20 raw units smaller because of share rounding. The cap is checked against the request before transaction construction, and allows equality. |
+| Yield realization | A confirmed `yield_realize` receipt requested 10,000 raw USDC and delivered 10,004 raw to the agent. Recorded principal was identical before and after this operation. |
+| External payment | The separate seller transaction debited the agent and credited the declared payee exactly 10,000 raw USDC (0.01 USDC). Deposit, realization and seller-payment transactions were independently checked as finalized without errors. |
+| Delivery | The operator reported a successful paid response containing Token Screener data. The response was not fetched again; on-chain receipts establish payment, not the accuracy or completeness of the seller's data. |
+| Policy | Mandate enforcement was on and the payment was recorded as `auto_within_policy`, at the 10,000-raw approval threshold and daily API cap. The payee allowlist and monthly cap were unset. This run does not establish their rejection behavior. |
+| Pending state | The configured wallet-specific client pending-payment file was empty after delivery. |
+| Report-back | The ledger links the realization to the seller transaction, but its saved verification label is **`reported`**, not `verified_onchain`. Later independent RPC verification confirmed the transfer; it did not change that stored label. The remaining audit-record acceptance step is re-verifying the same reported transaction, not buying another API call. |
+
+The realization and seller transactions have block times of 2026-09-20
+17:13:45 UTC and 17:13:50 UTC (02:13 JST the next day), respectively; both
+were subsequently verified as finalized. The inspected relayer identified itself
+as 0.8.4, and relevant local/container artifact hashes matched. The container
+has no source-revision attestation; this is an operator-observed run, not a
+reproducible-build attestation. Wallet addresses, capability links, transaction
+references and private deployment configuration are not published here.
+
+The agent wallet paid the deposit and realization transaction fees in this
+run; the seller payment used a separate fee payer. Therefore this run does not
+add evidence for separate sponsorship of vault operations. A budget decrease
+includes position valuation, realized funds and fee-debt accounting; the
+excess decrease above the API price must not be described entirely as fees
+without a matching historical breakdown. A successful payment preserving
+recorded principal does not guarantee future principal value or validate
+all failure, concurrency and recovery paths.
+
 ## 0.8.4 validation scope
 
 This revision corrects the setup and owner-management continuation commands,
@@ -15,11 +82,11 @@ tools, the existing Chromium owner flows and 42 focused owner/client/API tests.
 The bundled agent skill passed its format validator and a read-only exercise
 covering an unknown prior payment and the current successful payment response.
 
-Actual accrued-yield payment to an external mainnet API and an independent
-security audit remain outstanding. Documentation changes and release checks do
-not complete either validation.
+At the time of the 0.8.4 release, actual accrued-yield payment to an external
+mainnet API and an independent security audit remained outstanding. The later
+Nansen run above supplies live payment evidence; the audit remains outstanding.
 
-The remaining functional acceptance check is an authorized external API purchase
+The functional acceptance criteria were an authorized external API purchase
 funded by independently accrued mainnet yield: confirm the yield-realization and
 seller-payment transactions, successful delivery, verified report-back, preserved
 recorded principal and resolved pending state. This does not substitute for an

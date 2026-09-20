@@ -32,7 +32,7 @@ npm --version
 For a new checkout:
 
 ```sh
-git clone --branch pay-v0.8.5 --depth 1 https://github.com/SublyFi/subly-payment-protocol.git
+git clone --branch pay-v0.8.6 --depth 1 https://github.com/SublyFi/subly-payment-protocol.git
 cd subly-payment-protocol
 ```
 
@@ -175,7 +175,7 @@ Add `subly` to the existing `mcpServers` object, preserving other entries:
   "mcpServers": {
     "subly": {
       "command": "npx",
-      "args": ["-y", "@subly_fi/pay@0.8.5", "mcp"],
+      "args": ["-y", "@subly_fi/pay@0.8.6", "mcp"],
       "env": {
         "SUBLY_RELAYER_URL": "http://localhost",
         "SOLANA_RPC_URL": "REPLACE_WITH_MAINNET_RPC_URL",

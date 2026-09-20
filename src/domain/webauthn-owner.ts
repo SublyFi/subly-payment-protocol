@@ -1,6 +1,6 @@
 /**
  * WebAuthn (passkey) owner-signature verification for spending mandates
- * (docs/spending-mandate-design.md, Phase 2).
+ * (docs/spending-mandate-design.md).
  *
  * Passkey owners sign the SAME one-line messages as ed25519 owners; the
  * WebAuthn assertion binds to the message by carrying

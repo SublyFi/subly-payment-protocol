@@ -2,7 +2,14 @@
 
 All notable changes to the repository and the published client are recorded here. The project did not maintain a complete changelog before this file was added; older history is available in Git and npm.
 
-## [Unreleased]
+## 0.8.6 — 2026-09-21
+
+- Correct the quick-start policy example: its approval threshold must be strictly below the per-payment cap. The example retains a 0.01 USDC daily API ceiling.
+- Replace historical mandate and wallet-provider plans with current implementation references, and condense validation records to automated coverage and the observed mainnet payment.
+- Remove obsolete development-skill metadata and internal planning notes; retain security boundaries, dependency mitigations and integration limits.
+
+This is a documentation and repository cleanup release. Payment behavior,
+owner policies, dependencies and database schema are unchanged.
 
 ## 0.8.5 — 2026-09-21
 
@@ -125,4 +132,3 @@ Compatibility: Node.js 24+ is now required. Withdrawal RPCs must support simulat
 - Published client baseline before the OSS release-readiness work.
 
 [0.6.2]: https://github.com/SublyFi/subly-payment-protocol/compare/pay-v0.6.1...pay-v0.6.2
-[Unreleased]: https://github.com/SublyFi/subly-payment-protocol/compare/pay-v0.8.4...HEAD

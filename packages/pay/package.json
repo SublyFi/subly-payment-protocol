@@ -1,6 +1,6 @@
 {
   "name": "@subly_fi/pay",
-  "version": "0.8.5",
+  "version": "0.8.6",
   "description": "Subly client for compatible x402 Solana USDC exact APIs, using spendable Kamino vault yield. Includes an MCP server and CLI with local-key, Circle, and Privy signing.",
   "keywords": [
     "x402",

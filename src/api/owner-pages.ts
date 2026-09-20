@@ -1,5 +1,5 @@
 /**
- * Owner-facing web pages (docs/spending-mandate-design.md, Phase 2): setup
+ * Owner-facing web pages (docs/spending-mandate-design.md): setup
  * (owner appointment + mandate signing), approve (threshold escalations),
  * and revoke (kill switch). Served by the relayer itself as fully
  * self-contained HTML — no external assets — because the pages open on the

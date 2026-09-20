@@ -1,7 +1,7 @@
 # AI setup prompts
 
 Choose a prompt and paste it into your assistant. Leave missing details as
-`[unknown]`. These prompts target **Subly 0.8.5**.
+`[unknown]`. These prompts target **Subly 0.8.6**.
 
 - **A:** [Client guide](../packages/pay/README.md). Connect to an existing relayer. Get its URL and reviewed vault catalogue from your operator.
 - **B:** [Operator guide](../deploy/README.md). Run your own relayer. This requires a server, domain and database.
@@ -13,7 +13,7 @@ chat. Neither prompt authorizes spending real funds.
 ## A Use an existing relayer
 
 ```text
-Set up Subly 0.8.5 for my AI assistant or CLI. Keep explanations short.
+Set up Subly 0.8.6 for my AI assistant or CLI. Keep explanations short.
 
 Known details (no secrets):
 - OS and MCP host, or CLI only: [unknown]
@@ -23,9 +23,9 @@ Known details (no secrets):
 - Reviewed vault catalogue location and chosen vault: [unknown]
 
 1. Read packages/pay/README.md, docs/security-model.md and docs/troubleshooting.md from the
-   pay-v0.8.5 tag of https://github.com/SublyFi/subly-payment-protocol. Use Node.js 24+ and
-   @subly_fi/pay@0.8.5. Verify the installed version; do not silently switch versions. Use the
-   command prefix npx -y @subly_fi/pay@0.8.5 unless a local installation is verified.
+   pay-v0.8.6 tag of https://github.com/SublyFi/subly-payment-protocol. Use Node.js 24+ and
+   @subly_fi/pay@0.8.6. Verify the installed version; do not silently switch versions. Use the
+   command prefix npx -y @subly_fi/pay@0.8.6 unless a local installation is verified.
 
 2. Inspect available tools and existing configuration. Ask together for missing non-secret details,
    then complete reversible local setup. Without terminal access, give me one command and success
@@ -52,7 +52,7 @@ Known details (no secrets):
    relayer machine, not a phone or another computer. Setup CLI/MCP omits payee allowlist, monthly
    cap and withdrawal-policy controls; use owner management if those are needed. A new setup does
    not inherit old restrictions. The client cap does not set the mandate. After I confirm approval, run
-   check_subly_setup or npx -y @subly_fi/pay@0.8.5 setup-status <sessionId>; continue only when
+   check_subly_setup or npx -y @subly_fi/pay@0.8.6 setup-status <sessionId>; continue only when
    completed. Use owner-link for existing-owner changes. Explain expiry, revocation and recovery
    limits from the guide; start the 72-hour recovery only at my request. It cannot bypass explicit
    revocation.
@@ -64,7 +64,7 @@ Known details (no secrets):
    extra.feePayer is supported. Do not test with an unauthorized payment.
 
 7. If an outcome is submitted or unknown, preserve its intent ID and pending JSON. For
-   deposits/withdrawals, use npx -y @subly_fi/pay@0.8.5 status <intentId> with the original wallet,
+   deposits/withdrawals, use npx -y @subly_fi/pay@0.8.6 status <intentId> with the original wallet,
    vault and relayer supporting resubmit=false. For fetch, follow the documented recovery steps;
    interrupted yield realization and unknown external payments need different handling. Never bypass
    uncertainty with a new operation, deleted state, forceNewPayment, another wallet/vault or weaker
@@ -79,7 +79,7 @@ mainnet transactions or an external security audit.
 ## B Operate your own relayer
 
 ```text
-Set up a Subly 0.8.5 relayer. Keep explanations short.
+Set up a Subly 0.8.6 relayer. Keep explanations short.
 
 Known details (no secrets):
 - New installation or upgrade: [unknown]
@@ -90,9 +90,9 @@ Known details (no secrets):
 - Existing database/backups and chosen vaults: [unknown]
 
 1. Read deploy/README.md, packages/pay/README.md, docs/security-model.md, docs/validation.md and
-   docs/troubleshooting.md from the pay-v0.8.5 tag of
+   docs/troubleshooting.md from the pay-v0.8.6 tag of
    https://github.com/SublyFi/subly-payment-protocol. Use that tag's templates and
-   @subly_fi/pay@0.8.5; verify versions and do not silently substitute another release.
+   @subly_fi/pay@0.8.6; verify versions and do not silently substitute another release.
 
 2. Check available terminal/SSH tools and the target host. Ask together for missing non-secret
    details, then complete reversible preparation. Without execution tools, give me one command and
@@ -125,7 +125,7 @@ Known details (no secrets):
    read-only validate:mainnet when prerequisites are available; report missing inputs as unverified.
    Give clients the public URL and reviewed catalogue. Follow their MCP host's official
    configuration; align CLI/MCP wallet, vault, relayer and persistent pending state. Use npx -y
-   @subly_fi/pay@0.8.5 unless a local installation is verified.
+   @subly_fi/pay@0.8.6 unless a local installation is verified.
 
 7. This prompt does not authorize funding, deposits, withdrawals, paid requests, LUT creation or
    invest. Obtain the target and amount or operation scope/fee limit; reuse specific authorization
@@ -137,7 +137,7 @@ Known details (no secrets):
    accounting does not reimburse them.
 
 8. Preserve submitted/unknown intent IDs and pending JSON. Check ordinary deposits/withdrawals with
-   npx -y @subly_fi/pay@0.8.5 status <intentId>, the original wallet/vault/relayer and supported
+   npx -y @subly_fi/pay@0.8.6 status <intentId>, the original wallet/vault/relayer and supported
    resubmit=false behavior. Follow the fetch recovery procedure for payments. Never bypass
    uncertainty by preparing another operation, deleting state, forceNewPayment, switching wallets or
    weakening accounting/validation. Do not promise cancellation of broadcast transactions,

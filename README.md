@@ -16,7 +16,7 @@ Subly includes a CLI/MCP client and a self-hosted relayer. Deposit USDC into a s
 | Try the API without funds | [Local startup](#try-it-locally) |
 | Set up with an AI assistant | [Copy a setup prompt](docs/ai-setup-prompts.md) |
 
-**Beta (0.8.5), no external security audit.** Mainnet operations use real funds. Principal and yield are not guaranteed. Owner approvals and principal accounting are enforced by the relayer; an agent key can transact outside Subly. See the [security model](docs/security-model.md) and [validation status](docs/validation.md).
+**Beta (0.8.6), no external security audit.** Mainnet operations use real funds. Principal and yield are not guaranteed. Owner approvals and principal accounting are enforced by the relayer; an agent key can transact outside Subly. See the [security model](docs/security-model.md) and [validation status](docs/validation.md).
 
 ## Try it locally
 
@@ -45,7 +45,7 @@ With no RPC or sponsor environment variables set, this starts an in-memory API (
 Requires Node.js 24+, an operator's relayer URL, mainnet RPC and a dedicated agent wallet. Obtain the relayer URL from your operator; this project does not provide a guaranteed public endpoint.
 
 ```bash
-npx -y @subly_fi/pay@0.8.5 --help
+npx -y @subly_fi/pay@0.8.6 --help
 ```
 
 Follow the [client setup](packages/pay/README.md#quick-start) to configure the client, approve a spending policy, deposit and check your budget. No repository clone is needed. **A fresh deposit must earn enough yield before it can pay an API.**

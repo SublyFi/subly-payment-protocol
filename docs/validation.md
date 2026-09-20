@@ -1,242 +1,63 @@
-# Validation status
+# Testing and verification
 
-## 0.8.5 validation scope
+Subly is beta software without an external security audit. Automated tests and
+observed payments establish the behavior exercised; they do not guarantee
+principal, yield or an operator's deployment. See the [security model](security-model.md).
 
-This revision corrects OSS distribution, release checks and operating guidance.
-It cleans the client build output before packaging, tightens tarball checks,
-checks container readiness explicitly, and runs security checks on merged
-`main` commits without dependency lifecycle scripts. Client instructions now
-identify localhost approval links correctly. Payment rules, owner policies,
-dependency versions and the database schema are unchanged.
+## Automated coverage
 
-Local release-candidate checks passed all 594 tests with disposable PostgreSQL
-16 and the real backup/restore integration enabled, with no skips. Root/client
-type checks and builds, all 28 Markdown files' local links, the packed client's
-clean installation and thirteen MCP tools, and Chromium owner flows passed.
-The detached container passed readiness, catalogue, non-root UID and graceful
-shutdown checks. Both production dependency audits reported zero vulnerabilities.
-Gitleaks 8.30.1 found no secrets in the 224-file release snapshot; this scan does
-not cover Git history or private operator files. Documentation examples were
-syntax-checked, and default/loopback Compose configurations were checked with
-disposable settings. These are not live deployment or device-origin checks.
+[CI](https://github.com/SublyFi/subly-payment-protocol/actions/workflows/ci.yml)
+checks the relayer with disposable PostgreSQL, backup/restore, owner approvals,
+transaction accounting and recovery regressions. It also checks client builds
+and clean package installation on Linux, macOS and Windows, all thirteen MCP
+tools, Chromium owner flows with a virtual WebAuthn authenticator, documentation
+links and the detached Docker container. These browser checks do not emulate a
+physical biometric device or validate a deployment's public passkey origin.
 
-Four new HTTP regressions verify the existing global rate limiter before
-legacy payment authentication and admin ledger access, reject forwarded-IP
-spoofing when proxy trust is disabled, and preserve health-probe availability.
 The [release workflow](https://github.com/SublyFi/subly-payment-protocol/actions/workflows/release-pay.yml)
-records cross-platform CI and exact-version registry verification separately.
+runs those checks before publishing, then verifies the exact npm version,
+source commit, package integrity, provenance metadata and clean CLI/MCP startup.
+Provenance metadata checks are not a separate cryptographic attestation verifier.
+[Dependency checks](dependencies.md) cover the client and relayer independently.
 
-The mainnet run below establishes the normal accrued-yield purchase path with
-a 0.8.4 relayer. Its remaining audit-record limitation is explicit; it is not a new
-mainnet execution of 0.8.5. There has been no independent security audit.
-Public relayer operation, sponsor custody, HTTPS passkey origins, monitoring
-and restoration remain checks for each operator's own deployment.
+The [local fork test](../CONTRIBUTING.md#mainnet-fork-integration-test) exercises
+deposit, synthetic-yield realization, x402 settlement with a local seller,
+report-back and withdrawal using disposable keys. Synthetic fork balances do
+not establish organically accrued mainnet yield or external seller delivery.
 
-## Accrued-yield Nansen purchase — 2026-09-21 JST
+## Observed mainnet payment
 
-An operator completed an owner-approved mainnet deposit, waited for yield,
-and purchased Nansen Token Screener data through the Subly client and a local
-0.8.4 Docker/PostgreSQL relayer. The operator supplied the returned screener data.
-Subsequent read-only inspection of the retained ledger and RPC transaction
-records established the following, without another payment or live-state change:
+On **2026-09-21 JST**, an operator used the Subly client and a local **0.8.4**
+Docker/PostgreSQL relayer to make an owner-approved deposit, accrue yield and
+purchase Nansen Token Screener data for **0.01 USDC**.
 
-| Check | Evidence and scope |
+| Result | Evidence |
 | --- | --- |
-| Owner-approved deposit | A confirmed deposit receipt records the owner approval, actual USDC debit and corresponding principal increase. The requested amount equaled the configured daily cap; the actual debit was 20 raw units smaller because of share rounding. The cap is checked against the request before transaction construction, and allows equality. |
-| Yield realization | A confirmed `yield_realize` receipt requested 10,000 raw USDC and delivered 10,004 raw to the agent. Recorded principal was identical before and after this operation. |
-| External payment | The separate seller transaction debited the agent and credited the declared payee exactly 10,000 raw USDC (0.01 USDC). Deposit, realization and seller-payment transactions were independently checked as finalized without errors. |
-| Delivery | The operator reported a successful paid response containing Token Screener data. The response was not fetched again; on-chain receipts establish payment, not the accuracy or completeness of the seller's data. |
-| Policy | Mandate enforcement was on and the payment was recorded as `auto_within_policy`, at the 10,000-raw approval threshold and daily API cap. The payee allowlist and monthly cap were unset. This run does not establish their rejection behavior. |
-| Pending state | The configured wallet-specific client pending-payment file was empty after delivery. |
-| Report-back | The ledger links the realization to the seller transaction, but its saved verification label is **`reported`**, not `verified_onchain`. Later independent RPC verification confirmed the transfer; it did not change that stored label. The remaining audit-record acceptance step is re-verifying the same reported transaction, not buying another API call. |
+| Deposit | The ledger recorded the approved deposit and corresponding principal increase. |
+| Yield-funded payment | Yield realization delivered 10,004 raw USDC; a separate seller transaction transferred 10,000 raw USDC (0.01 USDC). |
+| Principal accounting | Recorded principal was unchanged by yield realization. |
+| Completion | The deposit, realization and payment transactions were independently checked as finalized without errors. The operator supplied the successful API response; client pending state was empty afterward. |
 
-The realization and seller transactions have block times of 2026-09-20
-17:13:45 UTC and 17:13:50 UTC (02:13 JST the next day), respectively; both
-were subsequently verified as finalized. The inspected relayer identified itself
-as 0.8.4, and relevant local/container artifact hashes matched. The container
-has no source-revision attestation; this is an operator-observed run, not a
-reproducible-build attestation. Wallet addresses, capability links, transaction
-references and private deployment configuration are not published here.
+The ledger retained the payment transaction with verification status `reported`.
+Subsequent read-only RPC verification confirmed the transfer but did not change
+that stored label. The seller response was not fetched again. Payment receipts
+do not verify the seller's data quality or fulfillment in other requests.
 
-The agent wallet paid the deposit and realization transaction fees in this
-run; the seller payment used a separate fee payer. Therefore this run does not
-add evidence for separate sponsorship of vault operations. A budget decrease
-includes position valuation, realized funds and fee-debt accounting; the
-excess decrease above the API price must not be described entirely as fees
-without a matching historical breakdown. A successful payment preserving
-recorded principal does not guarantee future principal value or validate
-all failure, concurrency and recovery paths.
+This run exercised the normal payment path at the configured daily cap with
+mandate enforcement enabled. It did not exercise payee-allowlist or monthly-cap
+rejection. The agent paid vault-operation network fees; the seller payment used
+a separate fee payer. The relayer version was observed, without a source-build
+attestation. This is evidence for that run, not a mainnet test of every release
+or every failure and recovery path.
 
-## 0.8.4 validation scope
+## Reproducing checks
 
-This revision corrects the setup and owner-management continuation commands,
-updates onboarding documentation and adds the bounded 20-minute wait for npm
-post-publication availability. It does not change payment rules, dependencies
-or the database schema. The [release workflow](https://github.com/SublyFi/subly-payment-protocol/actions/workflows/release-pay.yml)
-records checks and registry verification for each release; the completed records
-below apply to their named versions, not automatically to 0.8.4.
+Use [CONTRIBUTING.md](../CONTRIBUTING.md) for automated and disposable-fork tests,
+and the [operator guide](../deploy/README.md) for deployment checks. The
+`validate:mainnet` command is read-only and never loads a wallet key. Any test
+that transfers mainnet funds needs an owner-authorized amount. Paid API tests
+also need sufficient actual yield. Never change the principal baseline to make a payment test pass.
 
-Local checks for this revision passed root/client type checking, client build and
-tarball inspection, clean packed CLI/MCP startup and discovery of all thirteen
-tools, the existing Chromium owner flows and 42 focused owner/client/API tests.
-The bundled agent skill passed its format validator and a read-only exercise
-covering an unknown prior payment and the current successful payment response.
-
-At the time of the 0.8.4 release, actual accrued-yield payment to an external
-mainnet API and an independent security audit remained outstanding. The later
-Nansen run above supplies live payment evidence; the audit remains outstanding.
-
-The functional acceptance criteria were an authorized external API purchase
-funded by independently accrued mainnet yield: confirm the yield-realization and
-seller-payment transactions, successful delivery, verified report-back, preserved
-recorded principal and resolved pending state. This does not substitute for an
-independent security audit.
-
-## 0.8.3 release verification — 2026-09-20
-
-The release commit passed all 585 tests in CI, including disposable PostgreSQL
-16 and Docker Compose backup/restore, with no skips. Root/client type checks,
-builds, documentation links, container checks, and clean packed CLI installation
-on Linux, macOS and Windows passed. MCP startup and discovery of all thirteen
-tools passed. Chromium
-with a virtual WebAuthn authenticator verified reuse of the original credential
-for policy changes, recovery cancellation, revocation and reactivation.
-PostgreSQL reopening and injected write failures verified that owner actions and
-session completion persist together or roll back together.
-
-Sixteen new deposit/withdrawal concurrency regressions exercise the original
-public submit/status methods with real disposable signatures and mocked chain
-responses. They cover a recovery broadcast followed by delayed simulation failure,
-concurrent confirmation, and expired-blockhash reconciliation. A confirmed receipt
-remains confirmed; ambiguous outcomes remain pending until reconciled.
-
-The full generated-signer Surfpool 1.3.0 local-fork pipeline also passed:
-deposit, synthetic-yield realization from a zero wallet USDC balance, official
-x402 client/local seller settlement, verified receipt report-back, and withdrawal.
-The recorded principal basis remained unchanged by the payment. This is a local
-fixture, not evidence of organically accrued mainnet yield or an external seller.
-
-Live read-only mainnet configuration, authenticated Pyth pricing, and unsigned
-normal/yield withdrawal previews passed, including repeated previews after a
-delay. The previously preserved position's share total still matched, but its
-spendable yield after recorded fee debt was about 0.000393 USDC at observation,
-below the proposed 0.01 USDC external payment and required headroom. No real-funds
-transaction was sent and no principal baseline was changed. Actual yield-funded
-external payment remains outstanding; it must wait for adequate real yield and
-an authorized operation. An independent security audit also remains outstanding.
-
-During initial validation, the npm advisory endpoint returned maintenance HTTP
-503. Both new audit gates retried four times and correctly refused release.
-The advisory service subsequently recovered for the GitHub checks: both
-production dependency audits passed with zero reported vulnerabilities. The
-published 0.8.3 passed clean registry installation, SHA-512 integrity,
-source-commit and provenance-metadata checks, CLI/MCP startup and discovery of
-all thirteen MCP tools before its GitHub release was created. The source commit is
-`de824384d7ab84d2adbbc27f352fe832a5c2ebca`. These provenance checks inspect
-registry metadata; they are not an independent cryptographic attestation
-verification. See the [release checks](https://github.com/SublyFi/subly-payment-protocol/actions/runs/35459211601)
-for the publication and verification results.
-
-The first 0.8.3 publication was accepted by npm, but registry verification
-stopped after 50 seconds because the version was still unavailable during
-post-publication processing. After registry visibility, the same immutable
-commit's failed jobs were rerun successfully without republishing. The 0.8.4
-source extends availability polling to a bounded 20 minutes; it does not change
-the 0.8.3 tag or its workflow.
-
-## 0.8.0 verification — 2026-09-19
-
-The release checks cover the relayer with disposable PostgreSQL, client builds,
-clean packed installation and all nine MCP tools. The packed status command and
-MCP tool use authenticated requests for the original operation; they do not
-register, sync, prepare or submit another operation. CI checks the client on
-Linux, macOS and Windows, and performs a real PostgreSQL 16 backup/restore in an
-isolated Compose project.
-
-The actual owner pages were exercised in Chromium with a virtual WebAuthn
-authenticator: registration, approval, denial, revocation and expired setup.
-The Solana wallet registration path used a generated test key. Assertions were
-verified by the real HTTP handlers. This does not emulate a physical device's
-biometric check or verify an operator's public HTTPS configuration.
-
-The disposable Surfpool fork also passed the complete deposit, synthetic-yield
-realization, official x402 client/local seller payment, receipt report-back and
-normal withdrawal pipeline with the new dependency pins. Principal remained
-unchanged by the yield payment. All signers and balances were disposable local
-fixtures; no mainnet transaction was sent. A local PostgreSQL 18 backup and
-restore preserved sample principal and fee-debt records.
-
-Root and client production dependency audits report zero known vulnerabilities
-at review. See [dependency status](dependencies.md) for the three exact
-replacements, compatibility tests and remaining upstream peer-range limits.
-The changes need both relayer and client upgrades; no database migration is
-required. Preserve pending-payment files and do not downgrade a client with an
-unfinished yield realization.
-
-## Earlier real-funds checks
-
-The following records what was exercised on **0.7.2**, source commit
-`3d3d719a787da15cd8a0b891594f3006d47be554`, on 2026-09-17. A successful run
-checks that configuration and chain state at that time; each operator must
-validate their own deployment.
-
-Version **0.7.3** adds owner-page wording fixes found during these checks.
-Its local verification passed 391 tests, including PostgreSQL, plus root/client
-type checks, builds, documentation links, clean package installation and all
-eight MCP tools. It does not change transaction behavior or the ledger schema.
-
-| Check | Evidence and scope |
-| --- | --- |
-| Automated checks | 387 tests, including PostgreSQL; root/client type checks, builds, package installation, CLI and eight MCP tools. [CI run](https://github.com/SublyFi/subly-payment-protocol/actions/runs/35131509253). |
-| Published package | npm Trusted Publishing with provenance; clean registry installation verified 150 package signatures and 56 attestations. [Release](https://github.com/SublyFi/subly-payment-protocol/releases/tag/pay-v0.7.2). |
-| Live dependencies | Authenticated Pyth pricing and dedicated mainnet RPC; pinned vault configuration and unsigned withdrawal simulations passed. |
-| Real mainnet funds | A small withdrawal and redeposit through the actual HTTP client and relayer both finalized successfully. USDC and share changes matched the confirmed receipts. The two transactions cost 10,002 lamports total (0.000010002 SOL); this is the observed network fee, not a future fee quote or total investment cost. |
-| Accounting and authorization | PostgreSQL stored confirmed receipts, chain-derived principal and Pyth-converted fee debt. The exact-amount deposit approval was consumed after confirmation. Records survived a database restart. |
-| Principal protection | A fresh ledger conservatively treated the existing vault value as principal. A yield-realization request with insufficient yield was rejected before signing or sending. No artificial yield was introduced on mainnet. |
-| Real browser passkey | A user operated Chrome's real passkey creation, deposit approval and revocation pages. The server verified the assertions; after revocation, authenticated deposit/withdrawal preparation returned `mandate_revoked`. |
-| Separate mainnet sponsor | A dedicated in-memory signer paid for a small withdrawal and redeposit. The agent's SOL balance did not change during those two transactions; the sponsor's remaining SOL was returned and its final balance was zero. |
-| External mainnet x402 transport | The package's official SVM transport paid 0.01 USDC to [PayAI's Echo test API](https://x402.payai.network/), received HTTP 200 and a v2 receipt. The payment and the seller's full refund were independently verified as finalized on-chain. Funding came from a normal withdrawal, not accrued yield. |
-| Full payment pipeline in a local fork | Generated keys, simulated passkey approval, deposit, synthetic yield fixture, official x402 transport, local seller settlement, v2 receipt report-back and withdrawal. See the [reproducible fork test](../CONTRIBUTING.md#mainnet-fork-integration-test). |
-
-The first real-funds run used the same wallet as agent, owner and fee payer.
-A subsequent run used a real browser passkey and a separate sponsor, preserving
-the same PostgreSQL principal/fee ledger. Both temporary mandates were revoked.
-The second run paid 40,002 lamports in total network fees from user-controlled
-wallets, including preparation and recovery of a first sponsor after an unsigned
-withdrawal expired. That expired withdrawal was rejected before broadcast.
-The external payment and refund fees were paid by the external service.
-
-These checks used a dedicated local relayer/database. They do **not** verify
-an actual yield-funded external API payment: available accrued yield was below
-the existing fee debt and payment headroom. The external transport test did not
-run through Subly's yield realizer or create a yield-payment report-back record.
-The Echo service is a refunding test merchant. Public relayer deployment,
-production sponsor custody and non-localhost passkey origins remain operator
-checks. Wallet keys, private RPC URLs, database dumps and wallet-specific
-evidence are not published in this repository.
-
-The project remains beta and has not undergone an external security audit.
-The four relayer dependency advisories present in those earlier releases were
-resolved in 0.8.0 as described in [dependency status](dependencies.md).
-
-## Repeat the checks for your deployment
-
-1. Run the [automated and local fork checks](../CONTRIBUTING.md), then the
-   operator guide's [mainnet validation](../deploy/README.md). The
-   `validate:mainnet` command is read-only and never loads a wallet key.
-2. With an owner-authorized small amount, use the [client](../packages/pay/README.md)
-   against your relayer. Check the wallet, selected vault, network, recipient
-   and fee payer before signing. A normal withdrawal returns funds to the
-   wallet and may withdraw principal. If funding a redeposit from that
-   withdrawal, wait for confirmation and use its actual received amount.
-3. Compare confirmed USDC and share deltas with the ledger's receipt, principal
-   and fee records. Reopen the database and check those records persist.
-   Keep the database backup and transaction references privately.
-4. Test a paid API only after the budget shows enough independently accrued
-   yield for the payment, vault charges and fee headroom. Follow the
-   [operator smoke test](../deploy/README.md). Preserve pending payment state
-   during a retry. Never lower the principal baseline to make a real-funds
-   payment test pass.
-
-The fork's synthetic yield fixture must remain local. A completed deposit and
-withdrawal is not proof of successful yield-funded API payment.
+Keep wallet-specific transaction evidence, capability URLs, credentials and
+database backups private. Preserve pending payment state when investigating
+uncertain outcomes; use the original intent ID to reconcile them.

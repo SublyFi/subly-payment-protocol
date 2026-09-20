@@ -3,7 +3,7 @@
 // npm deps stay external (declared in package.json), so the published package
 // contains only client code — no facilitator, seller, Kamino SDK, or database
 // dependencies. A small hand-written dispatcher (cli.mjs) is the single bin.
-import { chmodSync, copyFileSync } from "node:fs";
+import { chmodSync, copyFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -27,6 +27,10 @@ const entries = {
   status: join(here, "src", "status.ts"),
   vaults: join(here, "src", "vaults.ts")
 };
+
+// npm packs everything in dist. Rebuild from an empty directory so removed
+// commands, old source maps, or local artifacts cannot survive into a release.
+rmSync(join(here, "dist"), { recursive: true, force: true });
 
 await build({
   entryPoints: entries,

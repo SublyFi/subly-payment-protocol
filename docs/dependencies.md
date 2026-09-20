@@ -1,6 +1,6 @@
 # Dependency status
 
-Reviewed 2026-09-19 against the npm lockfiles. Registry advisories can change after this date. The client and relayer use separate dependency graphs and Solana Kit versions; do not assume a successful client audit covers the server.
+Registry audits rechecked 2026-09-21 against the unchanged npm dependency lock entries for 0.8.5; the source/distribution review below was performed on 2026-09-19. Registry advisories can change after this date. The client and relayer use separate dependency graphs and Solana Kit versions; do not assume a successful client audit covers the server.
 
 | Distribution | `npm audit --omit=dev` at review | Release policy |
 | --- | --- | --- |

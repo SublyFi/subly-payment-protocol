@@ -53,8 +53,8 @@ services:
     image: caddy:2@sha256:df7f1c2fb114453b951de51a98efc010db1655a92c2e86be6706714e2417a78d
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
+      - "${SUBLY_BIND_ADDRESS:+${SUBLY_BIND_ADDRESS}:}80:80"
+      - "${SUBLY_BIND_ADDRESS:+${SUBLY_BIND_ADDRESS}:}443:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { promisify } from "node:util";
 import { execFileSync, execFile } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
@@ -21,8 +21,11 @@ try {
   const childBaseEnv={...osEnv,HOME:directory,USERPROFILE:directory};
   assert(process.env.npm_execpath,"Run this smoke check with npm run test:package");
   const npm=(args,options)=>execFileSync(process.execPath,[process.env.npm_execpath,...args],{...options,env:childBaseEnv});
+  // prepack must discard artifacts from older builds, even inside the allowed dist directory.
+  mkdirSync(resolve("packages/pay/dist"),{recursive:true});
+  writeFileSync(resolve("packages/pay/dist/stale-release-artifact.txt"),"must-not-be-published\n");
   const pack=JSON.parse(npm(["pack","--json","--pack-destination",directory],{cwd:resolve("packages/pay"),encoding:"utf8"}));
-  assert(pack[0].files.every(f=> /^(dist\/|README\.md$|LICENSE$|package\.json$)/.test(f.path)),"Unexpected package contents");
+  assert(pack[0].files.every(f=> /^(dist\/[a-z-]+\.js$|README\.md$|LICENSE$|package\.json$)/.test(f.path)),"Unexpected package contents, including stale build artifacts");
   assert(pack[0].files.some(f=>f.path==="dist/status.js"),"Missing status command bundle");
   assert(pack[0].files.some(f=>f.path==="dist/owner.js"),"Missing owner management command bundle");
   npm(["init","-y"],{cwd:directory,stdio:"ignore"});

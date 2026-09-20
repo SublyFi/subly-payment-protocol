@@ -63,8 +63,9 @@ Owner (human) onboarding: deposits require the human owner's approval by default
 (Face ID / wallet signature). During the first deposit conversation, agree \
 the spending limits and the first deposit amount in chat, then call \
 create_subly_setup_link and paste the returned setupUrl to the user AS IS \
-(it expires in 10 minutes). The human opens it on their phone, reviews, and \
-confirms. This activates the mandate; first registration also pre-approves \
+(it expires in 10 minutes). The human opens it in a browser, reviews, and \
+confirms. Localhost links must be opened on the service machine; use the \
+operator's HTTPS origin for another device. This activates the mandate; first registration also pre-approves \
 the deposit only when initialDepositRawUsdc was included. Call \
 check_subly_setup(sessionId) after the user says they finished. Confirm \
 completed status and inspect initialDepositApproval before the authorized \
@@ -199,7 +200,8 @@ export function createMcpPaymentServer(
               "deposit conversation): agree the limits and first deposit in " +
               "chat, call this, and paste the returned setupUrl to the user " +
               "verbatim — it expires in 10 minutes and works once. The human " +
-              "opens it on their phone and confirms with Face ID (passkey) " +
+              "opens it in a browser (localhost requires the service machine) " +
+              "and confirms with Face ID (passkey) " +
               "or a Solana wallet signature; that single confirmation " +
               "activates the mandate. First registration pre-approves the " +
               "deposit only when initialDepositRawUsdc was included; " +

@@ -1,6 +1,8 @@
 name: Security
 
 on:
+  push:
+    branches: [main]
   pull_request:
   schedule:
     - cron: "23 3 * * 1"
@@ -22,10 +24,10 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             packages/pay/package-lock.json
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - name: Audit relayer dependencies
         run: node scripts/audit-relayer.mjs
-      - run: npm ci
+      - run: npm ci --ignore-scripts
         working-directory: packages/pay
       - name: Audit published client dependencies
         run: node scripts/audit-client.mjs

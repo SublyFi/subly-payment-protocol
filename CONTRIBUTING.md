@@ -6,17 +6,17 @@ Write documentation, setup prompts, examples, code comments and user-facing mess
 
 ## Local development
 
-Use Node.js 24 and npm 11 (`.nvmrc` pins the development major).
+Use Node.js 24 and npm 11 (`.nvmrc` pins the development major). Run the shell commands below in macOS, Linux or Windows WSL.
 
 ```bash
 git clone https://github.com/SublyFi/subly-payment-protocol.git
 cd subly-payment-protocol
 npm ci
 npm ci --prefix packages/pay
-npm run dev
+HOST=127.0.0.1 npm run dev
 ```
 
-Without RPC/sponsor settings, development starts a detached in-memory API at port 3000. Check `/healthz` and `/v1/vaults`. It performs no on-chain vault operations. No keys or mainnet funds are needed for the standard test suite.
+Without RPC/sponsor settings, this command starts a detached in-memory API on loopback port 3000. `npm run dev` does not load `.env`; inherited environment variables still apply. Check `/healthz` and `/v1/vaults`. It performs no on-chain vault operations. No keys or mainnet funds are needed for the standard test suite.
 
 ```bash
 npm run check

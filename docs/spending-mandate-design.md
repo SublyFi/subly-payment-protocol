@@ -37,7 +37,7 @@ Expired mandates fall back to this policy. Explicit revocation blocks new
 relayer operations; expiry is not revocation.
 
 `SUBLY_MANDATE_ENFORCEMENT=on` enforces these rules. `warn` logs violations and
-`off` disables this layer. `warn` still blocks explicit revocation, but neither
+`off` disables this layer. `warn` still honors explicit revocation, but neither
 mode enforces the complete owner policy.
 The signed `enforcementMode` field does not install custody-provider rules or
 remove Subly's checks. The independent yield guard still applies.
